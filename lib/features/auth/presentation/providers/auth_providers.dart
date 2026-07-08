@@ -6,11 +6,6 @@ import '../../data/repositories/firebase_auth_repository.dart';
 import '../../domain/entities/app_user.dart';
 import '../../domain/repositories/auth_repository.dart';
 
-/// Açılışta FirebaseBootstrap sonucu ile override edilir (main.dart).
-/// Varsayılan localMode: testler ve önizleme Firebase'siz çalışır.
-final firebaseStatusProvider =
-    Provider<FirebaseStatus>((_) => FirebaseStatus.localMode);
-
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   final status = ref.watch(firebaseStatusProvider);
   return status == FirebaseStatus.ready

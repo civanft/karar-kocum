@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/services/analytics/analytics_service.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../decision/presentation/providers/decision_editor.dart';
 import '../../../decision/presentation/providers/decision_providers.dart';
@@ -9,12 +12,26 @@ import '../../../scoring/domain/entities/scoring_types.dart';
 
 /// Sonuç ekranı v1 — yerel ağırlıklı skor (US-C2).
 /// Sprint 3'te eklenecekler: AI yorumu, riskler, what-if slider'ları, paylaşım.
-class ResultScreen extends ConsumerWidget {
+class ResultScreen extends ConsumerStatefulWidget {
   const ResultScreen({super.key, required this.decisionId});
   final String decisionId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ResultScreen> createState() => _ResultScreenState();
+}
+
+class _ResultScreenState extends ConsumerState<ResultScreen> {
+  String get decisionId => widget.decisionId;
+
+  @override
+  void initState() {
+    super.initState();
+    // v1 aktivasyon olayı (PRD kuzey yıldızı hunisinin son adımı).
+    unawaited(ref.read(analyticsServiceProvider).logResultViewed());
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final decisionAsync = ref.watch(decisionEditorProvider(decisionId));
 
     return decisionAsync.when(

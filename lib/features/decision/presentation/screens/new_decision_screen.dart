@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/limits.dart';
+import '../../../../core/services/analytics/analytics_service.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../domain/validators/decision_validator.dart';
 import '../providers/decision_providers.dart';
@@ -45,8 +48,14 @@ class _NewDecisionScreenState extends ConsumerState<NewDecisionScreen> {
 
     if (!mounted) return;
     result.when(
-      ok: (decision) =>
-          context.pushReplacement('/decision/${decision.id}/edit'),
+      ok: (decision) {
+        unawaited(
+          ref.read(analyticsServiceProvider).logDecisionCreated(
+                source: widget.initialTitle != null ? 'template' : 'blank',
+              ),
+        );
+        context.pushReplacement('/decision/${decision.id}/edit');
+      },
       err: (f) => setState(() {
         _submitting = false;
         _errorText = 'Karar oluşturulamadı, tekrar deneyin.';

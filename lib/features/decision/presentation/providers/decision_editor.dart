@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/error/failure.dart';
+import '../../../../core/services/analytics/analytics_service.dart';
+import '../../../../core/services/crash_reporter.dart';
 import '../../domain/entities/decision.dart';
 import '../../domain/repositories/decision_repository.dart';
 import '../../domain/validators/decision_validator.dart';
@@ -83,10 +85,42 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
       await ref
           .read(decisionRepositoryProvider)
           .applyPatch(previous.id, merged);
+      _trackFunnel(previous, updated);
       return null;
     } catch (error, stackTrace) {
       state = AsyncData(previous); // iyimser güncellemeyi geri al
+      unawaited(
+        ref.read(crashReporterProvider).recordError(
+              error,
+              stackTrace,
+              reason: 'decision_patch_failed',
+            ),
+      );
       return UnexpectedFailure(error, stackTrace);
+    }
+  }
+
+  /// Aktivasyon hunisi (TEKNIK-MIMARI.md §9.1): eşik geçişinde tek atış.
+  /// İçerik gönderilmez — yalnız sayısal meta.
+  void _trackFunnel(Decision previous, Decision updated) {
+    final analytics = ref.read(analyticsServiceProvider);
+    if (previous.options.length < 2 && updated.options.length >= 2) {
+      unawaited(
+        analytics.logOptionsCompleted(optionCount: updated.options.length),
+      );
+    }
+    if (previous.criteria.isEmpty && updated.criteria.isNotEmpty) {
+      unawaited(
+        analytics.logCriteriaCompleted(
+          criterionCount: updated.criteria.length,
+          aiSuggestedCount: updated.criteria
+              .where((c) => c.source == CriterionSource.aiSuggested)
+              .length,
+        ),
+      );
+    }
+    if (!previous.isScoreMatrixComplete && updated.isScoreMatrixComplete) {
+      unawaited(analytics.logScoringCompleted());
     }
   }
 
@@ -103,6 +137,7 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
     state = AsyncData(updated);
 
     _pendingPatch = _mergePatches(_pendingPatch, patchOf(updated));
+    _trackFunnel(previous, updated);
     _debounceTimer?.cancel();
     _debounceTimer =
         Timer(ref.read(autosaveDebounceProvider), flushPendingWrites);
