@@ -1,7 +1,9 @@
 {
   "name": "karar-veriyorum-functions",
   "private": true,
-  "engines": { "node": "20" },
+  "engines": {
+    "node": "20"
+  },
   "main": "lib/index.js",
   "scripts": {
     "build": "tsc",
@@ -15,6 +17,7 @@
   "dependencies": {
     "firebase-admin": "^12.3.0",
     "firebase-functions": "^5.0.1",
+    "openai": "^4.104.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
