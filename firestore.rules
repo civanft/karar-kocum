@@ -74,5 +74,9 @@ service cloud.firestore {
     match /aiJobs/{id} {
       allow read, write: if false; // ops-iç, yalnız admin SDK
     }
+
+    match /rateLimits/{uid} {
+      allow read, write: if false; // sayaçlar yalnız Functions transaction'ı
+    }
   }
 }
