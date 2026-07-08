@@ -18,6 +18,19 @@ class _FailingPatchRepository extends InMemoryDecisionRepository {
   }
 }
 
+/// Yazım sayan repo — debounce (Y-2) testleri için.
+class _CountingRepository extends InMemoryDecisionRepository {
+  int patchCount = 0;
+  final List<DecisionPatch> patches = [];
+
+  @override
+  Future<void> applyPatch(String id, DecisionPatch patch) {
+    patchCount++;
+    patches.add(patch);
+    return super.applyPatch(id, patch);
+  }
+}
+
 void main() {
   late InMemoryDecisionRepository repo;
   late ProviderContainer container;
@@ -84,7 +97,8 @@ void main() {
     final optionA = d.options[0].id;
     final crit = d.criteria.single.id;
 
-    await e.setScore(optionA, crit, 8);
+    e.setScore(optionA, crit, 8);
+    await e.flushPendingWrites();
     expect(current().scores[optionA]?[crit]?.value, 8);
 
     await e.removeOption(optionA);
@@ -102,8 +116,9 @@ void main() {
     final price = d.criteria[0].id;
     final camera = d.criteria[1].id;
 
-    await e.setScore(optionA, price, 8);
-    await e.setScore(optionA, camera, 6);
+    e.setScore(optionA, price, 8);
+    e.setScore(optionA, camera, 6);
+    await e.flushPendingWrites();
 
     await e.removeCriterion(price);
     expect(current().scores[optionA]?.containsKey(price), isFalse);
@@ -133,7 +148,8 @@ void main() {
     await e.addOption('A');
     await e.addCriterion('Fiyat', 5);
     final d = current();
-    await e.setScore(d.options.single.id, d.criteria.single.id, 11);
+    e.setScore(d.options.single.id, d.criteria.single.id, 11);
+    await e.flushPendingWrites();
     expect(current().scores, isEmpty);
   });
 
@@ -187,6 +203,101 @@ void main() {
       // depo da temiz: sessiz ayrışma yok
       final persisted = await failing.getById('d1');
       expect(persisted!.options, isEmpty);
+    });
+  });
+
+  group('Y-2: debounce + flush', () {
+    late _CountingRepository counting;
+    late ProviderContainer c;
+
+    setUp(() async {
+      counting = _CountingRepository();
+      await counting.upsert(
+        seed.copyWith(
+          options: const [
+            Option(id: 'a', title: 'A'),
+            Option(id: 'b', title: 'B'),
+          ],
+          criteria: const [Criterion(id: 'c1', name: 'Fiyat', weight: 5)],
+        ),
+      );
+      c = ProviderContainer(
+        overrides: [
+          decisionRepositoryProvider.overrideWithValue(counting),
+          // Testte zamanlayıcıya güvenme: flush'ı elle tetikliyoruz.
+          autosaveDebounceProvider
+              .overrideWithValue(const Duration(minutes: 1)),
+        ],
+      );
+      addTearDown(c.dispose);
+      addTearDown(counting.dispose);
+      final sub = c.listen(decisionEditorProvider('d1'), (_, __) {});
+      addTearDown(sub.close);
+      await c.read(decisionEditorProvider('d1').future);
+    });
+
+    DecisionEditor notifier() => c.read(decisionEditorProvider('d1').notifier);
+
+    test('slider sürüklemesi: N mutasyon → 1 yazım (son değerle)', () async {
+      final e = notifier();
+      e.setScore('a', 'c1', 3);
+      e.setScore('a', 'c1', 7);
+      e.setScore('a', 'c1', 9); // sürükleme simülasyonu
+      expect(counting.patchCount, 0); // henüz yazım yok
+
+      await e.flushPendingWrites(); // onChangeEnd
+
+      expect(counting.patchCount, 1);
+      final persisted = await counting.getById('d1');
+      expect(persisted!.scores['a']!['c1']!.value, 9);
+    });
+
+    test('bekleyen patch, ayrık mutasyona katlanır — sıralama bozulmaz',
+        () async {
+      final e = notifier();
+      e.setScore('a', 'c1', 8); // debounce kuyruğunda
+      await e.removeCriterion('c1'); // ayrık: hemen yazar, bekleyeni katlar
+
+      // Tek yazım gitti ve silinen kriterin puanı geri dirilmedi:
+      expect(counting.patchCount, 1);
+      final persisted = await counting.getById('d1');
+      expect(persisted!.criteria, isEmpty);
+      expect(persisted.scores['a']?.containsKey('c1') ?? false, isFalse);
+
+      await e.flushPendingWrites(); // kuyruk boş — yazım üretmemeli
+      expect(counting.patchCount, 1);
+    });
+
+    test('flush hatası: autosaveFailureProvider dolar, state depoyla hizalanır',
+        () async {
+      final failing = _FailingPatchRepository();
+      await failing.upsert(
+        seed.copyWith(
+          criteria: const [Criterion(id: 'c1', name: 'Fiyat', weight: 5)],
+        ),
+      );
+      final fc = ProviderContainer(
+        overrides: [
+          decisionRepositoryProvider.overrideWithValue(failing),
+          autosaveDebounceProvider
+              .overrideWithValue(const Duration(minutes: 1)),
+        ],
+      );
+      addTearDown(fc.dispose);
+      addTearDown(failing.dispose);
+      final sub = fc.listen(decisionEditorProvider('d1'), (_, __) {});
+      addTearDown(sub.close);
+      await fc.read(decisionEditorProvider('d1').future);
+      final e = fc.read(decisionEditorProvider('d1').notifier);
+
+      failing.failPatches = true;
+      e.setCriterionWeight('c1', 9);
+      await e.flushPendingWrites();
+
+      expect(fc.read(autosaveFailureProvider), isNotNull);
+      // otoriter durum: depodaki ağırlık hâlâ 5
+      final current = fc.read(decisionEditorProvider('d1')).requireValue;
+      expect(current.criteria.single.weight, 5);
     });
   });
 
