@@ -53,6 +53,18 @@ class InMemoryDecisionRepository implements DecisionRepository {
   }
 
   @override
+  Future<void> applyPatch(String id, DecisionPatch patch) async {
+    final current = _store[id];
+    if (current == null) {
+      throw StateError('Karar bulunamadı: $id');
+    }
+    if (patch.isEmpty) return;
+    // updatedAt'i depo damgalar (Firestore'daki serverTimestamp'in eşleniği).
+    _store[id] = patch.applyTo(current).copyWith(updatedAt: DateTime.now());
+    _changes.add(null);
+  }
+
+  @override
   Future<void> delete(String id) async {
     _store.remove(id);
     _changes.add(null);

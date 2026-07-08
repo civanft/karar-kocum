@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/error/failure.dart';
 import '../../../../core/theme/tokens.dart';
 import '../providers/decision_editor.dart';
 
@@ -137,7 +138,7 @@ class CriteriaTab extends ConsumerWidget {
         .addCriterion(controller.text, weight);
     if (failure != null && context.mounted) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(failure.message)));
+          .showSnackBar(SnackBar(content: Text(failure.userMessage)));
     }
   }
 }

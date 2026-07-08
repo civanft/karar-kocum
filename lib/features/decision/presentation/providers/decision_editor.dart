@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/error/failure.dart';
 import '../../domain/entities/decision.dart';
+import '../../domain/repositories/decision_repository.dart';
 import '../../domain/validators/decision_validator.dart';
 import 'decision_providers.dart';
 
@@ -38,17 +39,33 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
     return initial;
   }
 
-  Future<void> _mutate(Decision Function(Decision) transform) async {
-    final current = state.valueOrNull;
-    if (current == null) return;
-    final updated = transform(current).copyWith(updatedAt: DateTime.now());
+  /// İyimser mutasyon (K-2 alan bazlı yazım + geri alma güvenliği):
+  ///  1. state hemen güncellenir (UI bekletilmez)
+  ///  2. YALNIZ değişen alanlar [DecisionPatch] ile depoya yazılır
+  ///  3. yazım başarısız olursa state geri alınır ve Failure döner
+  ///     (audit Y-1: sessiz state/depo ayrışması imkânsız)
+  Future<Failure?> _mutate(
+    Decision Function(Decision) transform,
+    DecisionPatch Function(Decision updated) patchOf,
+  ) async {
+    final previous = state.valueOrNull;
+    if (previous == null) return null;
+    final updated = transform(previous).copyWith(updatedAt: DateTime.now());
     state = AsyncData(updated);
-    await ref.read(decisionRepositoryProvider).upsert(updated);
+    try {
+      await ref
+          .read(decisionRepositoryProvider)
+          .applyPatch(previous.id, patchOf(updated));
+      return null;
+    } catch (error, stackTrace) {
+      state = AsyncData(previous); // iyimser güncellemeyi geri al
+      return UnexpectedFailure(error, stackTrace);
+    }
   }
 
   // ---- Seçenekler (US-A3) ----
 
-  Future<ValidationFailure?> addOption(String title) async {
+  Future<Failure?> addOption(String title) async {
     final failure = DecisionValidator.optionTitle(title);
     if (failure != null) return failure;
     final current = state.valueOrNull;
@@ -59,22 +76,26 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
       );
     }
     final id = ref.read(idGeneratorProvider)();
-    await _mutate(
+    return _mutate(
       (d) => d.copyWith(
         options: [...d.options, Option(id: id, title: title.trim())],
       ),
+      (u) => DecisionPatch(options: u.options),
     );
-    return null;
   }
 
-  Future<void> removeOption(String optionId) => _mutate(
+  Future<Failure?> removeOption(String optionId) => _mutate(
         (d) => d.copyWith(
           options: d.options.where((o) => o.id != optionId).toList(),
           scores: Map.of(d.scores)..remove(optionId),
         ),
+        (u) => DecisionPatch(options: u.options, scores: u.scores),
       );
 
-  Future<void> updateOptionDescription(String optionId, String? description) =>
+  Future<Failure?> updateOptionDescription(
+    String optionId,
+    String? description,
+  ) =>
       _mutate(
         (d) => d.copyWith(
           options: [
@@ -84,18 +105,19 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
                   : o,
           ],
         ),
+        (u) => DecisionPatch(options: u.options),
       );
 
   // ---- Artı / Eksi (US-B1) ----
 
-  Future<ValidationFailure?> addProCon(
+  Future<Failure?> addProCon(
     String optionId,
     String text, {
     required bool isPro,
   }) async {
     final failure = DecisionValidator.prosConsItem(text);
     if (failure != null) return failure;
-    await _mutate(
+    return _mutate(
       (d) => d.copyWith(
         options: [
           for (final o in d.options)
@@ -106,11 +128,11 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
                 : o,
         ],
       ),
+      (u) => DecisionPatch(options: u.options),
     );
-    return null;
   }
 
-  Future<void> removeProCon(
+  Future<Failure?> removeProCon(
     String optionId,
     int index, {
     required bool isPro,
@@ -128,11 +150,12 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
                   : o,
           ],
         ),
+        (u) => DecisionPatch(options: u.options),
       );
 
   // ---- Kriterler (US-B2) ----
 
-  Future<ValidationFailure?> addCriterion(String name, int weight) async {
+  Future<Failure?> addCriterion(String name, int weight) async {
     if (name.trim().isEmpty) {
       return const ValidationFailure(
         field: 'criterionName',
@@ -142,30 +165,31 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
     final failure = DecisionValidator.criterionWeight(weight);
     if (failure != null) return failure;
     final id = ref.read(idGeneratorProvider)();
-    await _mutate(
+    return _mutate(
       (d) => d.copyWith(
         criteria: [
           ...d.criteria,
           Criterion(id: id, name: name.trim(), weight: weight),
         ],
       ),
+      (u) => DecisionPatch(criteria: u.criteria),
     );
-    return null;
   }
 
-  Future<void> setCriterionWeight(String criterionId, int weight) async {
-    if (DecisionValidator.criterionWeight(weight) != null) return;
-    await _mutate(
+  Future<Failure?> setCriterionWeight(String criterionId, int weight) async {
+    if (DecisionValidator.criterionWeight(weight) != null) return null;
+    return _mutate(
       (d) => d.copyWith(
         criteria: [
           for (final c in d.criteria)
             c.id == criterionId ? c.copyWith(weight: weight) : c,
         ],
       ),
+      (u) => DecisionPatch(criteria: u.criteria),
     );
   }
 
-  Future<void> removeCriterion(String criterionId) => _mutate(
+  Future<Failure?> removeCriterion(String criterionId) => _mutate(
         (d) => d.copyWith(
           criteria: d.criteria.where((c) => c.id != criterionId).toList(),
           scores: {
@@ -173,30 +197,43 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
               e.key: Map.of(e.value)..remove(criterionId),
           },
         ),
+        (u) => DecisionPatch(criteria: u.criteria, scores: u.scores),
       );
 
   // ---- Puan matrisi (US-B4) ----
 
-  Future<void> setScore(String optionId, String criterionId, int value) async {
-    if (DecisionValidator.cellScore(value) != null) return;
-    await _mutate((d) {
-      final scores = {
-        for (final e in d.scores.entries) e.key: Map.of(e.value),
-      };
-      (scores[optionId] ??= {})[criterionId] = CellScore(value: value);
-      return d.copyWith(scores: scores);
-    });
+  Future<Failure?> setScore(
+    String optionId,
+    String criterionId,
+    int value,
+  ) async {
+    if (DecisionValidator.cellScore(value) != null) return null;
+    return _mutate(
+      (d) {
+        final scores = {
+          for (final e in d.scores.entries) e.key: Map.of(e.value),
+        };
+        (scores[optionId] ??= {})[criterionId] = CellScore(value: value);
+        return d.copyWith(scores: scores);
+      },
+      (u) => DecisionPatch(scores: u.scores),
+    );
   }
 
   // ---- Diğer ----
 
-  Future<void> setTitle(String title) async {
-    if (DecisionValidator.title(title) != null) return;
-    await _mutate((d) => d.copyWith(title: title.trim()));
+  Future<Failure?> setTitle(String title) async {
+    if (DecisionValidator.title(title) != null) return null;
+    return _mutate(
+      (d) => d.copyWith(title: title.trim()),
+      (u) => DecisionPatch(title: u.title),
+    );
   }
 
-  Future<void> toggleFavorite() =>
-      _mutate((d) => d.copyWith(isFavorite: !d.isFavorite));
+  Future<Failure?> toggleFavorite() => _mutate(
+        (d) => d.copyWith(isFavorite: !d.isFavorite),
+        (u) => DecisionPatch(isFavorite: u.isFavorite),
+      );
 }
 
 final decisionEditorProvider = AsyncNotifierProvider.autoDispose

@@ -1,9 +1,22 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:karar_veriyorum/core/error/failure.dart';
 import 'package:karar_veriyorum/features/decision/data/repositories/in_memory_decision_repository.dart';
 import 'package:karar_veriyorum/features/decision/domain/entities/decision.dart';
+import 'package:karar_veriyorum/features/decision/domain/repositories/decision_repository.dart';
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_editor.dart';
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_providers.dart';
+
+/// Yazımı patlatan repo — iyimser geri alma (Y-1) testleri için.
+class _FailingPatchRepository extends InMemoryDecisionRepository {
+  bool failPatches = false;
+
+  @override
+  Future<void> applyPatch(String id, DecisionPatch patch) {
+    if (failPatches) throw Exception('yazım hatası (simülasyon)');
+    return super.applyPatch(id, patch);
+  }
+}
 
 void main() {
   late InMemoryDecisionRepository repo;
@@ -129,6 +142,52 @@ void main() {
     final before = current().updatedAt;
     await e.addOption('A');
     expect(current().updatedAt.isAfter(before), isTrue);
+  });
+
+  group('alan bazlı yazım + iyimser geri alma', () {
+    test('mutasyon applyPatch kullanır, upsert değil (K-2)', () async {
+      final e = await editor();
+      await e.addOption('iPhone');
+      await e.toggleFavorite();
+
+      // upsert yalnız setUp'taki seed için çağrıldı; mutasyonlar patch'ledi.
+      final persisted = await repo.getById('d1');
+      expect(persisted!.options.single.title, 'iPhone');
+      expect(persisted.isFavorite, isTrue);
+    });
+
+    test('yazım hatasında state geri alınır ve Failure döner (Y-1)', () async {
+      final failing = _FailingPatchRepository();
+      await failing.upsert(seed);
+      final failingContainer = ProviderContainer(
+        overrides: [
+          decisionRepositoryProvider.overrideWithValue(failing),
+        ],
+      );
+      addTearDown(failingContainer.dispose);
+      addTearDown(failing.dispose);
+
+      final sub = failingContainer.listen(
+        decisionEditorProvider('d1'),
+        (_, __) {},
+      );
+      addTearDown(sub.close);
+      await failingContainer.read(decisionEditorProvider('d1').future);
+      final notifier =
+          failingContainer.read(decisionEditorProvider('d1').notifier);
+
+      failing.failPatches = true;
+      final failure = await notifier.addOption('Kaybolacak seçenek');
+
+      expect(failure, isA<UnexpectedFailure>());
+      // state geri alındı: iyimser eklenen seçenek yok
+      final current =
+          failingContainer.read(decisionEditorProvider('d1')).requireValue;
+      expect(current.options, isEmpty);
+      // depo da temiz: sessiz ayrışma yok
+      final persisted = await failing.getById('d1');
+      expect(persisted!.options, isEmpty);
+    });
   });
 
   group('K-2: canlı akış davranışı', () {
