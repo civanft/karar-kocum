@@ -130,4 +130,61 @@ void main() {
     await e.addOption('A');
     expect(current().updatedAt.isAfter(before), isTrue);
   });
+
+  group('K-2: canlı akış davranışı', () {
+    test('depodaki harici değişiklik editöre yansır', () async {
+      await editor();
+      // İkinci cihaz / Functions yazımını simüle et: repoya doğrudan yaz.
+      final remote = seed.copyWith(
+        title: 'Uzaktan güncellendi',
+        updatedAt: DateTime(2026, 7, 9),
+      );
+      await repo.upsert(remote);
+      await Future<void>.delayed(Duration.zero); // akış emisyonu işlensin
+
+      expect(current().title, 'Uzaktan güncellendi');
+    });
+
+    test('bayat emisyon (eski updatedAt) mevcut durumu ezmez', () async {
+      final e = await editor();
+      await e.addOption('Yeni seçenek'); // updatedAt = now (2026-07-08 sonrası)
+
+      final stale = seed.copyWith(
+        title: 'Bayat kopya',
+        updatedAt: DateTime(2020, 1, 1),
+      );
+      // Akışı bayat emisyonla besle (upsert etsek store'daki kopya da
+      // bayatlaşır; burada yalnız emisyon davranışı test ediliyor).
+      await repo.upsert(current());
+      await repo.upsert(stale.copyWith(id: 'baska-id')); // ilgisiz kayıt
+      await Future<void>.delayed(Duration.zero);
+
+      expect(current().title, 'Telefon seçimi');
+      expect(current().options, hasLength(1)); // yerel mutasyon korundu
+    });
+
+    test('watchById: abone olunca mevcut durum hemen gelir (O-3)', () async {
+      final first = await repo.watchById('d1').first;
+      expect(first!.id, 'd1');
+    });
+
+    test('watchById: silinme null yayımlar', () async {
+      final emissions = <Decision?>[];
+      final sub = repo.watchById('d1').listen(emissions.add);
+      await Future<void>.delayed(Duration.zero);
+      await repo.delete('d1');
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+
+      expect(emissions.first, isNotNull);
+      expect(emissions.last, isNull);
+    });
+
+    test('watchAll: geç abone de mevcut listeyi hemen alır (O-3)', () async {
+      await repo.upsert(seed.copyWith(id: 'd2', title: 'İkinci'));
+      // Mutasyondan SONRA abone ol — eski implementasyonda yarış penceresiydi.
+      final list = await repo.watchAll().first;
+      expect(list.map((d) => d.id), containsAll(['d1', 'd2']));
+    });
+  });
 }

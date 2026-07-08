@@ -11,11 +11,31 @@ import 'decision_providers.dart';
 class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
   @override
   Future<Decision> build(String arg) async {
-    final decision = await ref.watch(decisionRepositoryProvider).getById(arg);
-    if (decision == null) {
+    final repo = ref.watch(decisionRepositoryProvider);
+
+    // Audit K-2: tek seferlik okuma yerine canlı akış — harici yazımlar
+    // (ikinci cihaz, Sprint 3'te aiAnalysis yazan Functions) editöre yansır.
+    // Bayat emisyon koruması: mevcut durumdan ESKİ updatedAt taşıyan
+    // emisyonlar yok sayılır (yerel iyimser güncellemeyi ezmesin).
+    final sub = repo.watchById(arg).listen((incoming) {
+      if (incoming == null) return; // silinme: navigasyon üst katmanın işi
+      final current = state.valueOrNull;
+      if (current == null || !incoming.updatedAt.isBefore(current.updatedAt)) {
+        state = AsyncData(incoming);
+      }
+    });
+    ref.onDispose(sub.cancel);
+
+    final initial = await repo.getById(arg);
+    if (initial == null) {
       throw StateError('Karar bulunamadı: $arg');
     }
-    return decision;
+    // Akış build tamamlanmadan daha yeni bir durum getirdiyse onu koru.
+    final streamed = state.valueOrNull;
+    if (streamed != null && streamed.updatedAt.isAfter(initial.updatedAt)) {
+      return streamed;
+    }
+    return initial;
   }
 
   Future<void> _mutate(Decision Function(Decision) transform) async {

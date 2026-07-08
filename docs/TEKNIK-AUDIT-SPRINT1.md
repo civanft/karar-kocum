@@ -6,6 +6,7 @@
 | **Denetlenen sürüm** | `ca247d7` (main) |
 | **Kapsam** | lib/, test/, functions/, firestore.rules, CI |
 | **Genel değerlendirme** | 🟢 Temel sağlam — 2 kritik, 5 yüksek, 6 orta, 4 düşük bulgu |
+| **Güncelleme (2026-07-08)** | ✅ K-1 kapatıldı (`270c720`) · ✅ K-2 istemci ayağı kapatıldı + O-3 birlikte çözüldü; K-2'nin sunucu ayağı (alan bazlı yazım + serverTimestamp) Firestore repo PR'ının ön koşulu olarak açık |
 
 Risk ölçeği: **KRİTİK** = ilk push/Sprint 2'de kesin sorun · **YÜKSEK** = üretimde veri kaybı/maliyet riski · **ORTA** = büyüyen teknik borç · **DÜŞÜK** = iyileştirme fırsatı
 
