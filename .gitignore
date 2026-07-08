@@ -1,0 +1,57 @@
+# --- Flutter / Dart ---
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+doc/api/
+.flutter-plugins
+.flutter-plugins-dependencies
+migrate_working_dir/
+
+# Üretilen kod — CI'da build_runner ile yeniden üretilir
+*.g.dart
+*.freezed.dart
+
+# --- Firebase — flavor başına üretilir, ortama özgü ---
+lib/firebase_options*.dart
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+.firebaserc
+firebase-debug.log
+.firebase/
+
+# --- Cloud Functions ---
+functions/node_modules/
+functions/lib/
+functions/.env*
+functions/*.log
+
+# --- İmzalama ve gizli anahtarlar — ASLA commit edilmez ---
+*.keystore
+*.jks
+key.properties
+*.p8
+*.p12
+*.mobileprovision
+.env
+.env.*
+
+# --- IDE ---
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# --- İşletim sistemi ---
+.DS_Store
+Thumbs.db
+
+# --- Diğer ---
+*.log
+*.swp
+.history
+.atom/
+.claude/launch.json

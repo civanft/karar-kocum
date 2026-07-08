@@ -1,0 +1,25 @@
+{
+  "name": "karar-veriyorum-functions",
+  "private": true,
+  "engines": { "node": "20" },
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "serve": "npm run build && firebase emulators:start --only functions,firestore,auth",
+    "deploy": "firebase deploy --only functions"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.3.0",
+    "firebase-functions": "^5.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "eslint": "^9.7.0",
+    "typescript": "^5.5.3",
+    "vitest": "^2.0.3",
+    "@firebase/rules-unit-testing": "^3.0.4"
+  }
+}

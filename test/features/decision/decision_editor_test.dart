@@ -1,0 +1,133 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:karar_veriyorum/features/decision/data/repositories/in_memory_decision_repository.dart';
+import 'package:karar_veriyorum/features/decision/domain/entities/decision.dart';
+import 'package:karar_veriyorum/features/decision/presentation/providers/decision_editor.dart';
+import 'package:karar_veriyorum/features/decision/presentation/providers/decision_providers.dart';
+
+void main() {
+  late InMemoryDecisionRepository repo;
+  late ProviderContainer container;
+
+  final seed = Decision(
+    id: 'd1',
+    ownerUid: 'local-user',
+    title: 'Telefon seçimi',
+    createdAt: DateTime(2026, 7, 8),
+    updatedAt: DateTime(2026, 7, 8),
+  );
+
+  setUp(() async {
+    repo = InMemoryDecisionRepository();
+    await repo.upsert(seed);
+    container = ProviderContainer(
+      overrides: [
+        decisionRepositoryProvider.overrideWithValue(repo),
+      ],
+    );
+  });
+
+  tearDown(() {
+    container.dispose();
+    repo.dispose();
+  });
+
+  Future<DecisionEditor> editor() async {
+    final sub = container.listen(decisionEditorProvider('d1'), (_, __) {});
+    addTearDown(sub.close);
+    await container.read(decisionEditorProvider('d1').future);
+    return container.read(decisionEditorProvider('d1').notifier);
+  }
+
+  Decision current() =>
+      container.read(decisionEditorProvider('d1')).requireValue;
+
+  test('seçenek ekleme: state güncellenir ve repoya kaydedilir', () async {
+    final e = await editor();
+    final failure = await e.addOption('iPhone 16');
+    expect(failure, isNull);
+    expect(current().options.single.title, 'iPhone 16');
+
+    final persisted = await repo.getById('d1');
+    expect(persisted!.options.single.title, 'iPhone 16');
+  });
+
+  test('11. seçenek reddedilir', () async {
+    final e = await editor();
+    for (var i = 0; i < 10; i++) {
+      expect(await e.addOption('Seçenek $i'), isNull);
+    }
+    final failure = await e.addOption('Fazla seçenek');
+    expect(failure, isNotNull);
+    expect(current().options, hasLength(10));
+  });
+
+  test('seçenek silinince puanları da silinir', () async {
+    final e = await editor();
+    await e.addOption('A');
+    await e.addOption('B');
+    await e.addCriterion('Fiyat', 5);
+    final d = current();
+    final optionA = d.options[0].id;
+    final crit = d.criteria.single.id;
+
+    await e.setScore(optionA, crit, 8);
+    expect(current().scores[optionA]?[crit]?.value, 8);
+
+    await e.removeOption(optionA);
+    expect(current().scores.containsKey(optionA), isFalse);
+  });
+
+  test('kriter silinince matristen ilgili sütun düşer', () async {
+    final e = await editor();
+    await e.addOption('A');
+    await e.addOption('B');
+    await e.addCriterion('Fiyat', 5);
+    await e.addCriterion('Kamera', 7);
+    final d = current();
+    final optionA = d.options[0].id;
+    final price = d.criteria[0].id;
+    final camera = d.criteria[1].id;
+
+    await e.setScore(optionA, price, 8);
+    await e.setScore(optionA, camera, 6);
+
+    await e.removeCriterion(price);
+    expect(current().scores[optionA]?.containsKey(price), isFalse);
+    expect(current().scores[optionA]?[camera]?.value, 6);
+  });
+
+  test('artı/eksi: 140 üstü reddedilir, geçerli eklenir', () async {
+    final e = await editor();
+    await e.addOption('A');
+    final optionId = current().options.single.id;
+
+    expect(
+      await e.addProCon(optionId, 'x' * 141, isPro: true),
+      isNotNull,
+    );
+    expect(await e.addProCon(optionId, 'İyi kamera', isPro: true), isNull);
+    expect(await e.addProCon(optionId, 'Pahalı', isPro: false), isNull);
+
+    final option = current().options.single;
+    expect(option.pros, ['İyi kamera']);
+    expect(option.cons, ['Pahalı']);
+  });
+
+  test('aralık dışı puan sessizce yok sayılır (slider zaten sınırlı)',
+      () async {
+    final e = await editor();
+    await e.addOption('A');
+    await e.addCriterion('Fiyat', 5);
+    final d = current();
+    await e.setScore(d.options.single.id, d.criteria.single.id, 11);
+    expect(current().scores, isEmpty);
+  });
+
+  test('mutasyon updatedAt damgasını ilerletir', () async {
+    final e = await editor();
+    final before = current().updatedAt;
+    await e.addOption('A');
+    expect(current().updatedAt.isAfter(before), isTrue);
+  });
+}

@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      // plan / planExpiresAt / quota YALNIZ Functions (admin SDK) yazar.
+      allow update: if request.auth != null && request.auth.uid == uid
+        && !request.resource.data.diff(resource.data)
+             .affectedKeys().hasAny(['plan', 'planExpiresAt', 'quota']);
+
+      allow create: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.plan == 'free';
+
+      allow delete: if false; // silme yalnız deleteAccount fonksiyonu üzerinden
+
+      match /decisions/{decisionId} {
+        allow read, delete: if request.auth != null && request.auth.uid == uid;
+
+        allow create, update: if request.auth != null && request.auth.uid == uid
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 3
+          && request.resource.data.title.size() <= 100
+          && request.resource.data.options is list
+          && request.resource.data.options.size() >= 2
+          && request.resource.data.options.size() <= 10
+          // aiAnalysis alanı istemciden değiştirilemez (yalnız Functions yazar)
+          && (!('aiAnalysis' in request.resource.data)
+              || (resource != null
+                  && request.resource.data.aiAnalysis == resource.data.aiAnalysis));
+      }
+    }
+
+    match /templates/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /aiJobs/{id} {
+      allow read, write: if false; // yalnız admin SDK
+    }
+  }
+}

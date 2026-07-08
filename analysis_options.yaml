@@ -1,0 +1,29 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+    - "lib/firebase_options*.dart"
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+
+linter:
+  rules:
+    # Katman disiplini ve kalite
+    always_declare_return_types: true
+    avoid_dynamic_calls: true
+    avoid_print: true
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_final_locals: true
+    require_trailing_commas: true
+    unawaited_futures: true
+    directives_ordering: true
+
+# Katman bağımlılık kuralı (TEKNIK-MIMARI.md §2):
+#   presentation → domain ← data ; domain saf Dart (flutter import yok)
+#   core, features/'ı import edemez.
+# Bu kural CI'da scripts/check_layers.sh ile denetlenir (custom_lint kuralı v1.1'de).

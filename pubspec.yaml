@@ -1,0 +1,84 @@
+name: karar_veriyorum
+description: AI destekli karar asistanı — önemli kararlarını dakikalar içinde yapılandır, puanla ve tarafsız analiz al.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.1
+
+  # Routing
+  go_router: ^14.2.0
+
+  # Modeller
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  # Network
+  dio: ^5.5.0
+
+  # Firebase
+  firebase_core: ^3.3.0
+  firebase_auth: ^5.1.4
+  cloud_firestore: ^5.2.1
+  cloud_functions: ^5.0.4
+  firebase_analytics: ^11.2.1
+  firebase_crashlytics: ^4.0.4
+  firebase_remote_config: ^5.0.4
+  firebase_app_check: ^0.3.0
+  firebase_storage: ^12.1.3
+
+  # Giriş sağlayıcıları
+  google_sign_in: ^6.2.1
+  sign_in_with_apple: ^6.1.1
+
+  # Abonelik
+  purchases_flutter: ^8.1.0 # RevenueCat
+
+  # Yerel depolama / yardımcılar
+  shared_preferences: ^2.2.3
+  flutter_secure_storage: ^9.2.2
+  cached_network_image: ^3.3.1
+  intl: ^0.20.2
+
+  # PDF & paylaşım
+  pdf: ^3.11.0
+  printing: ^5.13.1
+  share_plus: ^10.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+
+  # Code-gen
+  build_runner: ^2.4.11
+  freezed: ^2.5.7
+  json_serializable: ^6.8.0
+  # riverpod_generator + custom_lint + riverpod_lint: analyzer 7.6 ile uyumsuz
+  # (build_runner'ı kırıyor). Sprint 1 codegen'siz düz provider kullanıyor;
+  # toolchain güncellenince yeniden değerlendirilecek (bkz. Sprint 1 raporu).
+
+  # Test
+  mocktail: ^1.0.4
+  fake_cloud_firestore: ^3.0.2
+  golden_toolkit: ^0.15.0
+
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  generate: true # l10n
+
+  assets:
+    - assets/images/
+    - assets/icons/
