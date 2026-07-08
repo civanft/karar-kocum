@@ -39,6 +39,23 @@ class UnexpectedFailure extends Failure {
   final StackTrace stackTrace;
 }
 
+/// Kullanıcıya gösterilecek mesaj eşlemesi.
+/// NOT (audit O-2): metinler l10n'a taşındığında bu extension presentation
+/// katmanına inecek; domain code-only Failure taşıyacak.
+extension FailureMessage on Failure {
+  String get userMessage => switch (this) {
+        ValidationFailure(:final message) => message,
+        NetworkFailure() => 'Bağlantı yok — internet gelince tekrar dene.',
+        QuotaFailure() => 'Aylık karar hakkın doldu.',
+        AiFailure(:final retryable) => retryable
+            ? 'Analiz şu an yapılamadı, birazdan tekrar dene.'
+            : 'Analiz yapılamadı.',
+        ModeratedFailure(:final safeRedirectMessage) => safeRedirectMessage,
+        AuthFailure() => 'Oturum hatası — yeniden giriş yapmayı dene.',
+        UnexpectedFailure() => 'Kaydedilemedi — tekrar dene.',
+      };
+}
+
 /// Basit Result tipi: ya değer ya Failure.
 sealed class Result<T> {
   const Result();
