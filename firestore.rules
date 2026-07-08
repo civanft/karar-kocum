@@ -1,34 +1,68 @@
 rules_version = '2';
+
+// Karar Veriyorum güvenlik kuralları — docs/FIRESTORE-VERI-MODELI.md ile senkron.
+// İlke: istemci yalnız kendi verisini okur/yazar; sunucu-sahipli alanlar ve
+// koleksiyonlar (plan, quota, aiAnalyses, subscriptions) istemciye kapalıdır.
 service cloud.firestore {
   match /databases/{db}/documents {
 
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
     match /users/{uid} {
-      allow read: if request.auth != null && request.auth.uid == uid;
+      allow read: if isOwner(uid);
 
       // plan / planExpiresAt / quota YALNIZ Functions (admin SDK) yazar.
-      allow update: if request.auth != null && request.auth.uid == uid
+      allow update: if isOwner(uid)
         && !request.resource.data.diff(resource.data)
              .affectedKeys().hasAny(['plan', 'planExpiresAt', 'quota']);
 
-      allow create: if request.auth != null && request.auth.uid == uid
+      allow create: if isOwner(uid)
         && request.resource.data.plan == 'free';
 
       allow delete: if false; // silme yalnız deleteAccount fonksiyonu üzerinden
 
       match /decisions/{decisionId} {
-        allow read, delete: if request.auth != null && request.auth.uid == uid;
+        function decisionValid() {
+          let d = request.resource.data;
+          return d.ownerUid == uid                          // audit Y-5
+            && d.title is string
+            && d.title.size() >= 3 && d.title.size() <= 100
+            && d.options is list
+            && d.options.size() >= 2 && d.options.size() <= 10  // Limits.maxOptions
+            && d.criteria is list
+            && d.criteria.size() <= 15;
+          // Eleman-içi derin doğrulama (ad/açıklama/madde limitleri — Y-3)
+          // Functions katmanında zod ile; rules üst-seviye şekli korur.
+        }
 
-        allow create, update: if request.auth != null && request.auth.uid == uid
-          && request.resource.data.title is string
-          && request.resource.data.title.size() >= 3
-          && request.resource.data.title.size() <= 100
-          && request.resource.data.options is list
-          && request.resource.data.options.size() >= 2
-          && request.resource.data.options.size() <= 10
-          // aiAnalysis alanı istemciden değiştirilemez (yalnız Functions yazar)
-          && (!('aiAnalysis' in request.resource.data)
-              || (resource != null
-                  && request.resource.data.aiAnalysis == resource.data.aiAnalysis));
+        // latestAnalysisId ve 'analyzed' statüsü yalnız Functions yazar.
+        function serverFieldsUntouched() {
+          return !request.resource.data.diff(resource.data)
+                   .affectedKeys().hasAny(['latestAnalysisId'])
+            && (request.resource.data.status != 'analyzed'
+                || resource.data.status == 'analyzed');
+        }
+
+        allow read, delete: if isOwner(uid);
+        allow create: if isOwner(uid) && decisionValid()
+          && !('latestAnalysisId' in request.resource.data)
+          && request.resource.data.status != 'analyzed';
+        allow update: if isOwner(uid) && decisionValid()
+          && serverFieldsUntouched();
+
+        // AI analizleri: fiziksel olarak ayrık yazma yolu (AD-9, audit K-2).
+        match /aiAnalyses/{analysisId} {
+          allow read: if isOwner(uid);
+          allow write: if false; // yalnız Functions (admin SDK)
+        }
+      }
+
+      // Abonelik olay kayıtları: denetim izi, yalnız webhook yazar.
+      match /subscriptions/{eventId} {
+        allow read: if isOwner(uid);
+        allow write: if false; // yalnız revenuecatWebhook (admin SDK)
       }
     }
 
@@ -38,7 +72,7 @@ service cloud.firestore {
     }
 
     match /aiJobs/{id} {
-      allow read, write: if false; // yalnız admin SDK
+      allow read, write: if false; // ops-iç, yalnız admin SDK
     }
   }
 }

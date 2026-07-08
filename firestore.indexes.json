@@ -23,7 +23,44 @@
         { "fieldPath": "searchTokens", "arrayConfig": "CONTAINS" },
         { "fieldPath": "updatedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "aiAnalyses",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "tier", "order": "ASCENDING" },
+        { "fieldPath": "generatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "subscriptions",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "environment", "order": "ASCENDING" },
+        { "fieldPath": "eventTimestamp", "order": "DESCENDING" }
+      ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "decisions",
+      "fieldPath": "scores",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "decisions",
+      "fieldPath": "options",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "aiAnalyses",
+      "fieldPath": "perOption",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "subscriptions",
+      "fieldPath": "raw",
+      "indexes": []
+    }
+  ]
 }
