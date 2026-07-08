@@ -1,0 +1,9 @@
+# json_serializable proje ayarları
+# explicit_to_json: iç içe Freezed nesneleri (Option, Criterion, CellScore)
+# toJson'da Map'e çevrilir — Firestore yazımı için zorunlu.
+targets:
+  $default:
+    builders:
+      json_serializable:
+        options:
+          explicit_to_json: true

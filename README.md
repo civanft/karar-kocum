@@ -45,7 +45,8 @@ Her PR şunlardan geçmek zorunda (CI: `.github/workflows/ci.yaml`):
 dart format --output=none --set-exit-if-changed lib test   # format
 flutter analyze --fatal-infos                              # sıfır bulgu
 bash scripts/check_layers.sh                               # katman kuralları
-flutter test                                               # tüm testler yeşil
+flutter test --coverage                                    # tüm testler yeşil
+bash scripts/check_coverage.sh 80                          # kapsam ≥ %80
 ```
 
 Katman kuralı: `presentation → domain ← data`; domain saf Dart (flutter import edemez); `core/`, `features/`'ı import edemez.

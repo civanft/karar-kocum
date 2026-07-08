@@ -57,6 +57,24 @@ docs(architecture): AD-9 offline strateji kararını ekle
 
 Test adlandırması: davranış cümlesi, Türkçe ("`seçenek silinince puanları da silinir`").
 
+## Kapsam (coverage) — yerel komutlar
+
+```sh
+flutter test --coverage                 # coverage/lcov.info üretir
+bash scripts/check_coverage.sh          # %80 kapısı + en düşük 5 dosya
+bash scripts/check_coverage.sh 90       # farklı eşikle denemek için
+
+# İsteğe bağlı HTML raporu (brew install lcov gerektirir):
+genhtml coverage/lcov.info -o coverage/html && open coverage/html/index.html
+```
+
+Kurallar ve bilinmesi gerekenler:
+
+- **CI'da eşik %80'dir ve altı pipeline'ı kırar** — PR göndermeden önce yerelde çalıştır.
+- Üretilen kod (`*.g.dart`, `*.freezed.dart`, `firebase_options*`) hesaptan hariçtir; el yazması kod ölçülür.
+- Ölçüm, testlerin yüklediği dosyaları kapsar: hiç test import'u olmayan bir dosya paydaya girmez. Yeni ekran eklerken en az bir widget testi de ekle ki dosya ölçüme dahil olsun — "görünmediği için %100" yanılsamasına düşme.
+- Kapsamı düşüren dosyaları script zaten listeler; PR'da önce o listeye bak.
+
 ## Geliştirme akışı
 
 ```sh
