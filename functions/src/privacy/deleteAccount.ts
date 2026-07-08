@@ -1,9 +1,16 @@
-/** KVKK hesap silme kaskadı — Sprint 6 stub'ı (bkz. ai/analyze.ts notu). */
-import { HttpsError, onCall } from "firebase-functions/v2/https";
+/** KVKK hesap silme kaskadı — Sprint 6; altyapı (App Check+bağlam) bağlı. */
+import { onCall } from "firebase-functions/v2/https";
 
-export const deleteAccount = onCall(() => {
-  throw new HttpsError(
-    "unimplemented",
-    "deleteAccount Sprint 6'da devreye girecek.",
-  );
-});
+import { AppError, toHttpsError } from "../core/errors.js";
+import { buildContext } from "../middleware/context.js";
+
+export const deleteAccount = onCall(
+  { enforceAppCheck: true, consumeAppCheckToken: true },
+  (request) => {
+    const ctx = buildContext("deleteAccount", request);
+    throw toHttpsError(
+      new AppError("unimplemented", "Hesap silme Sprint 6'da devreye girecek."),
+      ctx,
+    );
+  },
+);
