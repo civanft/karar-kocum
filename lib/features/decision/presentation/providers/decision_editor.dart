@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/error/failure.dart';
@@ -6,13 +8,33 @@ import '../../domain/repositories/decision_repository.dart';
 import '../../domain/validators/decision_validator.dart';
 import 'decision_providers.dart';
 
+/// Sürekli mutasyonların (slider) yazım birleştirme süresi — audit Y-2.
+/// Testler kısa süreyle override eder.
+final autosaveDebounceProvider =
+    Provider<Duration>((_) => const Duration(milliseconds: 800));
+
+/// Debounce'lu yazım başarısız olursa buraya düşer (UI snackbar'ı Sprint 3
+/// cilasında bağlanacak); null = son yazım başarılı.
+final autosaveFailureProvider = StateProvider<Failure?>((_) => null);
+
 /// Taslak düzenleme durum makinesi — TEKNIK-MIMARI.md §6.1
 /// Her mutasyon: state güncelle → repository'ye kaydet.
 /// (Firestore'a geçişte 800 ms debounce eklenecek; in-memory'de gereksiz.)
 class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
+  late DecisionRepository _repo;
+  DecisionPatch? _pendingPatch;
+  Timer? _debounceTimer;
+
   @override
   Future<Decision> build(String arg) async {
     final repo = ref.watch(decisionRepositoryProvider);
+    _repo = repo;
+    ref.onDispose(() {
+      _debounceTimer?.cancel();
+      // Ekrandan çıkarken bekleyen yazım kaybolmasın (fire-and-forget;
+      // ref bu noktadan sonra kullanılamaz, repo alan olarak yakalandı).
+      unawaited(_flushPending(silent: true));
+    });
 
     // Audit K-2: tek seferlik okuma yerine canlı akış — harici yazımlar
     // (ikinci cihaz, Sprint 3'te aiAnalysis yazan Functions) editöre yansır.
@@ -42,6 +64,7 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
   /// İyimser mutasyon (K-2 alan bazlı yazım + geri alma güvenliği):
   ///  1. state hemen güncellenir (UI bekletilmez)
   ///  2. YALNIZ değişen alanlar [DecisionPatch] ile depoya yazılır
+  ///     (bekleyen debounce patch'i sıralama bozulmasın diye birleştirilir)
   ///  3. yazım başarısız olursa state geri alınır ve Failure döner
   ///     (audit Y-1: sessiz state/depo ayrışması imkânsız)
   Future<Failure?> _mutate(
@@ -52,15 +75,79 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
     if (previous == null) return null;
     final updated = transform(previous).copyWith(updatedAt: DateTime.now());
     state = AsyncData(updated);
+
+    // Bekleyen debounce patch'ini bu yazıma katla — ayrı zamanlayıcıdan
+    // sonra gelip daha yeni alanları ezmesin (state zinciri tek sıralı).
+    final merged = _mergePatches(_takePending(), patchOf(updated));
     try {
       await ref
           .read(decisionRepositoryProvider)
-          .applyPatch(previous.id, patchOf(updated));
+          .applyPatch(previous.id, merged);
       return null;
     } catch (error, stackTrace) {
       state = AsyncData(previous); // iyimser güncellemeyi geri al
       return UnexpectedFailure(error, stackTrace);
     }
+  }
+
+  /// Sürekli mutasyonlar için debounce'lu yol (audit Y-2): state anında,
+  /// yazım [autosaveDebounceProvider] süresi doluncaya dek birleştirilir.
+  /// Slider onChangeEnd → [flushPendingWrites] anında yazdırır.
+  void _mutateDebounced(
+    Decision Function(Decision) transform,
+    DecisionPatch Function(Decision updated) patchOf,
+  ) {
+    final previous = state.valueOrNull;
+    if (previous == null) return;
+    final updated = transform(previous).copyWith(updatedAt: DateTime.now());
+    state = AsyncData(updated);
+
+    _pendingPatch = _mergePatches(_pendingPatch, patchOf(updated));
+    _debounceTimer?.cancel();
+    _debounceTimer =
+        Timer(ref.read(autosaveDebounceProvider), flushPendingWrites);
+  }
+
+  /// Bekleyen birleşik yazımı hemen gönderir (slider bırakıldığında,
+  /// ekran kapanırken, ya da testlerde deterministik akış için).
+  Future<void> flushPendingWrites() => _flushPending(silent: false);
+
+  Future<void> _flushPending({required bool silent}) async {
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
+    final patch = _takePending();
+    if (patch == null || patch.isEmpty) return;
+    try {
+      await _repo.applyPatch(arg, patch);
+    } catch (error, stackTrace) {
+      if (silent) return; // dispose yolu: provider'lara erişilemez
+      ref.read(autosaveFailureProvider.notifier).state =
+          UnexpectedFailure(error, stackTrace);
+      // Otoriter duruma yeniden hizalan (iyimser state depoyla ayrışmasın).
+      final fresh = await _repo.getById(arg);
+      if (fresh != null) state = AsyncData(fresh);
+    }
+  }
+
+  DecisionPatch? _takePending() {
+    final patch = _pendingPatch;
+    _pendingPatch = null;
+    return patch;
+  }
+
+  static DecisionPatch _mergePatches(
+    DecisionPatch? older,
+    DecisionPatch newer,
+  ) {
+    if (older == null) return newer;
+    return DecisionPatch(
+      title: newer.title ?? older.title,
+      options: newer.options ?? older.options,
+      criteria: newer.criteria ?? older.criteria,
+      scores: newer.scores ?? older.scores,
+      isFavorite: newer.isFavorite ?? older.isFavorite,
+      status: newer.status ?? older.status,
+    );
   }
 
   // ---- Seçenekler (US-A3) ----
@@ -176,9 +263,10 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
     );
   }
 
-  Future<Failure?> setCriterionWeight(String criterionId, int weight) async {
-    if (DecisionValidator.criterionWeight(weight) != null) return null;
-    return _mutate(
+  /// Slider mutasyonu — debounce'lu (Y-2); bırakınca [flushPendingWrites].
+  void setCriterionWeight(String criterionId, int weight) {
+    if (DecisionValidator.criterionWeight(weight) != null) return;
+    _mutateDebounced(
       (d) => d.copyWith(
         criteria: [
           for (final c in d.criteria)
@@ -202,13 +290,10 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
 
   // ---- Puan matrisi (US-B4) ----
 
-  Future<Failure?> setScore(
-    String optionId,
-    String criterionId,
-    int value,
-  ) async {
-    if (DecisionValidator.cellScore(value) != null) return null;
-    return _mutate(
+  /// Slider mutasyonu — debounce'lu (Y-2); bırakınca [flushPendingWrites].
+  void setScore(String optionId, String criterionId, int value) {
+    if (DecisionValidator.cellScore(value) != null) return;
+    _mutateDebounced(
       (d) {
         final scores = {
           for (final e in d.scores.entries) e.key: Map.of(e.value),

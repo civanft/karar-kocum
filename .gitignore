@@ -14,8 +14,9 @@ migrate_working_dir/
 *.g.dart
 *.freezed.dart
 
-# --- Firebase — flavor başına üretilir, ortama özgü ---
-lib/firebase_options*.dart
+# --- Firebase ---
+# firebase_options.dart COMMIT EDİLİR (istemci kimlikleri gizli değildir);
+# repo'daki placeholder, 'flutterfire configure' ile üzerine yazılır.
 android/app/google-services.json
 ios/Runner/GoogleService-Info.plist
 .firebaserc

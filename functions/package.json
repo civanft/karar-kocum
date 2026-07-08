@@ -7,6 +7,7 @@
     "build": "tsc",
     "lint": "eslint src",
     "test": "vitest run",
+    "test:rules": "cd .. && npx --yes firebase-tools emulators:exec --only firestore --project demo-karar \"cd functions && npx vitest run --config vitest.rules.config.ts\"",
     "serve": "npm run build && firebase emulators:start --only functions,firestore,auth",
     "deploy": "firebase deploy --only functions"
   },

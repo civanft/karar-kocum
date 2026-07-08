@@ -46,3 +46,9 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - run: npm test
+      - name: Firestore rules testleri (emulator, Y-5 negatif senaryolar dahil)
+        working-directory: ${{ github.workspace }}
+        run: >
+          npx --yes firebase-tools emulators:exec --only firestore
+          --project demo-karar
+          "cd functions && npx vitest run --config vitest.rules.config.ts"

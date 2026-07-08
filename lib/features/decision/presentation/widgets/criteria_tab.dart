@@ -63,6 +63,8 @@ class CriteriaTab extends ConsumerWidget {
                       criterion.id,
                       v.round(),
                     ),
+                    // Y-2: bırakınca tek yazım.
+                    onChangeEnd: (_) => notifier.flushPendingWrites(),
                   ),
                 ],
               ),

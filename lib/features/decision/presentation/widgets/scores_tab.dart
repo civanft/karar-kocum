@@ -76,6 +76,9 @@ class ScoresTab extends ConsumerWidget {
                               criterion.id,
                               v.round(),
                             ),
+                            // Y-2: sürükleme boyunca yazım birikir,
+                            // bırakınca tek yazım gider.
+                            onChangeEnd: (_) => notifier.flushPendingWrites(),
                           ),
                         ),
                         SizedBox(
