@@ -63,7 +63,7 @@ void main() {
 
     final state = c.read(analysisControllerProvider('d1'));
     expect(state, isA<AnalysisQuotaExceeded>());
-    expect((state as AnalysisQuotaExceeded).monthlyLimit, 5);
+    expect((state as AnalysisQuotaExceeded).totalCredits, 5);
   });
 
   test('çift istek koruması: Loading iken ikinci analyze yok sayılır',

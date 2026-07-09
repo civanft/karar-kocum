@@ -55,10 +55,10 @@ class FakePorts implements AnalysisPorts {
   content: unknown | null = validContent;
   cached: StoredAnalysis | null = null;
   plan: "free" | "premium" = "free";
-  used = 0;
+  /** null = alan hiç yazılmamış (yeni kullanıcı) → sunucu lazy-init. */
+  credits: number | null = null;
   commits = 0;
   jobs: Array<{ status: string; costUsd: number }> = [];
-  commitShouldRace = false;
 
   async readDecisionContent() {
     return this.content;
@@ -68,22 +68,23 @@ class FakePorts implements AnalysisPorts {
     return this.cached;
   }
 
-  async peekQuota(month: string) {
-    return { plan: this.plan, month, used: this.used };
+  async peekCredits() {
+    return {
+      plan: this.plan,
+      remaining: this.credits ?? 5,
+    };
   }
 
-  async commitAnalysis(params: {
-    freeQuotaLimit: number;
-  }): Promise<string> {
-    if (
-      this.commitShouldRace &&
-      this.plan === "free" &&
-      this.used >= params.freeQuotaLimit
-    ) {
-      throw new AppError("quota-exceeded", "doldu");
+  async commitAnalysis(params: { initialCredits: number }): Promise<string> {
+    // Gerçek transaction'ın eşleniği: yeniden doğrula + düş.
+    if (this.plan !== "premium") {
+      const remaining = this.credits ?? params.initialCredits;
+      if (remaining <= 0) {
+        throw new AppError("quota-exceeded", "bitti", { remaining: 0 });
+      }
+      this.credits = remaining - 1;
     }
     this.commits++;
-    this.used++;
     return `analysis-${this.commits}`;
   }
 
@@ -161,7 +162,7 @@ describe("AnalyzeService — mutlu yol", () => {
     expect(result.analysis.summary).toBe(validOutput.summary);
     expect(result.analysis.perOption["a"]!.strengths).toEqual(["kamera"]);
     expect(ports.commits).toBe(1);
-    expect(ports.used).toBe(1); // kota başarıyla birlikte düştü
+    expect(ports.credits).toBe(4); // kredi başarıyla birlikte düştü (5→4)
     expect(ports.jobs[0]!.status).toBe("ok");
     expect(ports.jobs[0]!.costUsd).toBeGreaterThan(0);
     expect(spend.total).toBeGreaterThan(0); // devre kesici sayacı beslendi
@@ -192,7 +193,7 @@ describe("önbellek (§5)", () => {
     expect(rate.calls).toBe(0); // önbellek rate limit'ten ÖNCE (§1.2)
     expect(gateway.moderations).toBe(0);
     expect(gateway.completions).toBe(0);
-    expect(ports.used).toBe(0); // kota yanmadı
+    expect(ports.credits, 'kredi yanmadı').toBeNull();
     expect(ports.jobs[0]!.status).toBe("cache_hit");
   });
 });
@@ -200,17 +201,43 @@ describe("önbellek (§5)", () => {
 describe("kota adaleti (§1.2 kural)", () => {
   it("free kota dolu → quota-exceeded, LLM çağrılmaz", async () => {
     const { service, ports, gateway } = make();
-    ports.used = 5;
+    ports.credits = 0; // kredisi bitmiş kullanıcı
 
     const error = await service.run(ctx, request).catch((e: unknown) => e);
     expect((error as AppError).code).toBe("quota-exceeded");
     expect(gateway.completions).toBe(0);
   });
 
+  it("kredi 1→0: analiz geçer, İKİNCİSİ reddedilir, negatif imkânsız",
+    async () => {
+      const { service, ports, gateway } = make();
+      ports.credits = 1;
+
+      const first = await service.run(ctx, request);
+      expect(first.cached).toBe(false);
+      expect(ports.credits).toBe(0); // tam sıfır — eksiye geçmedi
+
+      const error = await service
+        .run(ctx, { decisionId: "d2", tier: "basic" })
+        .catch((e: unknown) => e);
+      expect((error as AppError).code).toBe("quota-exceeded");
+      expect(ports.credits).toBe(0); // red, değeri DEĞİŞTİRMEDİ
+      expect(gateway.completions).toBe(1); // ikinci istek LLM'e gitmedi
+    });
+
+  it("yeni kullanıcı (alan yok): lazy-init 5'ten başlar, 4'e düşer",
+    async () => {
+      const { service, ports } = make();
+      expect(ports.credits).toBeNull(); // alan hiç yazılmamış
+
+      await service.run(ctx, request);
+      expect(ports.credits).toBe(4); // 5 (örtük) - 1
+    });
+
   it("premium kota sınırından etkilenmez", async () => {
     const { service, ports } = make();
     ports.plan = "premium";
-    ports.used = 999;
+    ports.credits = 0; // premium için anlamsız — bypass beklenir
 
     const result = await service.run(ctx, { ...request, tier: "advanced" });
     expect(result.cached).toBe(false);
@@ -228,7 +255,7 @@ describe("kota adaleti (§1.2 kural)", () => {
     const error = await service.run(ctx, request).catch((e: unknown) => e);
     expect((error as AppError).code).toBe("moderated");
     expect(gateway.completions).toBe(0);
-    expect(ports.used).toBe(0);
+    expect(ports.credits).toBeNull(); // kredi yanmadı
     expect(ports.commits).toBe(0);
   });
 
@@ -293,6 +320,6 @@ describe("rate limit sırası", () => {
     const error = await service.run(ctx, request).catch((e: unknown) => e);
     expect((error as AppError).code).toBe("rate-limited");
     expect(gateway.completions).toBe(0);
-    expect(ports.used).toBe(0);
+    expect(ports.credits).toBeNull(); // kredi yanmadı
   });
 });

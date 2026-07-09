@@ -13,6 +13,9 @@ abstract final class Limits {
   static const int scoreMin = 1;
   static const int scoreMax = 10;
 
-  static const int freeMonthlyDecisionQuota = 5;
+  /// Kredi modeli (PR #6C-2): kullanıcı başına 5 ücretsiz analiz,
+  /// YENİLENMEZ. functions/src/ai/config.ts INITIAL_FREE_CREDITS ile
+  /// ve firestore.rules korumasıyla senkron.
+  static const int freeAnalysisCredits = 5;
   static const int freeHistoryLimit = 10;
 }

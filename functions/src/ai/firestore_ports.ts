@@ -12,9 +12,10 @@ import {
 import { AppError } from "../core/errors.js";
 import type {
   AnalysisPorts,
-  QuotaSnapshot,
+  CreditsSnapshot,
   StoredAnalysis,
 } from "./analyze_service.js";
+import { INITIAL_FREE_CREDITS } from "./config.js";
 
 export class FirestoreAnalysisPorts implements AnalysisPorts {
   constructor(private readonly uid: string) {}
@@ -52,21 +53,24 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
     return { id: doc.id, ...(doc.data() as Omit<StoredAnalysis, "id">) };
   }
 
-  async peekQuota(currentMonth: string): Promise<QuotaSnapshot> {
+  /** Kredi okuma — alan hiç yazılmamışsa BAŞLANGIÇ değeri kabul edilir
+   *  (sunucu lazy-init: istemcinin krediyi yazma ihtiyacı/yetkisi yok). */
+  async peekCredits(): Promise<CreditsSnapshot> {
     const user = await this.db.doc(`users/${this.uid}`).get();
     const data = user.data() ?? {};
     const plan = data["plan"] === "premium" ? "premium" : "free";
-    const quota = data["quota"] as { month?: string; used?: number } | undefined;
-    // Lazy aylık sıfırlama (§5.1 fonksiyon envanteri notu):
-    const used = quota?.month === currentMonth ? (quota.used ?? 0) : 0;
-    return { plan, month: currentMonth, used };
+    const raw = data["freeAnalysisCredits"];
+    const remaining =
+      typeof raw === "number"
+        ? Math.max(0, Math.trunc(raw)) // bozuk/negatif veri savunması
+        : INITIAL_FREE_CREDITS;
+    return { plan, remaining };
   }
 
   async commitAnalysis(params: {
     decisionId: string;
     analysis: Omit<StoredAnalysis, "id">;
-    currentMonth: string;
-    freeQuotaLimit: number;
+    initialCredits: number;
   }): Promise<string> {
     const userRef = this.db.doc(`users/${this.uid}`);
     const decisionRef = this.decisionRef(params.decisionId);
@@ -76,17 +80,28 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
       const user = await tx.get(userRef);
       const data = user.data() ?? {};
       const plan = data["plan"] === "premium" ? "premium" : "free";
-      const quota = data["quota"] as
-        | { month?: string; used?: number }
-        | undefined;
-      const used =
-        quota?.month === params.currentMonth ? (quota.used ?? 0) : 0;
 
-      // Yarış koruması: ön kontrolden sonra kota dolmuş olabilir.
-      if (plan === "free" && used >= params.freeQuotaLimit) {
-        throw new AppError("quota-exceeded", "Aylık analiz hakkın doldu.", {
-          limit: params.freeQuotaLimit,
-        });
+      if (plan !== "premium") {
+        const raw = data["freeAnalysisCredits"];
+        const remaining =
+          typeof raw === "number"
+            ? Math.max(0, Math.trunc(raw))
+            : params.initialCredits; // ilk analiz: 5'ten başla
+
+        // Yarış koruması: ön kontrolden sonra kredi bitmiş olabilir.
+        // remaining > 0 şartıyla düşüldüğünden NEGATİF DEĞER İMKÂNSIZ.
+        if (remaining <= 0) {
+          throw new AppError(
+            "quota-exceeded",
+            "Ücretsiz analiz hakkın bitti.",
+            { remaining: 0, initial: params.initialCredits },
+          );
+        }
+        tx.set(
+          userRef,
+          { freeAnalysisCredits: remaining - 1 },
+          { merge: true },
+        );
       }
 
       tx.set(analysisRef, {
@@ -97,11 +112,6 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
         latestAnalysisId: analysisRef.id,
         status: "analyzed",
       });
-      tx.set(
-        userRef,
-        { quota: { month: params.currentMonth, used: used + 1 } },
-        { merge: true },
-      );
     });
 
     return analysisRef.id;

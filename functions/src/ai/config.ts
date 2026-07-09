@@ -23,8 +23,12 @@ export function tierConfig(tier: Tier): TierConfig {
   };
 }
 
-/** Aylık ücretsiz kota — Limits.freeMonthlyDecisionQuota ile senkron. */
-export const FREE_MONTHLY_QUOTA = 5;
+/**
+ * Kredi modeli (PR #6C-2): her kullanıcı 5 ücretsiz analiz KREDİSİYLE
+ * başlar; her başarılı analiz 1 düşer; YENİLENMEZ (eski aylık modelin
+ * yerini aldı). Flutter Limits.freeAnalysisCredits ile senkron.
+ */
+export const INITIAL_FREE_CREDITS = 5;
 
 /** Günlük global harcama devre kesici eşiği (USD) — §4.3. */
 export function dailySpendLimitUsd(): number {

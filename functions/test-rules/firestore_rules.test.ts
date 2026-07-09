@@ -84,6 +84,34 @@ describe("users belgesi", () => {
   it("NEGATİF: başkasının profili okunamaz", async () => {
     await assertFails(db("veli").doc("users/ali").get());
   });
+
+  it("NEGATİF (6C-2): freeAnalysisCredits İLE profil oluşturulamaz", async () => {
+    await assertFails(
+      db("ali")
+        .doc("users/ali")
+        .set({ plan: "free", freeAnalysisCredits: 9999 }),
+    );
+  });
+
+  it("NEGATİF (6C-2): freeAnalysisCredits istemciden güncellenemez", async () => {
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin
+        .firestore()
+        .doc("users/ali")
+        .set({ plan: "free", freeAnalysisCredits: 2 });
+    });
+    // artırma, sıfırlama ve silme girişimlerinin tümü reddedilir:
+    await assertFails(
+      db("ali").doc("users/ali").update({ freeAnalysisCredits: 5 }),
+    );
+    await assertFails(
+      db("ali").doc("users/ali").update({ freeAnalysisCredits: 0 }),
+    );
+    // zararsız alan güncellemesi hâlâ serbest:
+    await assertSucceeds(
+      db("ali").doc("users/ali").update({ locale: "tr" }),
+    );
+  });
 });
 
 describe("decisions belgesi", () => {

@@ -11,7 +11,7 @@ import { AppError } from "../core/errors.js";
 import { emitMetric, finishRequest, startTimer } from "../core/metrics.js";
 import type { RequestContext } from "../core/types.js";
 import { computeInputHash } from "./cache.js";
-import { FREE_MONTHLY_QUOTA, tierConfig, type Tier } from "./config.js";
+import { INITIAL_FREE_CREDITS, tierConfig, type Tier } from "./config.js";
 import type { CostCircuitBreaker } from "./cost_control.js";
 import { computeCostUsd } from "./cost_control.js";
 import type { AiGateway } from "./openai_gateway.js";
@@ -39,10 +39,11 @@ export interface StoredAnalysis {
   inputHash: string;
 }
 
-export interface QuotaSnapshot {
+/** Kredi görünümü (PR #6C-2): remaining hiçbir zaman negatif olamaz. */
+export interface CreditsSnapshot {
   plan: "free" | "premium";
-  month: string;
-  used: number;
+  /** Kalan ücretsiz analiz kredisi; alan hiç yazılmamışsa BAŞLANGIÇ (5). */
+  remaining: number;
 }
 
 export interface AnalysisPorts {
@@ -54,13 +55,16 @@ export interface AnalysisPorts {
     inputHash: string,
   ): Promise<StoredAnalysis | null>;
   /** [6] Kota ön kontrolü (salt okuma — düşüm YOK). */
-  peekQuota(currentMonth: string): Promise<QuotaSnapshot>;
-  /** [10] Atomik: kota yeniden doğrula + analiz + işaretçi + kota artışı. */
+  peekCredits(): Promise<CreditsSnapshot>;
+  /**
+   * [10] Atomik: krediyi yeniden doğrula (yarış) + analiz + status +
+   * kredi düşümü TEK transaction'da. Kredi 0 ise fırlatır — düşüm
+   * yalnız remaining > 0 iken yapıldığından NEGATİF DEĞER İMKÂNSIZ.
+   */
   commitAnalysis(params: {
     decisionId: string;
     analysis: Omit<StoredAnalysis, "id">;
-    currentMonth: string;
-    freeQuotaLimit: number;
+    initialCredits: number;
   }): Promise<string>; // analysisId
   /** [11] Maliyet muhasebesi (best-effort). */
   writeJob(job: {
@@ -153,12 +157,13 @@ export class AnalyzeService {
 
     // [6] rate limit + kota ön kontrolü + devre kesici
     await this.rateGuard.check(ctx.uid);
-    const month = currentMonth(this.now);
-    const quota = await this.ports.peekQuota(month);
-    if (quota.plan === "free" && quota.used >= FREE_MONTHLY_QUOTA) {
-      throw new AppError("quota-exceeded", "Aylık analiz hakkın doldu.", {
-        limit: FREE_MONTHLY_QUOTA,
-      });
+    const credits = await this.ports.peekCredits();
+    if (credits.plan === "free" && credits.remaining <= 0) {
+      throw new AppError(
+        "quota-exceeded",
+        "Ücretsiz analiz hakkın bitti.",
+        { remaining: 0, initial: INITIAL_FREE_CREDITS },
+      );
     }
     await this.breaker.ensureAllowed(tier);
 
@@ -196,8 +201,7 @@ export class AnalyzeService {
     const analysisId = await this.ports.commitAnalysis({
       decisionId,
       analysis,
-      currentMonth: month,
-      freeQuotaLimit: FREE_MONTHLY_QUOTA,
+      initialCredits: INITIAL_FREE_CREDITS,
     });
 
     // [11] maliyet muhasebesi + metrikler
@@ -234,10 +238,6 @@ export class AnalyzeService {
       emitMetric(ctx, "ai_error", 1, { stage: "job_write" });
     }
   }
-}
-
-export function currentMonth(now: () => number = Date.now): string {
-  return new Date(now()).toISOString().slice(0, 7); // "2026-07"
 }
 
 export type { DecisionContent };

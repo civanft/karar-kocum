@@ -28,8 +28,10 @@ class AnalysisError extends AnalysisState {
 }
 
 class AnalysisQuotaExceeded extends AnalysisState {
-  const AnalysisQuotaExceeded({required this.monthlyLimit});
-  final int monthlyLimit;
+  const AnalysisQuotaExceeded({required this.totalCredits});
+
+  /// Başlangıçta verilen toplam ücretsiz kredi (yenilenmez — 6C-2).
+  final int totalCredits;
 }
 
 /// 6D-1 mock senaryosu: gerçek istemci (6D-2) gelene dek kontrolcünün
@@ -64,7 +66,7 @@ class AnalysisController
           retryable: true,
         ),
       MockScenario.quotaExceeded =>
-        const AnalysisQuotaExceeded(monthlyLimit: 5),
+        const AnalysisQuotaExceeded(totalCredits: 5),
     };
   }
 

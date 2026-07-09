@@ -13,13 +13,19 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isOwner(uid);
 
-      // plan / planExpiresAt / quota YALNIZ Functions (admin SDK) yazar.
+      // plan / planExpiresAt / quota / freeAnalysisCredits YALNIZ Functions
+      // (admin SDK) yazar — kredi manipülasyonu istemciden imkânsız.
       allow update: if isOwner(uid)
         && !request.resource.data.diff(resource.data)
-             .affectedKeys().hasAny(['plan', 'planExpiresAt', 'quota']);
+             .affectedKeys().hasAny([
+               'plan', 'planExpiresAt', 'quota', 'freeAnalysisCredits'
+             ]);
 
+      // İlk kayıt: istemci profil oluşturabilir ama kredi alanını
+      // GÖNDEREMEZ — "5 ile başlar" kuralını sunucu (lazy-init) uygular.
       allow create: if isOwner(uid)
-        && request.resource.data.plan == 'free';
+        && request.resource.data.plan == 'free'
+        && !('freeAnalysisCredits' in request.resource.data);
 
       allow delete: if false; // silme yalnız deleteAccount fonksiyonu üzerinden
 

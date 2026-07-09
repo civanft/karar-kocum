@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/tokens.dart';
+import '../../../quota/presentation/providers/credits_providers.dart';
 import '../../domain/entities/ai_analysis.dart';
 import '../providers/analysis_providers.dart';
 
@@ -17,9 +18,11 @@ class AnalysisSection extends ConsumerWidget {
     final state = ref.watch(analysisControllerProvider(decisionId));
     final controller =
         ref.read(analysisControllerProvider(decisionId).notifier);
+    final remainingCredits = ref.watch(remainingCreditsProvider).valueOrNull;
 
     return AnalysisStateView(
       state: state,
+      remainingCredits: remainingCredits,
       onAnalyze: controller.analyze,
       onRetry: controller.analyze,
       onReanalyze: () => _confirmReanalyze(context, controller),
@@ -37,7 +40,7 @@ class AnalysisSection extends ConsumerWidget {
         title: const Text('Yeniden analiz edilsin mi?'),
         content: const Text(
           'Mevcut analiz silinip yenisi oluşturulacak. '
-          'Bu işlem aylık analiz hakkından düşer.',
+          'Bu işlem ücretsiz analiz hakkından düşer.',
         ),
         actions: [
           TextButton(
@@ -60,6 +63,7 @@ class AnalysisStateView extends StatelessWidget {
   const AnalysisStateView({
     super.key,
     required this.state,
+    this.remainingCredits,
     this.onAnalyze,
     this.onRetry,
     this.onReanalyze,
@@ -67,6 +71,9 @@ class AnalysisStateView extends StatelessWidget {
   });
 
   final AnalysisState state;
+
+  /// Boş durumda gösterilen kalan kredi (null = henüz yüklenmedi/gizle).
+  final int? remainingCredits;
   final VoidCallback? onAnalyze;
   final VoidCallback? onRetry;
   final VoidCallback? onReanalyze;
@@ -78,7 +85,8 @@ class AnalysisStateView extends StatelessWidget {
       duration: AppTokens.durMed,
       switchInCurve: Curves.easeOut,
       child: switch (state) {
-        AnalysisIdle() => _IdleCard(onAnalyze: onAnalyze),
+        AnalysisIdle() =>
+          _IdleCard(onAnalyze: onAnalyze, remainingCredits: remainingCredits),
         AnalysisLoading() => const _LoadingCard(),
         AnalysisSuccess(:final analysis) => _SuccessCard(
             analysis: analysis,
@@ -87,8 +95,8 @@ class AnalysisStateView extends StatelessWidget {
           ),
         AnalysisError(:final message, :final retryable) =>
           _ErrorCard(message: message, retryable: retryable, onRetry: onRetry),
-        AnalysisQuotaExceeded(:final monthlyLimit) =>
-          _QuotaCard(monthlyLimit: monthlyLimit),
+        AnalysisQuotaExceeded(:final totalCredits) =>
+          _QuotaCard(totalCredits: totalCredits),
       },
     );
   }
@@ -97,8 +105,9 @@ class AnalysisStateView extends StatelessWidget {
 // ---- 1. Boş durum: CTA ----
 
 class _IdleCard extends StatelessWidget {
-  const _IdleCard({this.onAnalyze});
+  const _IdleCard({this.onAnalyze, this.remainingCredits});
   final VoidCallback? onAnalyze;
+  final int? remainingCredits;
 
   @override
   Widget build(BuildContext context) {
@@ -128,6 +137,15 @@ class _IdleCard extends StatelessWidget {
             icon: const Icon(Icons.auto_awesome),
             label: const Text('AI Analizini Başlat'),
           ),
+          if (remainingCredits != null) ...[
+            const SizedBox(height: AppTokens.s2),
+            Text(
+              'Kalan ücretsiz analiz: $remainingCredits',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ],
         ],
       ),
     );
@@ -395,28 +413,12 @@ class _ErrorCard extends StatelessWidget {
 // ---- 5. Kota doldu ----
 
 class _QuotaCard extends StatelessWidget {
-  const _QuotaCard({required this.monthlyLimit});
-  final int monthlyLimit;
+  const _QuotaCard({required this.totalCredits});
+  final int totalCredits;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final now = DateTime.now();
-    final nextMonth = DateTime(now.year, now.month + 1, 1);
-    const months = [
-      'Ocak',
-      'Şubat',
-      'Mart',
-      'Nisan',
-      'Mayıs',
-      'Haziran',
-      'Temmuz',
-      'Ağustos',
-      'Eylül',
-      'Ekim',
-      'Kasım',
-      'Aralık',
-    ];
 
     return _Shell(
       key: const ValueKey('analysis-quota'),
@@ -428,15 +430,14 @@ class _QuotaCard extends StatelessWidget {
               Icon(Icons.hourglass_bottom, color: theme.colorScheme.tertiary),
               const SizedBox(width: AppTokens.s2),
               Text(
-                'Aylık analiz hakkın doldu',
+                'Ücretsiz analiz hakkın bitti',
                 style: theme.textTheme.titleSmall,
               ),
             ],
           ),
           const SizedBox(height: AppTokens.s2),
           Text(
-            'Bu ay $monthlyLimit ücretsiz AI analizinin tamamını kullandın. '
-            'Hakların 1 ${months[nextMonth.month - 1]}\'ta yenilenecek.',
+            '$totalCredits ücretsiz AI analizinin tamamını kullandın.',
             style: theme.textTheme.bodyMedium
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),

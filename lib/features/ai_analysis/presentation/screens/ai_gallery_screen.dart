@@ -22,7 +22,7 @@ class AiGalleryScreen extends StatelessWidget {
             'edip tekrar deneyebilirsin.',
         retryable: true,
       ),
-      '5 · Kota doldu': const AnalysisQuotaExceeded(monthlyLimit: 5),
+      '5 · Kota doldu': const AnalysisQuotaExceeded(totalCredits: 5),
     };
 
     return Scaffold(
