@@ -19,8 +19,8 @@ if grep -rnE "import .*(\/data\/|\/presentation\/)" lib/features/*/domain 2>/dev
   fail=1
 fi
 
-# 3) core → features yasak
-if grep -rn "package:karar_veriyorum/features" lib/core 2>/dev/null; then
+# 3) core → features yasak (paket VE göreli yol biçimleri)
+if grep -rnE "import '(package:karar_veriyorum/features|(\.\./)+features/)" lib/core 2>/dev/null; then
   echo "HATA: core katmanı features import edemez." >&2
   fail=1
 fi

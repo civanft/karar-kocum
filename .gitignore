@@ -19,7 +19,7 @@ migrate_working_dir/
 # repo'daki placeholder, 'flutterfire configure' ile üzerine yazılır.
 android/app/google-services.json
 ios/Runner/GoogleService-Info.plist
-.firebaserc
+# .firebaserc commit edilir (yalnız proje takma adları)
 firebase-debug.log
 .firebase/
 
@@ -56,3 +56,4 @@ Thumbs.db
 .history
 .atom/
 .claude/launch.json
+scripts/smoke/node_modules/

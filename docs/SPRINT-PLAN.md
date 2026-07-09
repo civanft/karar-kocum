@@ -46,6 +46,13 @@ Firebase (tümü), AI analizi, şablonlar (statik kart görselleri hariç), gör
 
 **Hedef:** Veriler cihaz yeniden başlatınca kaybolmasın; ilk gerçek AI analizi üretilsin.
 
+**Durum (2026-07-09):** PR#1 veri katmanı ✅ · **PR#2 Firebase+kimlik ✅ TAMAMLANDI
+(canlı smoke 14/14: anonim auth, Google provider, Firestore CRUD, rules
+negatifleri — `scripts/smoke/live_smoke_test.mjs`)** · PR#3 Functions altyapısı ✅
+· PR#4 AI boru hattı ✅ (deploy Blaze bekliyor) · PR#5 observability ✅.
+Sprint'ten kalanlar: şablon koleksiyonu seed'i, suggestCriteria gerçek
+implementasyonu, Functions deploy (Blaze ön koşulu).
+
 - Firebase projeleri (dev/staging/prod) + `flutterfire configure` + App Check
 - Anonim oturum otomatik açılır (US-E1'in ilk yarısı)
 - `FirestoreDecisionRepository` (offline persistence açık) — in-memory ile arayüz değişmeden yer değiştirir; autosave debounce (800 ms)

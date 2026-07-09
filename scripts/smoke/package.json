@@ -1,0 +1,7 @@
+{
+  "name": "karar-smoke",
+  "private": true,
+  "type": "module",
+  "scripts": { "smoke": "node live_smoke_test.mjs" },
+  "dependencies": { "firebase": "^10.14.0" }
+}

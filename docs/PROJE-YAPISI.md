@@ -16,7 +16,7 @@ karar-veriyorum/
 │   │   ├── extensions/      #   Dart/Flutter extension'ları
 │   │   ├── l10n/            #   arb dosyaları (Sprint 6'da doldurulur)
 │   │   ├── network/         #   Dio kurulumu (Sprint 2)
-│   │   ├── router/          #   GoRouter haritası + guard'lar
+│   │   ├── (router → lib/app_router.dart: kompozisyon katmanı)
 │   │   ├── services/        #   id_generator, analytics sarmalayıcıları
 │   │   ├── theme/           #   Material 3 tema + tasarım token'ları
 │   │   └── widgets/         #   paylaşılan görsel bileşenler
@@ -67,4 +67,6 @@ Denetim: `bash scripts/check_layers.sh` — CI'da her PR'da koşar.
 2. Önce domain: entity → validator → repo arayüzü → use case (testleriyle).
 3. Sonra data: repo implementasyonu (in-memory/fake ile başla, testte yaşamaya devam eder).
 4. En son presentation: provider → screen; iş mantığı widget'a sızmasın.
-5. Rota `core/router/app_router.dart`'a eklenir; ürün limiti gerekiyorsa `core/constants/limits.dart`'a.
+5. Rota `lib/app_router.dart`'a eklenir (router, feature'ları birleştirdiği
+   için core'da DEĞİL uygulama kompozisyon katmanında yaşar); ürün limiti
+   gerekiyorsa `core/constants/limits.dart`'a.
