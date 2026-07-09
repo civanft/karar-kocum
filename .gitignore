@@ -56,3 +56,4 @@ Thumbs.db
 .history
 .atom/
 .claude/launch.json
+scripts/smoke/node_modules/
