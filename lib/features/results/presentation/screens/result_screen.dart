@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/services/analytics/analytics_service.dart';
 import '../../../../core/theme/tokens.dart';
+import '../../../ai_analysis/presentation/widgets/analysis_card.dart';
 import '../../../decision/presentation/providers/decision_editor.dart';
 import '../../../decision/presentation/providers/decision_providers.dart';
 import '../../../scoring/domain/entities/scoring_types.dart';
@@ -114,17 +115,8 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
                   isWinner: score.optionId == result.recommendedOptionId,
                 ),
               const SizedBox(height: AppTokens.s6),
-              // Sprint 3 önizlemesi — pasif AI kartı
-              const Card(
-                child: ListTile(
-                  leading: Icon(Icons.auto_awesome),
-                  title: Text('AI Analizi'),
-                  subtitle: Text(
-                    'Tarafsız değerlendirme, riskler ve gözden kaçanlar — yakında.',
-                  ),
-                  enabled: false,
-                ),
-              ),
+              // AI analiz bölümü (6D-1: mock kontrolcü; 6D-2: gerçek istemci)
+              AnalysisSection(decisionId: decisionId),
             ],
           ),
         );

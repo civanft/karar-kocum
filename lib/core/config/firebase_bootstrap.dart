@@ -26,12 +26,15 @@ enum FirebaseStatus {
 /// Remote Config/Analytics sonraki sprintlerde eklenirken de bekletilmez.
 abstract final class FirebaseBootstrap {
   static Future<FirebaseStatus> tryInitialize() async {
-    final options = DefaultFirebaseOptions.currentPlatform;
-    if (options.apiKey.startsWith(DefaultFirebaseOptions.placeholderMarker)) {
-      debugPrint(
-        'FirebaseBootstrap: placeholder yapılandırma — yerel mod. '
-        "Gerçek proje için 'flutterfire configure' çalıştırın.",
-      );
+    final FirebaseOptions options;
+    try {
+      // flutterfire'ın ürettiği dosya, kayıtlı olmayan platformda
+      // (ör. web önizlemesi) UnsupportedError fırlatır — çökme değil,
+      // yerel mod nedeni.
+      options = DefaultFirebaseOptions.currentPlatform;
+    } on UnsupportedError catch (e) {
+      debugPrint('FirebaseBootstrap: platform yapılandırması yok — '
+          'yerel mod. $e');
       return FirebaseStatus.localMode;
     }
 

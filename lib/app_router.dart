@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../features/decision/presentation/screens/decision_edit_screen.dart';
-import '../../features/decision/presentation/screens/home_screen.dart';
-import '../../features/decision/presentation/screens/new_decision_screen.dart';
-import '../../features/results/presentation/screens/result_screen.dart';
+import 'features/ai_analysis/presentation/screens/ai_gallery_screen.dart';
+import 'features/decision/presentation/screens/decision_edit_screen.dart';
+import 'features/decision/presentation/screens/home_screen.dart';
+import 'features/decision/presentation/screens/new_decision_screen.dart';
+import 'features/results/presentation/screens/result_screen.dart';
 
 /// Rota haritası — TEKNIK-MIMARI.md §6.2
 /// Sprint 1: çekirdek akış gerçek ekranlarla bağlı.
@@ -35,6 +36,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/decision/:id/analyze',
         builder: (_, state) => const _PlaceholderScreen('AI Analiz — Sprint 3'),
+      ),
+      // DEV galerisi — UI'dan link yok; 6E temizliğinde kaldırılacak.
+      GoRoute(
+        path: '/dev/ai-gallery',
+        builder: (_, __) => const AiGalleryScreen(),
       ),
       // Sprint 5-6
       GoRoute(
