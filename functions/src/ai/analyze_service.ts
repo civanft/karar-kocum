@@ -1,94 +1,59 @@
 /**
- * Analiz orkestratörü — AI-ANALIZ-TASARIMI.md §1.2 boru hattının [3]-[11]
- * adımları, birebir sırayla. Tüm dış dünya port'lardan enjekte edilir →
- * emulator'sız birim test edilebilir. Callable yalnız üretim grafiğini kurar.
- *
- * Streaming kararı (§10 açık karar 1): FALLBACK yolu uygulanmıştır —
- * non-stream callable + K-2 canlı Firestore akışı (editör sonucu anında
- * görür). Callable-streaming spike'ı Sprint 3 UI cilasında değerlendirilecek.
+ * Analiz orkestratörü — SADELEŞTİRİLMİŞ MVP akışı (6B + 6C-1 + 6C-2):
+ * doğrula → oku → rate/kredi/kesici → Gemini → tek transaction → yanıt.
+ * Kaldırılanlar: cache, prompt registry, metrik modülü, aiJobs, tier.
+ * Kota adaleti KORUNDU: kredi yalnız başarılı commit'te düşer.
  */
 import { AppError } from "../core/errors.js";
-import { emitMetric, finishRequest, startTimer } from "../core/metrics.js";
+import { log } from "../core/logger.js";
 import type { RequestContext } from "../core/types.js";
-import { computeInputHash } from "./cache.js";
-import { INITIAL_FREE_CREDITS, tierConfig, type Tier } from "./config.js";
+import {
+  GEMINI_MODEL,
+  INITIAL_FREE_CREDITS,
+  MAX_OUTPUT_TOKENS,
+} from "./config.js";
 import type { CostCircuitBreaker } from "./cost_control.js";
 import { computeCostUsd } from "./cost_control.js";
-import type { AiGateway } from "./openai_gateway.js";
-import { getPrompt, resolveActivePromptVersion } from "./prompts/registry.js";
+import type { AiGateway } from "./gemini_gateway.js";
+import { buildUserMessage, PROMPT_VERSION, SYSTEM_PROMPT } from "./prompt.js";
 import {
   analyzeRequestSchema,
   decisionContentSchema,
-  toStoredAnalysis,
-  type DecisionContent,
+  type AnalysisOutput,
 } from "./schema.js";
 
-// ---- Port'lar (üretim: Firestore adapter; test: bellek içi sahteler) ----
+/** aiAnalyses altında SABİT belge kimliği — geçmiş yok, üzerine yazılır. */
+export const LATEST_ANALYSIS_ID = "latest";
 
-export interface StoredAnalysis {
-  id: string;
-  tier: Tier;
-  summary: string;
-  risks: string[];
-  perOption: Record<string, { strengths: string[]; weaknesses: string[] }>;
-  suggestedCriteria: Array<{ name: string; defaultWeight: number }>;
-  confidence: "low" | "medium" | "high";
-  confidenceReason: string;
+export interface StoredAnalysis extends AnalysisOutput {
   model: string;
   promptVersion: string;
-  inputHash: string;
 }
 
-/** Kredi görünümü (PR #6C-2): remaining hiçbir zaman negatif olamaz. */
 export interface CreditsSnapshot {
   plan: "free" | "premium";
-  /** Kalan ücretsiz analiz kredisi; alan hiç yazılmamışsa BAŞLANGIÇ (5). */
+  /** Kalan kredi; alan hiç yazılmamışsa BAŞLANGIÇ (5) kabul edilir. */
   remaining: number;
 }
 
 export interface AnalysisPorts {
-  /** [3] Kararı SUNUCUDAN oku — istemci payload'ına güven yok. */
+  /** Kararı SUNUCUDAN oku — istemci payload'ına güven yok. */
   readDecisionContent(decisionId: string): Promise<unknown | null>;
-  /** [5] Aynı inputHash'li mevcut analiz. */
-  findCachedAnalysis(
-    decisionId: string,
-    inputHash: string,
-  ): Promise<StoredAnalysis | null>;
-  /** [6] Kota ön kontrolü (salt okuma — düşüm YOK). */
   peekCredits(): Promise<CreditsSnapshot>;
   /**
-   * [10] Atomik: krediyi yeniden doğrula (yarış) + analiz + status +
-   * kredi düşümü TEK transaction'da. Kredi 0 ise fırlatır — düşüm
-   * yalnız remaining > 0 iken yapıldığından NEGATİF DEĞER İMKÂNSIZ.
+   * Atomik: krediyi yeniden doğrula + aiAnalyses/latest + status
+   * TEK transaction'da. remaining > 0 şartıyla düşüm → negatif imkânsız.
    */
   commitAnalysis(params: {
     decisionId: string;
-    analysis: Omit<StoredAnalysis, "id">;
+    analysis: StoredAnalysis;
     initialCredits: number;
-  }): Promise<string>; // analysisId
-  /** [11] Maliyet muhasebesi (best-effort). */
-  writeJob(job: {
-    decisionId: string;
-    tier: Tier;
-    status: "ok" | "cache_hit";
-    model: string;
-    promptVersion: string;
-    tokensIn: number;
-    tokensOut: number;
-    costUsd: number;
-    durationMs: number;
-    repaired: boolean;
-  }): Promise<void>;
+  }): Promise<string>; // analysisId ('latest')
 }
 
 export interface RateGuard {
   check(uid: string): Promise<void>;
 }
-
-/** Kendine zarar kategorisi için güvenli yönlendirme (§4.2, PRD R1). */
-export const SELF_HARM_REDIRECT =
-  "Bu konu bir karar analizinden daha önemli. Zor bir dönemden geçiyorsan " +
-  "yalnız değilsin — 182'yi arayabilir ya da güvendiğin birine ulaşabilirsin.";
 
 export class AnalyzeService {
   constructor(
@@ -102,23 +67,20 @@ export class AnalyzeService {
   async run(
     ctx: RequestContext,
     rawRequest: unknown,
-  ): Promise<{ analysisId: string; analysis: StoredAnalysis; cached: boolean }> {
-    const stopTotal = startTimer();
+  ): Promise<{ analysisId: string; analysis: StoredAnalysis }> {
+    const startedMs = this.now();
 
-    // [4a] istek doğrulama
-    const parsedRequest = analyzeRequestSchema.safeParse(rawRequest);
-    if (!parsedRequest.success) {
+    // [1-2] istek + içerik doğrulama (auth callable katmanında yapıldı)
+    const request = analyzeRequestSchema.safeParse(rawRequest);
+    if (!request.success) {
       throw new AppError("invalid-argument", "Geçersiz istek.");
     }
-    const { decisionId, tier } = parsedRequest.data;
+    const { decisionId } = request.data;
 
-    // [3] kararı sunucudan oku
     const rawContent = await this.ports.readDecisionContent(decisionId);
     if (rawContent == null) {
       throw new AppError("invalid-argument", "Karar bulunamadı.");
     }
-
-    // [4b] içerik doğrulama (Y-3 limitleri — rules'u aşan istemciye karşı)
     const content = decisionContentSchema.safeParse(rawContent);
     if (!content.success) {
       throw new AppError(
@@ -127,76 +89,31 @@ export class AnalyzeService {
       );
     }
 
-    // [5] önbellek — isabet: kota/rate HİÇ harcanmaz (§5)
-    const promptVersion = await resolveActivePromptVersion(this.now);
-    const { model, maxOutputTokens } = tierConfig(tier);
-    const inputHash = computeInputHash({
-      content: content.data,
-      tier,
-      promptVersion,
-      model,
-    });
-    const cached = await this.ports.findCachedAnalysis(decisionId, inputHash);
-    if (cached) {
-      emitMetric(ctx, "ai_cache_hit", 1, { tier });
-      await this.safeWriteJob(ctx, {
-        decisionId,
-        tier,
-        status: "cache_hit",
-        model,
-        promptVersion,
-        tokensIn: 0,
-        tokensOut: 0,
-        costUsd: 0,
-        durationMs: stopTotal(),
-        repaired: false,
-      });
-      finishRequest(ctx, "ok", { cached: true });
-      return { analysisId: cached.id, analysis: cached, cached: true };
-    }
-
-    // [6] rate limit + kota ön kontrolü + devre kesici
+    // [3] rate limit + kredi ön kontrolü + günlük maliyet kesici
     await this.rateGuard.check(ctx.uid);
     const credits = await this.ports.peekCredits();
     if (credits.plan === "free" && credits.remaining <= 0) {
-      throw new AppError(
-        "quota-exceeded",
-        "Ücretsiz analiz hakkın bitti.",
-        { remaining: 0, initial: INITIAL_FREE_CREDITS },
-      );
+      throw new AppError("quota-exceeded", "Ücretsiz analiz hakkın bitti.", {
+        remaining: 0,
+        initial: INITIAL_FREE_CREDITS,
+      });
     }
-    await this.breaker.ensureAllowed(tier);
+    await this.breaker.ensureAllowed(credits.plan);
 
-    // [7] moderasyon — hassas içerik: analiz YOK, kota YANMAZ (§4.2)
-    const prompt = getPrompt(promptVersion);
-    const userMessage = prompt.buildUserMessage(content.data);
-    const moderation = await this.gateway.moderate(userMessage);
-    if (moderation.flagged) {
-      throw new AppError(
-        "moderated",
-        moderation.selfHarm
-          ? SELF_HARM_REDIRECT
-          : "Bu içerik analiz edilemiyor.",
-        { selfHarm: moderation.selfHarm },
-      );
-    }
-
-    // [8]-[9] LLM çağrısı (retry + şema doğrulama + onarım gateway'de)
+    // [4] Gemini — moderasyon üretim çağrısına gömülü (6C-1 §2);
+    // moderated/unavailable hataları burada fırlar, kredi YANMAZ.
     const completion = await this.gateway.completeAnalysis({
-      model,
-      system: prompt.system,
-      user: userMessage,
-      maxOutputTokens,
+      system: SYSTEM_PROMPT,
+      user: buildUserMessage(content.data),
+      model: GEMINI_MODEL,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
     });
-    if (completion.repaired) emitMetric(ctx, "ai_schema_failure", 1, { tier });
 
-    // [10] atomik yazım — kota ANCAK burada, başarıyla birlikte düşer
-    const analysis: Omit<StoredAnalysis, "id"> = {
-      tier,
-      ...toStoredAnalysis(completion.output),
-      model,
-      promptVersion,
-      inputHash,
+    // [5] tek transaction: kredi ANCAK burada, başarıyla birlikte düşer
+    const analysis: StoredAnalysis = {
+      ...completion.output,
+      model: GEMINI_MODEL,
+      promptVersion: PROMPT_VERSION,
     };
     const analysisId = await this.ports.commitAnalysis({
       decisionId,
@@ -204,40 +121,18 @@ export class AnalyzeService {
       initialCredits: INITIAL_FREE_CREDITS,
     });
 
-    // [11] maliyet muhasebesi + metrikler
-    const costUsd = computeCostUsd(model, completion.usage);
+    // [6] maliyet kaydı + tek satır kapanış logu (metrik modülü yok — 6B)
+    const costUsd = computeCostUsd(GEMINI_MODEL, completion.usage);
     await this.breaker.record(costUsd);
-    const durationMs = stopTotal();
-    await this.safeWriteJob(ctx, {
-      decisionId,
-      tier,
-      status: "ok",
-      model,
-      promptVersion,
+    log("info", "analysis_completed", ctx, {
+      model: GEMINI_MODEL,
+      promptVersion: PROMPT_VERSION,
       tokensIn: completion.usage.inputTokens,
       tokensOut: completion.usage.outputTokens,
       costUsd,
-      durationMs,
-      repaired: completion.repaired,
+      durationMs: this.now() - startedMs,
     });
-    emitMetric(ctx, "ai_cost_usd", costUsd, { tier, model });
-    emitMetric(ctx, "ai_latency_total_ms", durationMs, { tier });
-    finishRequest(ctx, "ok", { cached: false });
 
-    return { analysisId, analysis: { id: analysisId, ...analysis }, cached: false };
-  }
-
-  /** aiJobs yazımı best-effort: muhasebe hatası kullanıcı yanıtını bozmaz. */
-  private async safeWriteJob(
-    ctx: RequestContext,
-    job: Parameters<AnalysisPorts["writeJob"]>[0],
-  ): Promise<void> {
-    try {
-      await this.ports.writeJob(job);
-    } catch {
-      emitMetric(ctx, "ai_error", 1, { stage: "job_write" });
-    }
+    return { analysisId, analysis };
   }
 }
-
-export type { DecisionContent };

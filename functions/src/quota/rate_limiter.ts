@@ -34,7 +34,6 @@ export interface RateLimits {
 }
 
 export const DEFAULT_ANALYZE_LIMITS: RateLimits = { perMinute: 3, perHour: 10 };
-export const DEFAULT_SUGGEST_LIMITS: RateLimits = { perMinute: 10, perHour: 40 };
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;

@@ -1,19 +1,17 @@
 /**
- * AnalysisPorts üretim implementasyonu — FIRESTORE-VERI-MODELI.md şemaları.
- * Kritik: commitAnalysis TEK transaction'dır — kota yeniden doğrulanır,
- * analiz + latestAnalysisId + status + kota artışı ya hep ya hiç (§8.2).
+ * AnalysisPorts üretim implementasyonu — sadeleştirilmiş MVP (6B):
+ * aiAnalyses/latest SABİT belge, aiJobs yok, latestAnalysisId yok.
+ * commitAnalysis TEK transaction: kredi yeniden doğrula + düş + analiz
+ * + status — remaining > 0 şartıyla düşüm → NEGATİF DEĞER İMKÂNSIZ.
  */
-import {
-  FieldValue,
-  getFirestore,
-  Timestamp,
-} from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
-import type {
-  AnalysisPorts,
-  CreditsSnapshot,
-  StoredAnalysis,
+import {
+  LATEST_ANALYSIS_ID,
+  type AnalysisPorts,
+  type CreditsSnapshot,
+  type StoredAnalysis,
 } from "./analyze_service.js";
 import { INITIAL_FREE_CREDITS } from "./config.js";
 
@@ -39,22 +37,7 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
     };
   }
 
-  async findCachedAnalysis(
-    decisionId: string,
-    inputHash: string,
-  ): Promise<StoredAnalysis | null> {
-    const query = await this.decisionRef(decisionId)
-      .collection("aiAnalyses")
-      .where("inputHash", "==", inputHash)
-      .limit(1)
-      .get();
-    const doc = query.docs[0];
-    if (!doc) return null;
-    return { id: doc.id, ...(doc.data() as Omit<StoredAnalysis, "id">) };
-  }
-
-  /** Kredi okuma — alan hiç yazılmamışsa BAŞLANGIÇ değeri kabul edilir
-   *  (sunucu lazy-init: istemcinin krediyi yazma ihtiyacı/yetkisi yok). */
+  /** Alan hiç yazılmamışsa BAŞLANGIÇ kabul edilir (sunucu lazy-init). */
   async peekCredits(): Promise<CreditsSnapshot> {
     const user = await this.db.doc(`users/${this.uid}`).get();
     const data = user.data() ?? {};
@@ -69,12 +52,14 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
 
   async commitAnalysis(params: {
     decisionId: string;
-    analysis: Omit<StoredAnalysis, "id">;
+    analysis: StoredAnalysis;
     initialCredits: number;
   }): Promise<string> {
     const userRef = this.db.doc(`users/${this.uid}`);
     const decisionRef = this.decisionRef(params.decisionId);
-    const analysisRef = decisionRef.collection("aiAnalyses").doc();
+    const analysisRef = decisionRef
+      .collection("aiAnalyses")
+      .doc(LATEST_ANALYSIS_ID);
 
     await this.db.runTransaction(async (tx) => {
       const user = await tx.get(userRef);
@@ -89,7 +74,6 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
             : params.initialCredits; // ilk analiz: 5'ten başla
 
         // Yarış koruması: ön kontrolden sonra kredi bitmiş olabilir.
-        // remaining > 0 şartıyla düşüldüğünden NEGATİF DEĞER İMKÂNSIZ.
         if (remaining <= 0) {
           throw new AppError(
             "quota-exceeded",
@@ -104,26 +88,14 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
         );
       }
 
+      // Sabit kimlik: yeniden analiz üzerine yazar (geçmiş yok — 6B).
       tx.set(analysisRef, {
         ...params.analysis,
         generatedAt: FieldValue.serverTimestamp(),
       });
-      tx.update(decisionRef, {
-        latestAnalysisId: analysisRef.id,
-        status: "analyzed",
-      });
+      tx.update(decisionRef, { status: "analyzed" });
     });
 
-    return analysisRef.id;
-  }
-
-  async writeJob(
-    job: Parameters<AnalysisPorts["writeJob"]>[0],
-  ): Promise<void> {
-    await this.db.collection("aiJobs").add({
-      uid: this.uid,
-      ...job,
-      createdAt: Timestamp.now(),
-    });
+    return LATEST_ANALYSIS_ID;
   }
 }
