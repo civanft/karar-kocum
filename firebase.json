@@ -1,17 +1,1 @@
-{
-  "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
-  },
-  "functions": {
-    "source": "functions",
-    "predeploy": ["npm --prefix functions run build"]
-  },
-  "emulators": {
-    "firestore": { "port": 8080 },
-    "auth": { "port": 9099 },
-    "functions": { "port": 5001 },
-    "ui": { "enabled": false },
-    "singleProjectMode": true
-  }
-}
+{"firestore":{"rules":"firestore.rules","indexes":"firestore.indexes.json"},"functions":{"source":"functions","predeploy":["npm --prefix functions run build"]},"emulators":{"firestore":{"port":8080},"auth":{"port":9099},"functions":{"port":5001},"ui":{"enabled":false},"singleProjectMode":true},"flutter":{"platforms":{"android":{"default":{"projectId":"karar-veriyorum-dev","appId":"1:740423241326:android:9faaa1a25d96871d04a07f","fileOutput":"android/app/google-services.json"}},"ios":{"default":{"projectId":"karar-veriyorum-dev","appId":"1:740423241326:ios:55ca85109095becf04a07f","uploadDebugSymbols":true,"fileOutput":"ios/Runner/GoogleService-Info.plist"}},"dart":{"lib/firebase_options.dart":{"projectId":"karar-veriyorum-dev","configurations":{"android":"1:740423241326:android:9faaa1a25d96871d04a07f","ios":"1:740423241326:ios:55ca85109095becf04a07f"}}}}}}
