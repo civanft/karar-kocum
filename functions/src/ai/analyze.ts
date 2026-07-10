@@ -16,6 +16,10 @@ import {
 } from "../quota/rate_limiter.js";
 import { AnalyzeService } from "./analyze_service.js";
 import { CostCircuitBreaker, FirestoreSpendStore } from "./cost_control.js";
+import {
+  DailyAnalysisLimiter,
+  FirestoreDailyCounterStore,
+} from "./daily_limit.js";
 import { FirestoreAnalysisPorts } from "./firestore_ports.js";
 import { createGeminiClient, GeminiGateway } from "./gemini_gateway.js";
 
@@ -37,6 +41,7 @@ export const analyzeDecision = onCall(
         new GeminiGateway(createGeminiClient(geminiApiKey.value())),
         new RateLimiter(new FirestoreRateLimitStore(), DEFAULT_ANALYZE_LIMITS),
         new CostCircuitBreaker(new FirestoreSpendStore()),
+        new DailyAnalysisLimiter(new FirestoreDailyCounterStore()),
       );
       return await service.run(ctx, request.data);
     } catch (error) {

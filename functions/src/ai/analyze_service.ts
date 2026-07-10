@@ -14,6 +14,7 @@ import {
 } from "./config.js";
 import type { CostCircuitBreaker } from "./cost_control.js";
 import { computeCostUsd } from "./cost_control.js";
+import type { DailyAnalysisLimiter } from "./daily_limit.js";
 import type { AiGateway } from "./gemini_gateway.js";
 import { buildUserMessage, PROMPT_VERSION, SYSTEM_PROMPT } from "./prompt.js";
 import {
@@ -61,6 +62,7 @@ export class AnalyzeService {
     private readonly gateway: AiGateway,
     private readonly rateGuard: RateGuard,
     private readonly breaker: CostCircuitBreaker,
+    private readonly dailyLimiter: DailyAnalysisLimiter,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -99,6 +101,9 @@ export class AnalyzeService {
       });
     }
     await this.breaker.ensureAllowed(credits.plan);
+    // [3b] Günlük GLOBAL adet limiti (7B): slot Gemini'den ÖNCE atomik
+    // ayrılır — kullanıcı kredisi bu noktada HENÜZ yanmamıştır.
+    await this.dailyLimiter.ensureSlot();
 
     // [4] Gemini — moderasyon üretim çağrısına gömülü (6C-1 §2);
     // moderated/unavailable hataları burada fırlar, kredi YANMAZ.

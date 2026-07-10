@@ -13,6 +13,10 @@ import {
 } from "../src/ai/analyze_service";
 import { CostCircuitBreaker, type SpendStore } from "../src/ai/cost_control";
 import {
+  DailyAnalysisLimiter,
+  type DailyCounterStore,
+} from "../src/ai/daily_limit";
+import {
   SELF_HARM_REDIRECT,
   type AiGateway,
   type AnalysisCompletion,
@@ -105,6 +109,19 @@ class FakeSpend implements SpendStore {
   }
 }
 
+class MemoryCounter implements DailyCounterStore {
+  counts = new Map<string, number>();
+  async reserve(dayKey: string, limit: number): Promise<boolean> {
+    const current = this.counts.get(dayKey) ?? 0;
+    if (current >= limit) return false;
+    this.counts.set(dayKey, current + 1);
+    return true;
+  }
+  get total(): number {
+    return [...this.counts.values()].reduce((a, b) => a + b, 0);
+  }
+}
+
 class FakeRate {
   calls = 0;
   shouldReject = false;
@@ -116,15 +133,17 @@ class FakeRate {
   }
 }
 
-function make(overrides?: { spendTotal?: number }) {
+function make(overrides?: { spendTotal?: number; dailyLimit?: number }) {
   const ports = new FakePorts();
   const gateway = new FakeGateway();
   const rate = new FakeRate();
   const spend = new FakeSpend();
+  const counter = new MemoryCounter();
   spend.total = overrides?.spendTotal ?? 0;
   const breaker = new CostCircuitBreaker(spend, 0.35);
-  const service = new AnalyzeService(ports, gateway, rate, breaker);
-  return { service, ports, gateway, rate, spend };
+  const daily = new DailyAnalysisLimiter(counter, overrides?.dailyLimit ?? 50);
+  const service = new AnalyzeService(ports, gateway, rate, breaker, daily);
+  return { service, ports, gateway, rate, spend, counter };
 }
 
 const request = { decisionId: "d1" };
@@ -220,6 +239,28 @@ describe("koruma sırası", () => {
     expect((error as AppError).code).toBe("rate-limited");
     expect(gateway.completions).toBe(0);
     expect(ports.credits).toBeNull();
+  });
+
+  it("7B: günlük ADET limiti dolunca doğru mesaj, kredi YANMAZ", async () => {
+    const { service, ports, gateway } = make({ dailyLimit: 1 });
+
+    await service.run(ctx, request); // slot 1/1
+    const error = await service
+      .run(ctx, { decisionId: "d2" })
+      .catch((e: unknown) => e);
+
+    expect((error as AppError).code).toBe("daily-limit");
+    expect((error as AppError).message).toContain(
+      "Bugünkü analiz limiti doldu",
+    );
+    expect(gateway.completions).toBe(1); // ikinci istek Gemini'ye gitmedi
+    expect(ports.credits).toBe(4); // yalnız ilk analiz kredi düşürdü
+  });
+
+  it("7B: başarılı analiz global sayacı 1 artırır", async () => {
+    const { service, counter } = make();
+    await service.run(ctx, request);
+    expect(counter.total).toBe(1);
   });
 
   it("günlük tavan aşımı: free kullanıcı ai-unavailable", async () => {
