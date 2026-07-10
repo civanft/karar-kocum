@@ -57,6 +57,22 @@ void main() {
           .set({'freeAnalysisCredits': 0});
       expect(await repo.watchRemaining().first, 0);
     });
+
+    test('7A: iki havuz TOPLANIR (free 2 + reward 3 = 5)', () async {
+      await firestore
+          .collection('users')
+          .doc('u1')
+          .set({'freeAnalysisCredits': 2, 'rewardCredits': 3});
+      expect(await repo.watchRemaining().first, 5);
+    });
+
+    test('7A: free bitmiş, yalnız reward varsa o görünür', () async {
+      await firestore
+          .collection('users')
+          .doc('u1')
+          .set({'freeAnalysisCredits': 0, 'rewardCredits': 2});
+      expect(await repo.watchRemaining().first, 2);
+    });
   });
 
   group('provider seçimi ve akış', () {

@@ -42,12 +42,8 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
     const user = await this.db.doc(`users/${this.uid}`).get();
     const data = user.data() ?? {};
     const plan = data["plan"] === "premium" ? "premium" : "free";
-    const raw = data["freeAnalysisCredits"];
-    const remaining =
-      typeof raw === "number"
-        ? Math.max(0, Math.trunc(raw)) // bozuk/negatif veri savunması
-        : INITIAL_FREE_CREDITS;
-    return { plan, remaining };
+    const pools = readPools(data);
+    return { plan, remaining: pools.free + pools.reward };
   }
 
   async commitAnalysis(params: {
@@ -67,25 +63,25 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
       const plan = data["plan"] === "premium" ? "premium" : "free";
 
       if (plan !== "premium") {
-        const raw = data["freeAnalysisCredits"];
-        const remaining =
-          typeof raw === "number"
-            ? Math.max(0, Math.trunc(raw))
-            : params.initialCredits; // ilk analiz: 5'ten başla
-
-        // Yarış koruması: ön kontrolden sonra kredi bitmiş olabilir.
-        if (remaining <= 0) {
+        const pools = readPools(data, params.initialCredits);
+        // Yarış koruması: ön kontrolden sonra krediler bitmiş olabilir.
+        // Düşüm sırası (7A): önce ücretsiz, sonra ödül kredisi; her iki
+        // havuz da >0 şartıyla düşer → NEGATİF DEĞER İMKÂNSIZ.
+        if (pools.free > 0) {
+          tx.set(
+            userRef,
+            { freeAnalysisCredits: pools.free - 1 },
+            { merge: true },
+          );
+        } else if (pools.reward > 0) {
+          tx.set(userRef, { rewardCredits: pools.reward - 1 }, { merge: true });
+        } else {
           throw new AppError(
             "quota-exceeded",
             "Ücretsiz analiz hakkın bitti.",
             { remaining: 0, initial: params.initialCredits },
           );
         }
-        tx.set(
-          userRef,
-          { freeAnalysisCredits: remaining - 1 },
-          { merge: true },
-        );
       }
 
       // Sabit kimlik: yeniden analiz üzerine yazar (geçmiş yok — 6B).
@@ -98,4 +94,21 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
 
     return LATEST_ANALYSIS_ID;
   }
+}
+
+/**
+ * Kredi havuzları (7A): freeAnalysisCredits lazy-init'li (yazılmamışsa
+ * BAŞLANGIÇ), rewardCredits yazılmamışsa 0; bozuk/negatif veri 0'a kırpılır.
+ * Saf fonksiyon — birim testli.
+ */
+export function readPools(
+  data: Record<string, unknown>,
+  initialFree: number = INITIAL_FREE_CREDITS,
+): { free: number; reward: number } {
+  const clamp = (value: unknown, fallback: number) =>
+    typeof value === "number" ? Math.max(0, Math.trunc(value)) : fallback;
+  return {
+    free: clamp(data["freeAnalysisCredits"], initialFree),
+    reward: clamp(data["rewardCredits"], 0),
+  };
 }

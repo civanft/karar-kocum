@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/tokens.dart';
 import '../../../quota/presentation/providers/credits_providers.dart';
+import '../../../quota/presentation/widgets/reward_cta.dart';
 import '../../domain/entities/ai_analysis.dart';
 import '../providers/analysis_providers.dart';
 
@@ -20,7 +21,7 @@ class AnalysisSection extends ConsumerWidget {
         ref.read(analysisControllerProvider(decisionId).notifier);
     final remainingCredits = ref.watch(remainingCreditsProvider).valueOrNull;
 
-    return AnalysisStateView(
+    final view = AnalysisStateView(
       state: state,
       remainingCredits: remainingCredits,
       onAnalyze: controller.analyze,
@@ -28,6 +29,12 @@ class AnalysisSection extends ConsumerWidget {
       onReanalyze: () => _confirmReanalyze(context, controller),
       onFeedback: (up) => controller.sendFeedback(thumbsUp: up),
     );
+
+    // 7A: kota bittiğinde reklamla hak kazanma yolu (AdMob hazırsa görünür).
+    if (state is AnalysisQuotaExceeded) {
+      return Column(children: [view, const RewardCtaSection()]);
+    }
+    return view;
   }
 
   Future<void> _confirmReanalyze(

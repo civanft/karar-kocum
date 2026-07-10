@@ -10,6 +10,10 @@ initializeApp();
 
 export { analyzeDecision } from "./ai/analyze.js";
 
+// Ödüllü reklam kredisi (7A): bilet + AdMob SSV callback'i
+export { createRewardTicket } from "./rewards/createRewardTicket.js";
+export { admobRewardCallback } from "./rewards/admobRewardCallback.js";
+
 // Abonelik: RevenueCat webhook → users/{uid}.plan (Sprint 5)
 export { revenuecatWebhook } from "./billing/revenuecatWebhook.js";
 

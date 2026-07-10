@@ -93,6 +93,41 @@ describe("users belgesi", () => {
     );
   });
 
+  it("NEGATİF (7A): rewardCredits istemciden yazılamaz", async () => {
+    await assertFails(
+      db("ali").doc("users/ali").set({ plan: "free", rewardCredits: 99 }),
+    );
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin
+        .firestore()
+        .doc("users/ali")
+        .set({ plan: "free", rewardCredits: 1 });
+    });
+    await assertFails(
+      db("ali").doc("users/ali").update({ rewardCredits: 100 }),
+    );
+  });
+
+  it("NEGATİF (7A): rewardTickets istemciye tamamen kapalı", async () => {
+    await assertFails(
+      db("ali")
+        .doc("users/ali/rewardTickets/t1")
+        .set({ status: "granted" }),
+    );
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin
+        .firestore()
+        .doc("users/ali/rewardTickets/t1")
+        .set({ status: "pending" });
+    });
+    await assertFails(db("ali").doc("users/ali/rewardTickets/t1").get());
+    await assertFails(
+      db("ali")
+        .doc("users/ali/rewardTickets/t1")
+        .update({ status: "granted" }),
+    );
+  });
+
   it("NEGATİF (6C-2): freeAnalysisCredits istemciden güncellenemez", async () => {
     await env.withSecurityRulesDisabled(async (admin) => {
       await admin

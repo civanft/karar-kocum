@@ -13,19 +13,21 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isOwner(uid);
 
-      // plan / planExpiresAt / quota / freeAnalysisCredits YALNIZ Functions
-      // (admin SDK) yazar — kredi manipülasyonu istemciden imkânsız.
+      // plan / planExpiresAt / quota / freeAnalysisCredits / rewardCredits
+      // YALNIZ Functions (admin SDK) yazar — kredi manipülasyonu imkânsız.
       allow update: if isOwner(uid)
         && !request.resource.data.diff(resource.data)
              .affectedKeys().hasAny([
-               'plan', 'planExpiresAt', 'quota', 'freeAnalysisCredits'
+               'plan', 'planExpiresAt', 'quota',
+               'freeAnalysisCredits', 'rewardCredits'
              ]);
 
-      // İlk kayıt: istemci profil oluşturabilir ama kredi alanını
-      // GÖNDEREMEZ — "5 ile başlar" kuralını sunucu (lazy-init) uygular.
+      // İlk kayıt: istemci profil oluşturabilir ama kredi alanlarını
+      // GÖNDEREMEZ — başlangıç değerlerini sunucu (lazy-init) uygular.
       allow create: if isOwner(uid)
         && request.resource.data.plan == 'free'
-        && !('freeAnalysisCredits' in request.resource.data);
+        && !('freeAnalysisCredits' in request.resource.data)
+        && !('rewardCredits' in request.resource.data);
 
       allow delete: if false; // silme yalnız deleteAccount fonksiyonu üzerinden
 
@@ -69,6 +71,12 @@ service cloud.firestore {
       match /subscriptions/{eventId} {
         allow read: if isOwner(uid);
         allow write: if false; // yalnız revenuecatWebhook (admin SDK)
+      }
+
+      // Ödül biletleri (7A): yaşam döngüsü tamamen sunucuda
+      // (createRewardTicket → AdMob SSV callback). İstemciye kapalı.
+      match /rewardTickets/{ticketId} {
+        allow read, write: if false;
       }
     }
 
