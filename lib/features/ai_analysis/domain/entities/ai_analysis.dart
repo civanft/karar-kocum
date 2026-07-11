@@ -22,6 +22,26 @@ class AiAnalysis {
   final AnalysisConfidence confidence;
   final DateTime? generatedAt;
 
+  /// analyzeDecision callable yanıtındaki `analysis` alanından üretir
+  /// (AI-MVP-MIMARI §4 düz şeması). Eksik/bozuk alanlar güvenli
+  /// varsayılana düşer — kısmi yanıt UI'ı çökertmesin.
+  factory AiAnalysis.fromMap(Map<Object?, Object?> map) {
+    List<String> strList(Object? v) =>
+        v is List ? v.whereType<Object?>().map((e) => '$e').toList() : const [];
+    return AiAnalysis(
+      summary: (map['summary'] as String?) ?? '',
+      strengths: strList(map['strengths']),
+      weaknesses: strList(map['weaknesses']),
+      risks: strList(map['risks']),
+      recommendation: (map['recommendation'] as String?) ?? '',
+      confidence: switch (map['confidence']) {
+        'high' => AnalysisConfidence.high,
+        'low' => AnalysisConfidence.low,
+        _ => AnalysisConfidence.medium,
+      },
+    );
+  }
+
   /// 6D-1 mock verisi — gerçekçi içerik, UI durum tasarımı için.
   factory AiAnalysis.mock() => AiAnalysis(
         summary: 'Kriterlerine göre iki seçenek arasında anlamlı bir fark var. '
