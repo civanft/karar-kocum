@@ -13,6 +13,7 @@ export type AppErrorCode =
   | "invalid-argument"
   | "rate-limited"
   | "quota-exceeded"
+  | "daily-limit"
   | "moderated"
   | "ai-unavailable"
   | "unimplemented"
@@ -23,6 +24,7 @@ const HTTPS_CODE: Record<AppErrorCode, FunctionsErrorCode> = {
   "invalid-argument": "invalid-argument",
   "rate-limited": "resource-exhausted",
   "quota-exceeded": "resource-exhausted",
+  "daily-limit": "resource-exhausted",
   moderated: "failed-precondition",
   "ai-unavailable": "unavailable",
   unimplemented: "unimplemented",

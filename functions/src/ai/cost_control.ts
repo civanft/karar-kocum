@@ -6,8 +6,8 @@
 import { getFirestore } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
-import { dailySpendLimitUsd } from "./config.js";
-import type { CompletionUsage } from "./openai_gateway.js";
+import { DAILY_SPEND_LIMIT_USD } from "../config.js";
+import type { TokenUsage } from "./gemini_gateway.js";
 
 interface ModelPrice {
   inputPer1M: number;
@@ -15,13 +15,13 @@ interface ModelPrice {
 }
 
 const PRICES: Record<string, ModelPrice> = {
-  "gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.6 },
-  "gpt-4o": { inputPer1M: 2.5, outputPer1M: 10 },
+  "gemini-2.0-flash": { inputPer1M: 0.1, outputPer1M: 0.4 },
+  "gemini-2.0-flash-lite": { inputPer1M: 0.075, outputPer1M: 0.3 },
 };
 
 const FALLBACK_PRICE: ModelPrice = { inputPer1M: 5, outputPer1M: 15 };
 
-export function computeCostUsd(model: string, usage: CompletionUsage): number {
+export function computeCostUsd(model: string, usage: TokenUsage): number {
   const price = PRICES[model] ?? FALLBACK_PRICE;
   return (
     (usage.inputTokens / 1_000_000) * price.inputPer1M +
@@ -47,12 +47,12 @@ export function utcDayKey(now: () => number = Date.now): string {
 export class CostCircuitBreaker {
   constructor(
     private readonly store: SpendStore,
-    private readonly limitUsd: number = dailySpendLimitUsd(),
+    private readonly limitUsd: number = DAILY_SPEND_LIMIT_USD,
     private readonly now: () => number = Date.now,
   ) {}
 
-  async ensureAllowed(tier: "basic" | "advanced"): Promise<void> {
-    if (tier === "advanced") return; // premium kesiciden etkilenmez
+  async ensureAllowed(plan: "free" | "premium"): Promise<void> {
+    if (plan === "premium") return; // premium kesiciden etkilenmez
     const total = await this.store.todayTotal(utcDayKey(this.now));
     if (total >= this.limitUsd) {
       throw new AppError(

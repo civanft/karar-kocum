@@ -1,19 +1,20 @@
 /**
- * Cloud Functions giriş noktası — TEKNIK-MIMARI.md §5.1 fonksiyon envanteri.
- * Her fonksiyon kendi modülünde; burada yalnız export edilir.
+ * Cloud Functions giriş noktası — MVP DEPLOY YÜZEYİ (PR #6E-3A).
+ *
+ * Yalnız CANLIDA İŞ GÖREN fonksiyonlar export edilir. Boş stub'lar
+ * (revenuecatWebhook / deleteAccount / exportData) index'ten ÇIKARILDI:
+ * deploy edilirlerse iş yapmayan ama saldırı yüzeyi + soğuk-başlatma
+ * maliyeti taşıyan instance'lar olurlardı. Kaynak dosyaları duruyor;
+ * ilgili sprintte (billing Sprint 5, KVKK Sprint 6) gerçek gövdeyle
+ * birlikte yeniden export edilecek.
  */
 import { initializeApp } from "firebase-admin/app";
 
 initializeApp();
 
-// AI proxy boru hattı (§5.2): auth → oku → moderasyon → kota → LLM → doğrula → yaz
+// AI analiz (Gemini) — çekirdek özellik.
 export { analyzeDecision } from "./ai/analyze.js";
-export { suggestCriteria } from "./ai/suggestCriteria.js";
-export { scoreOptions } from "./ai/scoreOptions.js";
 
-// Abonelik: RevenueCat webhook → users/{uid}.plan (tek yazar)
-export { revenuecatWebhook } from "./billing/revenuecatWebhook.js";
-
-// KVKK/GDPR
-export { deleteAccount } from "./privacy/deleteAccount.js";
-export { exportData } from "./privacy/exportData.js";
+// Ödüllü reklam kredisi (7A): bilet callable'ı + AdMob SSV callback'i.
+export { createRewardTicket } from "./rewards/createRewardTicket.js";
+export { admobRewardCallback } from "./rewards/admobRewardCallback.js";

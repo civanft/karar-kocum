@@ -47,6 +47,23 @@ void main() {
     expect(tapped, isTrue);
   });
 
+  testWidgets('1b. bos durum: kalan kredi sayaci (6C-2)', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light,
+        home: Scaffold(
+          body: AnalysisStateView(
+            state: const AnalysisIdle(),
+            remainingCredits: 3,
+            onAnalyze: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump(AppTokensDur.med);
+    expect(find.text('Kalan ücretsiz analiz: 3'), findsOneWidget);
+  });
+
   testWidgets('2. loading: spinner + iskelet + süre ipucu', (tester) async {
     await pump(tester, const AnalysisLoading());
 
@@ -97,10 +114,12 @@ void main() {
 
   testWidgets('5. kota: limit metni + skorların açık kaldığı bilgisi',
       (tester) async {
-    await pump(tester, const AnalysisQuotaExceeded(monthlyLimit: 5));
+    await pump(tester, const AnalysisQuotaExceeded(totalCredits: 5));
 
-    expect(find.text('Aylık analiz hakkın doldu'), findsOneWidget);
+    expect(find.text('Ücretsiz analiz hakkın bitti'), findsOneWidget);
     expect(find.textContaining('5 ücretsiz AI analizinin'), findsOneWidget);
+    // Kredi modeli (6C-2): yenilenme vaadi OLMAMALI
+    expect(find.textContaining('yenilenecek'), findsNothing);
     expect(
       find.textContaining('her zaman kullanılabilir'),
       findsOneWidget,

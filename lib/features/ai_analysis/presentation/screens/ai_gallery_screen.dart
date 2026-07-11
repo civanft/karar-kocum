@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/theme/tokens.dart';
+import '../../../quota/presentation/providers/reward_flow_controller.dart';
+import '../../../quota/presentation/widgets/reward_cta.dart';
 import '../../domain/entities/ai_analysis.dart';
 import '../providers/analysis_providers.dart';
 import '../widgets/analysis_card.dart';
@@ -22,7 +24,7 @@ class AiGalleryScreen extends StatelessWidget {
             'edip tekrar deneyebilirsin.',
         retryable: true,
       ),
-      '5 · Kota doldu': const AnalysisQuotaExceeded(monthlyLimit: 5),
+      '5 · Kota doldu': const AnalysisQuotaExceeded(totalCredits: 5),
     };
 
     return Scaffold(
@@ -47,6 +49,22 @@ class AiGalleryScreen extends StatelessWidget {
             ),
             const SizedBox(height: AppTokens.s6),
           ],
+          Text(
+            '6 · Ödül CTA durumları (7A)',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+          ),
+          RewardCtaView(state: const RewardIdle(), onWatchAd: () {}),
+          const RewardCtaView(state: RewardInProgress('verifying')),
+          const RewardCtaView(state: RewardEarned()),
+          RewardCtaView(
+            state: const RewardFailed(
+              'Reklam tamamlanmadı — kredi eklenmedi. İstersen tekrar dene.',
+            ),
+            onDismissError: () {},
+          ),
+          const SizedBox(height: AppTokens.s6),
         ],
       ),
     );

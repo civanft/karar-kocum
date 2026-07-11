@@ -10,16 +10,44 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == uid;
     }
 
+    // Kullanıcı başına karar üst sınırı — functions/src/config.ts
+    // MAX_DECISIONS_PER_USER ile SENKRON tutulmalı (rules TS import edemez).
+    function maxDecisions() { return 50; }
+
+    // Kullanıcının mevcut karar sayacı (user belgesi/alanı yoksa 0).
+    function decisionCount(uid) {
+      let path = /databases/$(db)/documents/users/$(uid);
+      return exists(path) ? get(path).data.get('decisionCount', 0) : 0;
+    }
+
     match /users/{uid} {
       allow read: if isOwner(uid);
 
-      // plan / planExpiresAt / quota YALNIZ Functions (admin SDK) yazar.
+      // plan / planExpiresAt / quota / freeAnalysisCredits / rewardCredits
+      // YALNIZ Functions (admin SDK) yazar — kredi manipülasyonu imkânsız.
+      // decisionCount istemci yazabilir AMA yalnız ±1 (sıfırlama hilesi
+      // engellenir — karar cap'inin bütünlüğü için).
       allow update: if isOwner(uid)
         && !request.resource.data.diff(resource.data)
-             .affectedKeys().hasAny(['plan', 'planExpiresAt', 'quota']);
+             .affectedKeys().hasAny([
+               'plan', 'planExpiresAt', 'quota',
+               'freeAnalysisCredits', 'rewardCredits'
+             ])
+        && (!request.resource.data.diff(resource.data)
+                .affectedKeys().hasAny(['decisionCount'])
+            || (request.resource.data.decisionCount is int
+                && request.resource.data.decisionCount >= 0
+                && request.resource.data.decisionCount <=
+                     resource.data.get('decisionCount', 0) + 1
+                && request.resource.data.decisionCount >=
+                     resource.data.get('decisionCount', 0) - 1));
 
+      // İlk kayıt: istemci profil oluşturabilir ama kredi alanlarını
+      // GÖNDEREMEZ — başlangıç değerlerini sunucu (lazy-init) uygular.
       allow create: if isOwner(uid)
-        && request.resource.data.plan == 'free';
+        && request.resource.data.plan == 'free'
+        && !('freeAnalysisCredits' in request.resource.data)
+        && !('rewardCredits' in request.resource.data);
 
       allow delete: if false; // silme yalnız deleteAccount fonksiyonu üzerinden
 
@@ -46,9 +74,11 @@ service cloud.firestore {
         }
 
         allow read, delete: if isOwner(uid);
+        // Hotfix madde 5: kullanıcı başına en fazla maxDecisions() karar.
         allow create: if isOwner(uid) && decisionValid()
           && !('latestAnalysisId' in request.resource.data)
-          && request.resource.data.status != 'analyzed';
+          && request.resource.data.status != 'analyzed'
+          && decisionCount(uid) < maxDecisions();
         allow update: if isOwner(uid) && decisionValid()
           && serverFieldsUntouched();
 
@@ -64,6 +94,12 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow write: if false; // yalnız revenuecatWebhook (admin SDK)
       }
+
+      // Ödül biletleri (7A): yaşam döngüsü tamamen sunucuda
+      // (createRewardTicket → AdMob SSV callback). İstemciye kapalı.
+      match /rewardTickets/{ticketId} {
+        allow read, write: if false;
+      }
     }
 
     match /templates/{id} {
@@ -77,6 +113,12 @@ service cloud.firestore {
 
     match /rateLimits/{uid} {
       allow read, write: if false; // sayaçlar yalnız Functions transaction'ı
+    }
+
+    // Ops sayaçları (dailySpend / dailyAnalysisCount / dailyTokens):
+    // yalnız Functions admin SDK. Default-deny zaten kapatıyor; niyet açık.
+    match /ops/{id} {
+      allow read, write: if false;
     }
   }
 }

@@ -23,8 +23,11 @@ class FirestoreDecisionRepository implements DecisionRepository {
   final FirebaseFirestore _firestore;
   final String _uid;
 
+  DocumentReference<Map<String, dynamic>> get _userDoc =>
+      _firestore.collection('users').doc(_uid);
+
   CollectionReference<Map<String, dynamic>> get _collection =>
-      _firestore.collection('users').doc(_uid).collection('decisions');
+      _userDoc.collection('decisions');
 
   @override
   Stream<List<Decision>> watchAll() => _collection
@@ -48,10 +51,24 @@ class FirestoreDecisionRepository implements DecisionRepository {
     return doc.exists ? DecisionFirestoreMapper.fromFirestore(doc) : null;
   }
 
+  /// Oluşturma: karar + kullanıcı karar sayacı TEK BATCH'te (hotfix madde 5).
+  /// Sayacı rules ±1 ile koruyor; cap kontrolü create rule'ında get() ile.
+  /// Yeni belge değilse sayaç artırılmaz (idempotent — upsert oluşturma için).
   @override
-  Future<void> upsert(Decision decision) => _collection
-      .doc(decision.id)
-      .set(DecisionFirestoreMapper.toFirestore(decision, _uid));
+  Future<void> upsert(Decision decision) async {
+    final docRef = _collection.doc(decision.id);
+    final exists = (await docRef.get()).exists;
+    final batch = _firestore.batch()
+      ..set(docRef, DecisionFirestoreMapper.toFirestore(decision, _uid));
+    if (!exists) {
+      batch.set(
+        _userDoc,
+        {'decisionCount': FieldValue.increment(1)},
+        SetOptions(merge: true),
+      );
+    }
+    await batch.commit();
+  }
 
   @override
   Future<void> applyPatch(String id, DecisionPatch patch) async {
@@ -68,6 +85,19 @@ class FirestoreDecisionRepository implements DecisionRepository {
     }
   }
 
+  /// Silme: karar + sayaç azaltımı TEK BATCH'te. Belge yoksa sayaca dokunma.
   @override
-  Future<void> delete(String id) => _collection.doc(id).delete();
+  Future<void> delete(String id) async {
+    final docRef = _collection.doc(id);
+    final exists = (await docRef.get()).exists;
+    if (!exists) return;
+    await (_firestore.batch()
+          ..delete(docRef)
+          ..set(
+            _userDoc,
+            {'decisionCount': FieldValue.increment(-1)},
+            SetOptions(merge: true),
+          ))
+        .commit();
+  }
 }

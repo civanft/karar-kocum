@@ -10,8 +10,9 @@ import 'package:karar_veriyorum/features/decision/data/repositories/in_memory_de
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_providers.dart';
 
 /// Sabit kullanıcı yayımlayan sahte auth deposu.
-class _FakeAuthRepository implements AuthRepository {
-  _FakeAuthRepository(this.user);
+/// (Public: credits_test.dart de kullanır.)
+class FakeAuthRepository implements AuthRepository {
+  FakeAuthRepository(this.user);
   final AppUser? user;
 
   @override
@@ -51,7 +52,7 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         firebaseStatusProvider.overrideWithValue(FirebaseStatus.ready),
-        authRepositoryProvider.overrideWithValue(_FakeAuthRepository(user)),
+        authRepositoryProvider.overrideWithValue(FakeAuthRepository(user)),
         firestoreInstanceProvider.overrideWithValue(FakeFirebaseFirestore()),
       ],
     );
@@ -71,7 +72,7 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         firebaseStatusProvider.overrideWithValue(FirebaseStatus.ready),
-        authRepositoryProvider.overrideWithValue(_FakeAuthRepository(null)),
+        authRepositoryProvider.overrideWithValue(FakeAuthRepository(null)),
       ],
     );
     addTearDown(container.dispose);

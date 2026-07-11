@@ -84,6 +84,69 @@ describe("users belgesi", () => {
   it("NEGATİF: başkasının profili okunamaz", async () => {
     await assertFails(db("veli").doc("users/ali").get());
   });
+
+  it("NEGATİF (6C-2): freeAnalysisCredits İLE profil oluşturulamaz", async () => {
+    await assertFails(
+      db("ali")
+        .doc("users/ali")
+        .set({ plan: "free", freeAnalysisCredits: 9999 }),
+    );
+  });
+
+  it("NEGATİF (7A): rewardCredits istemciden yazılamaz", async () => {
+    await assertFails(
+      db("ali").doc("users/ali").set({ plan: "free", rewardCredits: 99 }),
+    );
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin
+        .firestore()
+        .doc("users/ali")
+        .set({ plan: "free", rewardCredits: 1 });
+    });
+    await assertFails(
+      db("ali").doc("users/ali").update({ rewardCredits: 100 }),
+    );
+  });
+
+  it("NEGATİF (7A): rewardTickets istemciye tamamen kapalı", async () => {
+    await assertFails(
+      db("ali")
+        .doc("users/ali/rewardTickets/t1")
+        .set({ status: "granted" }),
+    );
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin
+        .firestore()
+        .doc("users/ali/rewardTickets/t1")
+        .set({ status: "pending" });
+    });
+    await assertFails(db("ali").doc("users/ali/rewardTickets/t1").get());
+    await assertFails(
+      db("ali")
+        .doc("users/ali/rewardTickets/t1")
+        .update({ status: "granted" }),
+    );
+  });
+
+  it("NEGATİF (6C-2): freeAnalysisCredits istemciden güncellenemez", async () => {
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin
+        .firestore()
+        .doc("users/ali")
+        .set({ plan: "free", freeAnalysisCredits: 2 });
+    });
+    // artırma, sıfırlama ve silme girişimlerinin tümü reddedilir:
+    await assertFails(
+      db("ali").doc("users/ali").update({ freeAnalysisCredits: 5 }),
+    );
+    await assertFails(
+      db("ali").doc("users/ali").update({ freeAnalysisCredits: 0 }),
+    );
+    // zararsız alan güncellemesi hâlâ serbest:
+    await assertSucceeds(
+      db("ali").doc("users/ali").update({ locale: "tr" }),
+    );
+  });
 });
 
 describe("decisions belgesi", () => {
@@ -92,6 +155,46 @@ describe("decisions belgesi", () => {
       db("ali").doc("users/ali/decisions/d1").set(validDecision("ali")),
     );
     await assertSucceeds(db("ali").doc("users/ali/decisions/d1").get());
+  });
+
+  it("hotfix madde 5: decisionCount 50'de yeni karar reddedilir", async () => {
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc("users/ali").set({
+        plan: "free",
+        decisionCount: 50,
+      });
+    });
+    await assertFails(
+      db("ali").doc("users/ali/decisions/d51").set(validDecision("ali")),
+    );
+
+    // 49'da yeni karar geçer:
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc("users/ali").set({
+        plan: "free",
+        decisionCount: 49,
+      });
+    });
+    await assertSucceeds(
+      db("ali").doc("users/ali/decisions/d50").set(validDecision("ali")),
+    );
+  });
+
+  it("hotfix madde 5: decisionCount sıfırlama hilesi engellenir (±1)", async () => {
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc("users/ali").set({
+        plan: "free",
+        decisionCount: 40,
+      });
+    });
+    // 40 → 0 sıçraması reddedilir:
+    await assertFails(
+      db("ali").doc("users/ali").update({ decisionCount: 0 }),
+    );
+    // 40 → 41 (increment) serbest:
+    await assertSucceeds(
+      db("ali").doc("users/ali").update({ decisionCount: 41 }),
+    );
   });
 
   it("NEGATİF (Y-5): ownerUid ≠ yol uid'i → reddedilir", async () => {

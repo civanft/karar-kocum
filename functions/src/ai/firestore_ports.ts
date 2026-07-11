@@ -1,20 +1,19 @@
 /**
- * AnalysisPorts üretim implementasyonu — FIRESTORE-VERI-MODELI.md şemaları.
- * Kritik: commitAnalysis TEK transaction'dır — kota yeniden doğrulanır,
- * analiz + latestAnalysisId + status + kota artışı ya hep ya hiç (§8.2).
+ * AnalysisPorts üretim implementasyonu — sadeleştirilmiş MVP (6B):
+ * aiAnalyses/latest SABİT belge, aiJobs yok, latestAnalysisId yok.
+ * commitAnalysis TEK transaction: kredi yeniden doğrula + düş + analiz
+ * + status — remaining > 0 şartıyla düşüm → NEGATİF DEĞER İMKÂNSIZ.
  */
-import {
-  FieldValue,
-  getFirestore,
-  Timestamp,
-} from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
-import type {
-  AnalysisPorts,
-  QuotaSnapshot,
-  StoredAnalysis,
+import {
+  LATEST_ANALYSIS_ID,
+  type AnalysisPorts,
+  type CreditsSnapshot,
+  type StoredAnalysis,
 } from "./analyze_service.js";
+import { INITIAL_FREE_CREDITS } from "./config.js";
 
 export class FirestoreAnalysisPorts implements AnalysisPorts {
   constructor(private readonly uid: string) {}
@@ -38,82 +37,78 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
     };
   }
 
-  async findCachedAnalysis(
-    decisionId: string,
-    inputHash: string,
-  ): Promise<StoredAnalysis | null> {
-    const query = await this.decisionRef(decisionId)
-      .collection("aiAnalyses")
-      .where("inputHash", "==", inputHash)
-      .limit(1)
-      .get();
-    const doc = query.docs[0];
-    if (!doc) return null;
-    return { id: doc.id, ...(doc.data() as Omit<StoredAnalysis, "id">) };
-  }
-
-  async peekQuota(currentMonth: string): Promise<QuotaSnapshot> {
+  /** Alan hiç yazılmamışsa BAŞLANGIÇ kabul edilir (sunucu lazy-init). */
+  async peekCredits(): Promise<CreditsSnapshot> {
     const user = await this.db.doc(`users/${this.uid}`).get();
     const data = user.data() ?? {};
     const plan = data["plan"] === "premium" ? "premium" : "free";
-    const quota = data["quota"] as { month?: string; used?: number } | undefined;
-    // Lazy aylık sıfırlama (§5.1 fonksiyon envanteri notu):
-    const used = quota?.month === currentMonth ? (quota.used ?? 0) : 0;
-    return { plan, month: currentMonth, used };
+    const pools = readPools(data);
+    return { plan, remaining: pools.free + pools.reward };
   }
 
   async commitAnalysis(params: {
     decisionId: string;
-    analysis: Omit<StoredAnalysis, "id">;
-    currentMonth: string;
-    freeQuotaLimit: number;
+    analysis: StoredAnalysis;
+    initialCredits: number;
   }): Promise<string> {
     const userRef = this.db.doc(`users/${this.uid}`);
     const decisionRef = this.decisionRef(params.decisionId);
-    const analysisRef = decisionRef.collection("aiAnalyses").doc();
+    const analysisRef = decisionRef
+      .collection("aiAnalyses")
+      .doc(LATEST_ANALYSIS_ID);
 
     await this.db.runTransaction(async (tx) => {
       const user = await tx.get(userRef);
       const data = user.data() ?? {};
       const plan = data["plan"] === "premium" ? "premium" : "free";
-      const quota = data["quota"] as
-        | { month?: string; used?: number }
-        | undefined;
-      const used =
-        quota?.month === params.currentMonth ? (quota.used ?? 0) : 0;
 
-      // Yarış koruması: ön kontrolden sonra kota dolmuş olabilir.
-      if (plan === "free" && used >= params.freeQuotaLimit) {
-        throw new AppError("quota-exceeded", "Aylık analiz hakkın doldu.", {
-          limit: params.freeQuotaLimit,
-        });
+      if (plan !== "premium") {
+        const pools = readPools(data, params.initialCredits);
+        // Yarış koruması: ön kontrolden sonra krediler bitmiş olabilir.
+        // Düşüm sırası (7A): önce ücretsiz, sonra ödül kredisi; her iki
+        // havuz da >0 şartıyla düşer → NEGATİF DEĞER İMKÂNSIZ.
+        if (pools.free > 0) {
+          tx.set(
+            userRef,
+            { freeAnalysisCredits: pools.free - 1 },
+            { merge: true },
+          );
+        } else if (pools.reward > 0) {
+          tx.set(userRef, { rewardCredits: pools.reward - 1 }, { merge: true });
+        } else {
+          throw new AppError(
+            "quota-exceeded",
+            "Ücretsiz analiz hakkın bitti.",
+            { remaining: 0, initial: params.initialCredits },
+          );
+        }
       }
 
+      // Sabit kimlik: yeniden analiz üzerine yazar (geçmiş yok — 6B).
       tx.set(analysisRef, {
         ...params.analysis,
         generatedAt: FieldValue.serverTimestamp(),
       });
-      tx.update(decisionRef, {
-        latestAnalysisId: analysisRef.id,
-        status: "analyzed",
-      });
-      tx.set(
-        userRef,
-        { quota: { month: params.currentMonth, used: used + 1 } },
-        { merge: true },
-      );
+      tx.update(decisionRef, { status: "analyzed" });
     });
 
-    return analysisRef.id;
+    return LATEST_ANALYSIS_ID;
   }
+}
 
-  async writeJob(
-    job: Parameters<AnalysisPorts["writeJob"]>[0],
-  ): Promise<void> {
-    await this.db.collection("aiJobs").add({
-      uid: this.uid,
-      ...job,
-      createdAt: Timestamp.now(),
-    });
-  }
+/**
+ * Kredi havuzları (7A): freeAnalysisCredits lazy-init'li (yazılmamışsa
+ * BAŞLANGIÇ), rewardCredits yazılmamışsa 0; bozuk/negatif veri 0'a kırpılır.
+ * Saf fonksiyon — birim testli.
+ */
+export function readPools(
+  data: Record<string, unknown>,
+  initialFree: number = INITIAL_FREE_CREDITS,
+): { free: number; reward: number } {
+  const clamp = (value: unknown, fallback: number) =>
+    typeof value === "number" ? Math.max(0, Math.trunc(value)) : fallback;
+  return {
+    free: clamp(data["freeAnalysisCredits"], initialFree),
+    reward: clamp(data["rewardCredits"], 0),
+  };
 }

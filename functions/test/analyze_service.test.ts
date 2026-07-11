@@ -1,22 +1,30 @@
 /**
- * Boru hattı orkestrasyon testleri — AI-ANALIZ-TASARIMI.md §1.2 sırası
- * ve kota adaleti kuralları, tamamı sahte port'larla (emulator'sız).
+ * Sadeleştirilmiş boru hattı testleri (6C-3): doğrulama → rate/kredi/
+ * kesici sırası → Gemini → tek commit. Kota adaleti invariant'ları
+ * (6C-2) korunur: hata/moderasyon/rate reddi kredi YAKMAZ.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   AnalyzeService,
-  SELF_HARM_REDIRECT,
+  LATEST_ANALYSIS_ID,
   type AnalysisPorts,
   type StoredAnalysis,
 } from "../src/ai/analyze_service";
 import { CostCircuitBreaker, type SpendStore } from "../src/ai/cost_control";
-import type {
-  AiGateway,
-  AnalysisCompletion,
-  ModerationResult,
-} from "../src/ai/openai_gateway";
-import { clearPromptVersionCache } from "../src/ai/prompts/registry";
+import {
+  DailyAnalysisLimiter,
+  type DailyCounterStore,
+} from "../src/ai/daily_limit";
+import {
+  DailyTokenGuard,
+  type TokenCounterStore,
+} from "../src/ai/token_counter";
+import {
+  SELF_HARM_REDIRECT,
+  type AiGateway,
+  type AnalysisCompletion,
+} from "../src/ai/gemini_gateway";
 import type { AnalysisOutput } from "../src/ai/schema";
 import { AppError } from "../src/core/errors";
 import { hashUid } from "../src/core/logger";
@@ -41,77 +49,56 @@ const validContent = {
 
 const validOutput: AnalysisOutput = {
   summary: "Dengeli bir karşılaştırma.",
-  risks: ["Fiyat farkı bütçeyi zorlayabilir"],
-  perOption: [
-    { optionId: "a", strengths: ["kamera"], weaknesses: ["fiyat"] },
-    { optionId: "b", strengths: ["fiyat"], weaknesses: [] },
-  ],
-  suggestedCriteria: [{ name: "Batarya", defaultWeight: 6 }],
+  strengths: ["Kriterler tutarlı"],
+  weaknesses: ["Yaşam maliyeti düşük tartılmış"],
+  risks: ["Kira artışı varsayımı"],
+  recommendation: "Veriler iPhone seçeneğini gösteriyor.",
   confidence: "medium",
-  confidenceReason: "Kriter sayısı sınırlı.",
 };
 
 class FakePorts implements AnalysisPorts {
   content: unknown | null = validContent;
-  cached: StoredAnalysis | null = null;
   plan: "free" | "premium" = "free";
-  used = 0;
+  /** null = alan hiç yazılmamış (yeni kullanıcı) → sunucu lazy-init. */
+  credits: number | null = null;
   commits = 0;
-  jobs: Array<{ status: string; costUsd: number }> = [];
-  commitShouldRace = false;
+  lastAnalysis: StoredAnalysis | null = null;
 
   async readDecisionContent() {
     return this.content;
   }
 
-  async findCachedAnalysis() {
-    return this.cached;
-  }
-
-  async peekQuota(month: string) {
-    return { plan: this.plan, month, used: this.used };
+  async peekCredits() {
+    return { plan: this.plan, remaining: this.credits ?? 5 };
   }
 
   async commitAnalysis(params: {
-    freeQuotaLimit: number;
+    analysis: StoredAnalysis;
+    initialCredits: number;
   }): Promise<string> {
-    if (
-      this.commitShouldRace &&
-      this.plan === "free" &&
-      this.used >= params.freeQuotaLimit
-    ) {
-      throw new AppError("quota-exceeded", "doldu");
+    if (this.plan !== "premium") {
+      const remaining = this.credits ?? params.initialCredits;
+      if (remaining <= 0) {
+        throw new AppError("quota-exceeded", "bitti", { remaining: 0 });
+      }
+      this.credits = remaining - 1;
     }
     this.commits++;
-    this.used++;
-    return `analysis-${this.commits}`;
-  }
-
-  async writeJob(job: { status: string; costUsd: number }) {
-    this.jobs.push(job);
+    this.lastAnalysis = params.analysis;
+    return LATEST_ANALYSIS_ID;
   }
 }
 
 class FakeGateway implements AiGateway {
-  moderationResult: ModerationResult = {
-    flagged: false,
-    selfHarm: false,
-    categories: [],
-  };
   completions = 0;
-  moderations = 0;
-
-  async moderate(): Promise<ModerationResult> {
-    this.moderations++;
-    return this.moderationResult;
-  }
+  failWith: AppError | null = null;
 
   async completeAnalysis(): Promise<AnalysisCompletion> {
+    if (this.failWith) throw this.failWith;
     this.completions++;
     return {
       output: validOutput,
-      usage: { inputTokens: 1500, outputTokens: 700 },
-      repaired: false,
+      usage: { inputTokens: 1500, outputTokens: 600 },
     };
   }
 }
@@ -126,6 +113,32 @@ class FakeSpend implements SpendStore {
   }
 }
 
+class MemoryCounter implements DailyCounterStore {
+  counts = new Map<string, number>();
+  async reserve(dayKey: string, limit: number): Promise<boolean> {
+    const current = this.counts.get(dayKey) ?? 0;
+    if (current >= limit) return false;
+    this.counts.set(dayKey, current + 1);
+    return true;
+  }
+  get total(): number {
+    return [...this.counts.values()].reduce((a, b) => a + b, 0);
+  }
+}
+
+class MemoryTokenStore implements TokenCounterStore {
+  totals = new Map<string, number>();
+  async todayTotal(dayKey: string): Promise<number> {
+    return this.totals.get(dayKey) ?? 0;
+  }
+  async add(dayKey: string, tokens: number): Promise<void> {
+    this.totals.set(dayKey, (this.totals.get(dayKey) ?? 0) + tokens);
+  }
+  get total(): number {
+    return [...this.totals.values()].reduce((a, b) => a + b, 0);
+  }
+}
+
 class FakeRate {
   calls = 0;
   shouldReject = false;
@@ -137,162 +150,207 @@ class FakeRate {
   }
 }
 
-function make(overrides?: { spendTotal?: number }) {
+function make(overrides?: {
+  spendTotal?: number;
+  dailyLimit?: number;
+  tokenLimit?: number;
+  tokenTotal?: number;
+}) {
   const ports = new FakePorts();
   const gateway = new FakeGateway();
   const rate = new FakeRate();
   const spend = new FakeSpend();
+  const counter = new MemoryCounter();
+  const tokens = new MemoryTokenStore();
   spend.total = overrides?.spendTotal ?? 0;
-  const breaker = new CostCircuitBreaker(spend, 50);
-  const service = new AnalyzeService(ports, gateway, rate, breaker);
-  return { service, ports, gateway, rate, spend };
+  if (overrides?.tokenTotal) {
+    tokens.totals.set(new Date().toISOString().slice(0, 10), overrides.tokenTotal);
+  }
+  const breaker = new CostCircuitBreaker(spend, 0.15);
+  const daily = new DailyAnalysisLimiter(counter, overrides?.dailyLimit ?? 20);
+  const tokenGuard = new DailyTokenGuard(tokens, overrides?.tokenLimit ?? 375_000);
+  const service = new AnalyzeService(
+    ports,
+    gateway,
+    rate,
+    breaker,
+    daily,
+    tokenGuard,
+  );
+  return { service, ports, gateway, rate, spend, counter, tokens };
 }
 
-beforeEach(() => clearPromptVersionCache());
+const request = { decisionId: "d1" };
 
-const request = { decisionId: "d1", tier: "basic" };
-
-describe("AnalyzeService — mutlu yol", () => {
-  it("analizi üretir, commit'ler ve maliyet muhasebesi yazar", async () => {
+describe("mutlu yol", () => {
+  it("analiz üretir, latest'e commit'ler, kredi 5→4, maliyet kaydedilir", async () => {
     const { service, ports, spend } = make();
     const result = await service.run(ctx, request);
 
-    expect(result.cached).toBe(false);
+    expect(result.analysisId).toBe(LATEST_ANALYSIS_ID);
     expect(result.analysis.summary).toBe(validOutput.summary);
-    expect(result.analysis.perOption["a"]!.strengths).toEqual(["kamera"]);
+    expect(result.analysis.recommendation).toContain("iPhone");
+    expect(result.analysis.model).toBe("gemini-2.0-flash");
+    expect(result.analysis.promptVersion).toBe("mvp-1");
     expect(ports.commits).toBe(1);
-    expect(ports.used).toBe(1); // kota başarıyla birlikte düştü
-    expect(ports.jobs[0]!.status).toBe("ok");
-    expect(ports.jobs[0]!.costUsd).toBeGreaterThan(0);
-    expect(spend.total).toBeGreaterThan(0); // devre kesici sayacı beslendi
+    expect(ports.credits).toBe(4); // lazy-init 5 → 4
+    expect(spend.total).toBeGreaterThan(0);
+    // Maliyet hedefi (6C-1 §7): analiz başına < $0,001
+    expect(spend.total).toBeLessThan(0.001);
+  });
+
+  it("yeniden analiz aynı kimliğe yazar (üzerine yazma — geçmiş yok)", async () => {
+    const { service, ports } = make();
+    const first = await service.run(ctx, request);
+    const second = await service.run(ctx, request);
+    expect(first.analysisId).toBe(second.analysisId);
+    expect(ports.commits).toBe(2);
+    expect(ports.credits).toBe(3); // her analiz 1 kredi (cache yok — 6B)
   });
 });
 
-describe("önbellek (§5)", () => {
-  it("isabet: rate/kota/LLM hiç çalışmaz, kota yanmaz", async () => {
-    const { service, ports, gateway, rate } = make();
-    ports.cached = {
-      id: "eski-analiz",
-      tier: "basic",
-      summary: "önbellekten",
-      risks: [],
-      perOption: {},
-      suggestedCriteria: [],
-      confidence: "high",
-      confidenceReason: "x",
-      model: "gpt-4o-mini",
-      promptVersion: "v1",
-      inputHash: "h",
-    };
-
-    const result = await service.run(ctx, request);
-
-    expect(result.cached).toBe(true);
-    expect(result.analysisId).toBe("eski-analiz");
-    expect(rate.calls).toBe(0); // önbellek rate limit'ten ÖNCE (§1.2)
-    expect(gateway.moderations).toBe(0);
-    expect(gateway.completions).toBe(0);
-    expect(ports.used).toBe(0); // kota yanmadı
-    expect(ports.jobs[0]!.status).toBe("cache_hit");
-  });
-});
-
-describe("kota adaleti (§1.2 kural)", () => {
-  it("free kota dolu → quota-exceeded, LLM çağrılmaz", async () => {
+describe("kredi adaleti (6C-2 invariant'ları)", () => {
+  it("kredi 0 → quota-exceeded, Gemini hiç çağrılmaz", async () => {
     const { service, ports, gateway } = make();
-    ports.used = 5;
-
+    ports.credits = 0;
     const error = await service.run(ctx, request).catch((e: unknown) => e);
     expect((error as AppError).code).toBe("quota-exceeded");
     expect(gateway.completions).toBe(0);
   });
 
-  it("premium kota sınırından etkilenmez", async () => {
-    const { service, ports } = make();
-    ports.plan = "premium";
-    ports.used = 999;
+  it("kredi 1→0: geçer; ikincisi reddedilir; negatif imkânsız", async () => {
+    const { service, ports, gateway } = make();
+    ports.credits = 1;
 
-    const result = await service.run(ctx, { ...request, tier: "advanced" });
-    expect(result.cached).toBe(false);
-    expect(ports.commits).toBe(1);
+    await service.run(ctx, request);
+    expect(ports.credits).toBe(0);
+
+    const error = await service
+      .run(ctx, { decisionId: "d2" })
+      .catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("quota-exceeded");
+    expect(ports.credits).toBe(0); // değişmedi
+    expect(gateway.completions).toBe(1);
   });
 
-  it("moderasyon reddi kota YAKMAZ ve LLM'e gitmez", async () => {
+  it("Gemini moderasyon bloğu kredi YAKMAZ", async () => {
     const { service, ports, gateway } = make();
-    gateway.moderationResult = {
-      flagged: true,
-      selfHarm: false,
-      categories: ["violence"],
-    };
+    gateway.failWith = new AppError("moderated", SELF_HARM_REDIRECT, {
+      selfHarm: true,
+    });
 
     const error = await service.run(ctx, request).catch((e: unknown) => e);
     expect((error as AppError).code).toBe("moderated");
-    expect(gateway.completions).toBe(0);
-    expect(ports.used).toBe(0);
+    expect((error as AppError).message).toBe(SELF_HARM_REDIRECT);
+    expect(ports.credits).toBeNull(); // kredi yanmadı
     expect(ports.commits).toBe(0);
   });
 
-  it("kendine zarar: güvenli yönlendirme mesajı döner", async () => {
-    const { service, gateway } = make();
-    gateway.moderationResult = {
-      flagged: true,
-      selfHarm: true,
-      categories: ["self-harm"],
-    };
-
-    const error = await service.run(ctx, request).catch((e: unknown) => e);
-    expect((error as AppError).message).toBe(SELF_HARM_REDIRECT);
-    expect((error as AppError).details?.["selfHarm"]).toBe(true);
-  });
-});
-
-describe("devre kesici (§4.3)", () => {
-  it("günlük eşik aşıldı → free tier ai-unavailable", async () => {
-    const { service } = make({ spendTotal: 51 });
-    const error = await service.run(ctx, request).catch((e: unknown) => e);
-    expect((error as AppError).code).toBe("ai-unavailable");
-    expect((error as AppError).details?.["circuitBreaker"]).toBe(true);
+  it("Gemini kesintisi (ai-unavailable) kredi YAKMAZ", async () => {
+    const { service, ports, gateway } = make();
+    gateway.failWith = new AppError("ai-unavailable", "kesinti", {
+      retryable: true,
+    });
+    await service.run(ctx, request).catch(() => undefined);
+    expect(ports.credits).toBeNull();
+    expect(ports.commits).toBe(0);
   });
 
-  it("premium tier kesiciden etkilenmez", async () => {
-    const { service, ports } = make({ spendTotal: 51 });
+  it("premium: kredi sınırı ve kesici bypass", async () => {
+    const { service, ports } = make({ spendTotal: 1 }); // kesici eşik üstü
     ports.plan = "premium";
-    const result = await service.run(ctx, { ...request, tier: "advanced" });
-    expect(result.cached).toBe(false);
+    ports.credits = 0;
+    const result = await service.run(ctx, request);
+    expect(result.analysisId).toBe(LATEST_ANALYSIS_ID);
   });
 });
 
-describe("girdi doğrulama", () => {
-  it("olmayan karar → invalid-argument", async () => {
-    const { service, ports } = make();
-    ports.content = null;
-    const error = await service.run(ctx, request).catch((e: unknown) => e);
-    expect((error as AppError).code).toBe("invalid-argument");
-  });
-
-  it("tek seçenekli karar analiz edilemez (Y-3)", async () => {
-    const { service, ports } = make();
-    ports.content = { ...validContent, options: [validContent.options[0]] };
-    const error = await service.run(ctx, request).catch((e: unknown) => e);
-    expect((error as AppError).code).toBe("invalid-argument");
-  });
-
-  it("bozuk istek payload'ı → invalid-argument", async () => {
-    const { service } = make();
-    const error = await service
-      .run(ctx, { yanlisAlan: true })
-      .catch((e: unknown) => e);
-    expect((error as AppError).code).toBe("invalid-argument");
-  });
-});
-
-describe("rate limit sırası", () => {
-  it("rate reddi LLM'den önce keser, kota yanmaz", async () => {
+describe("koruma sırası", () => {
+  it("rate reddi Gemini'den önce keser", async () => {
     const { service, ports, gateway, rate } = make();
     rate.shouldReject = true;
     const error = await service.run(ctx, request).catch((e: unknown) => e);
     expect((error as AppError).code).toBe("rate-limited");
     expect(gateway.completions).toBe(0);
-    expect(ports.used).toBe(0);
+    expect(ports.credits).toBeNull();
+  });
+
+  it("7B: günlük ADET limiti dolunca doğru mesaj, kredi YANMAZ", async () => {
+    const { service, ports, gateway } = make({ dailyLimit: 1 });
+
+    await service.run(ctx, request); // slot 1/1
+    const error = await service
+      .run(ctx, { decisionId: "d2" })
+      .catch((e: unknown) => e);
+
+    expect((error as AppError).code).toBe("daily-limit");
+    expect((error as AppError).message).toContain(
+      "Bugünkü analiz limiti doldu",
+    );
+    expect(gateway.completions).toBe(1); // ikinci istek Gemini'ye gitmedi
+    expect(ports.credits).toBe(4); // yalnız ilk analiz kredi düşürdü
+  });
+
+  it("7B: başarılı analiz global sayacı 1 artırır", async () => {
+    const { service, counter } = make();
+    await service.run(ctx, request);
+    expect(counter.total).toBe(1);
+  });
+
+  it("cost guard: başarılı analiz token sayacına giriş+çıkış ekler", async () => {
+    const { service, tokens } = make();
+    await service.run(ctx, request);
+    expect(tokens.total).toBe(2100); // 1500 giriş + 600 çıkış
+  });
+
+  it("cost guard: günlük token tavanı dolunca daily-limit, kredi YANMAZ", async () => {
+    const { service, ports, gateway } = make({ tokenTotal: 375_000 });
+    const error = await service.run(ctx, request).catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("daily-limit");
+    expect(gateway.completions).toBe(0);
+    expect(ports.credits).toBeNull();
+  });
+
+  it("cost guard: giriş boyutu MAX_INPUT_CHARS aşarsa invalid-argument", async () => {
+    const { service, ports, gateway } = make();
+    // 8 dolu seçenek × (20 artı + 20 eksi) × 140 kr ≈ 45K kr > 24K tavan.
+    ports.content = {
+      ...validContent,
+      options: Array.from({ length: 8 }, (_, i) => ({
+        id: `o${i}`,
+        title: `Seçenek ${i}`,
+        pros: Array.from({ length: 20 }, () => "x".repeat(140)),
+        cons: Array.from({ length: 20 }, () => "y".repeat(140)),
+      })),
+    };
+    const error = await service.run(ctx, request).catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("invalid-argument");
+    expect((error as AppError).details?.["maxInputChars"]).toBe(24_000);
+    expect(gateway.completions).toBe(0);
+  });
+
+  it("günlük tavan aşımı: free kullanıcı ai-unavailable", async () => {
+    const { service } = make({ spendTotal: 0.16 }); // > $0,15
+    const error = await service.run(ctx, request).catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("ai-unavailable");
+    expect((error as AppError).details?.["circuitBreaker"]).toBe(true);
+  });
+});
+
+describe("girdi doğrulama", () => {
+  it("olmayan karar / bozuk istek / tek seçenek → invalid-argument", async () => {
+    const { service, ports } = make();
+
+    ports.content = null;
+    let error = await service.run(ctx, request).catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("invalid-argument");
+
+    ports.content = validContent;
+    error = await service.run(ctx, { yanlis: 1 }).catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("invalid-argument");
+
+    ports.content = { ...validContent, options: [validContent.options[0]] };
+    error = await service.run(ctx, request).catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("invalid-argument");
   });
 });
