@@ -12,11 +12,14 @@ import { AppError } from "../src/core/errors";
 import {
   createRewardTicket,
   grantFromCallback,
-  MAX_PENDING_TICKETS,
-  TICKET_TTL_MS,
   type GrantOutcome,
   type TicketStore,
 } from "../src/rewards/reward_service";
+import {
+  MAX_PENDING_TICKETS,
+  MAX_REWARD_CREDITS,
+  REWARD_TICKET_TTL_MS as TICKET_TTL_MS,
+} from "../src/config";
 import { SsvVerifier } from "../src/rewards/ssv_verifier";
 
 // ---- SSV doğrulayıcı ----
@@ -96,6 +99,10 @@ class MemoryTicketStore implements TicketStore {
     ).length;
   }
 
+  async currentRewardCredits(uid: string): Promise<number> {
+    return this.rewardCredits.get(uid) ?? 0;
+  }
+
   async create(uid: string, expiresAtMs: number): Promise<string> {
     const id = `t${++this.seq}`;
     this.tickets.set(id, { uid, status: "pending", expiresAtMs });
@@ -115,6 +122,11 @@ class MemoryTicketStore implements TicketStore {
     if (ticket.expiresAtMs < nowMs) {
       ticket.status = "expired";
       return "expired";
+    }
+    // Hotfix madde 4: tavan — bilet tüketilir, kredi verilmez.
+    if ((this.rewardCredits.get(uid) ?? 0) >= MAX_REWARD_CREDITS) {
+      ticket.status = "granted";
+      return "capped";
     }
     ticket.status = "granted";
     ticket.transactionId = transactionId;
@@ -194,6 +206,41 @@ describe("ödül akışı", () => {
       (e: unknown) => e,
     );
     expect((error as AppError).code).toBe("rate-limited");
+  });
+
+  it("hotfix madde 4: tavandaki kullanıcıya bilet açılmaz", async () => {
+    const store = new MemoryTicketStore();
+    store.rewardCredits.set("u1", MAX_REWARD_CREDITS);
+    const error = await createRewardTicket(store, "u1", now).catch(
+      (e: unknown) => e,
+    );
+    expect((error as AppError).code).toBe("quota-exceeded");
+    expect((error as AppError).details?.["maxRewardCredits"]).toBe(
+      MAX_REWARD_CREDITS,
+    );
+  });
+
+  it("hotfix madde 4: tavanda callback bileti tüketir ama kredi VERMEZ", async () => {
+    const store = new MemoryTicketStore();
+    store.rewardCredits.set("u1", MAX_REWARD_CREDITS);
+    // Bileti manuel aç (tavan kontrolünü atlayarak yarış senaryosu simülasyonu):
+    const ticketId = await store.create("u1", now() + TICKET_TTL_MS);
+
+    const outcome = await grantFromCallback(
+      store,
+      { userId: "u1", customData: ticketId, transactionId: "tx" },
+      now,
+    );
+    expect(outcome).toBe("capped");
+    expect(store.rewardCredits.get("u1")).toBe(MAX_REWARD_CREDITS); // artmadı
+    // Bilet tüketildi — tekrar denenemez:
+    expect(
+      await grantFromCallback(
+        store,
+        { userId: "u1", customData: ticketId, transactionId: "tx2" },
+        now,
+      ),
+    ).toBe("duplicate");
   });
 });
 

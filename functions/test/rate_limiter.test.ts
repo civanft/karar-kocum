@@ -22,6 +22,7 @@ class MemoryStore implements RateLimitStore {
 }
 
 const limits = { perMinute: 3, perHour: 5 };
+const HOUR = 3_600_000;
 
 function make(startMs = 1_000_000) {
   let nowMs = startMs;
@@ -97,5 +98,44 @@ describe("RateLimiter", () => {
     const { limiter } = make();
     for (let i = 0; i < 3; i++) await limiter.check("u1");
     await expect(limiter.check("u2")).resolves.toBeUndefined();
+  });
+
+  it("hotfix madde 3: perDay limiti (3/gün) saat dolsa da uygulanır", async () => {
+    let nowMs = 1_000_000;
+    const store = new MemoryStore();
+    const limiter = new RateLimiter(
+      store,
+      { perMinute: 3, perHour: 10, perDay: 3 },
+      () => nowMs,
+    );
+
+    await limiter.check("u1");
+    nowMs += HOUR; // dakika+saat penceresi tazelensin
+    await limiter.check("u1");
+    nowMs += HOUR;
+    await limiter.check("u1"); // günlük 3. istek
+
+    nowMs += HOUR; // hâlâ aynı gün
+    const error = await limiter.check("u1").catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("rate-limited");
+    // Ertesi gün sıfırlanır:
+    nowMs += 24 * HOUR;
+    await expect(limiter.check("u1")).resolves.toBeUndefined();
+  });
+
+  it("perDay tanımsızsa gün limiti uygulanmaz (geriye uyumlu)", async () => {
+    let nowMs = 1_000_000;
+    const store = new MemoryStore();
+    const limiter = new RateLimiter(
+      store,
+      { perMinute: 3, perHour: 100 },
+      () => nowMs,
+    );
+    for (let i = 0; i < 20; i++) {
+      await limiter.check("u1");
+      nowMs += 61_000; // dakika penceresini aş
+    }
+    // 20 istek geçti — gün penceresi yok
+    expect(store.state.get("u1")!.hour.count).toBeGreaterThan(3);
   });
 });

@@ -15,12 +15,10 @@ import {
   createRewardTicket as createTicket,
   FirestoreTicketStore,
 } from "./reward_service.js";
+import { REWARD_TICKET_LIMITS } from "../config.js";
 
 const limiter = () =>
-  new RateLimiter(new FirestoreRateLimitStore(), {
-    perMinute: 5,
-    perHour: 20,
-  });
+  new RateLimiter(new FirestoreRateLimitStore(), REWARD_TICKET_LIMITS);
 
 export const createRewardTicket = onCall(
   {

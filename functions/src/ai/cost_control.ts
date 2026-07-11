@@ -6,7 +6,7 @@
 import { getFirestore } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
-import { dailySpendLimitUsd } from "./config.js";
+import { DAILY_SPEND_LIMIT_USD } from "../config.js";
 import type { TokenUsage } from "./gemini_gateway.js";
 
 interface ModelPrice {
@@ -47,7 +47,7 @@ export function utcDayKey(now: () => number = Date.now): string {
 export class CostCircuitBreaker {
   constructor(
     private readonly store: SpendStore,
-    private readonly limitUsd: number = dailySpendLimitUsd(),
+    private readonly limitUsd: number = DAILY_SPEND_LIMIT_USD,
     private readonly now: () => number = Date.now,
   ) {}
 

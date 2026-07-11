@@ -20,21 +20,26 @@ import {
 } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
-
-export const TICKET_TTL_MS = 15 * 60_000; // reklam izleme penceresi
-export const MAX_PENDING_TICKETS = 3; // bilet stoklama/spam freni
+import {
+  MAX_PENDING_TICKETS,
+  MAX_REWARD_CREDITS,
+  REWARD_TICKET_TTL_MS,
+} from "../config.js";
 
 export type GrantOutcome =
   | "granted"
   | "duplicate"
   | "expired"
   | "unknown"
+  | "capped" // ödül tavanı (MAX_REWARD_CREDITS) — kredi verilmez
   | "user_mismatch";
 
 export interface TicketStore {
   countPending(uid: string, nowMs: number): Promise<number>;
+  /** Kullanıcının mevcut ödül kredisi (tavan ön-kontrolü için). */
+  currentRewardCredits(uid: string): Promise<number>;
   create(uid: string, expiresAtMs: number): Promise<string>; // ticketId
-  /** TEK transaction: bilet doğrula + granted işaretle + kredi +1. */
+  /** TEK transaction: bilet doğrula + granted işaretle + kredi +1 (tavana dek). */
   grantIfPending(
     uid: string,
     ticketId: string,
@@ -49,6 +54,15 @@ export async function createRewardTicket(
   now: () => number = Date.now,
 ): Promise<{ ticketId: string; expiresAtMs: number }> {
   const nowMs = now();
+  // Hotfix madde 4: ödül tavanındaysa reklam izletme — bileti hiç açma.
+  if ((await store.currentRewardCredits(uid)) >= MAX_REWARD_CREDITS) {
+    throw new AppError(
+      "quota-exceeded",
+      "Ödül hakkı üst sınırına ulaştın (en fazla " +
+        `${MAX_REWARD_CREDITS} ödül kredisi).`,
+      { maxRewardCredits: MAX_REWARD_CREDITS },
+    );
+  }
   if ((await store.countPending(uid, nowMs)) >= MAX_PENDING_TICKETS) {
     throw new AppError(
       "rate-limited",
@@ -56,7 +70,7 @@ export async function createRewardTicket(
       { retryAfterSeconds: 60 },
     );
   }
-  const expiresAtMs = nowMs + TICKET_TTL_MS;
+  const expiresAtMs = nowMs + REWARD_TICKET_TTL_MS;
   const ticketId = await store.create(uid, expiresAtMs);
   return { ticketId, expiresAtMs };
 }
@@ -94,6 +108,12 @@ export class FirestoreTicketStore implements TicketStore {
     return snapshot.size;
   }
 
+  async currentRewardCredits(uid: string): Promise<number> {
+    const user = await this.db.doc(`users/${uid}`).get();
+    const raw = user.data()?.["rewardCredits"];
+    return typeof raw === "number" ? Math.max(0, Math.trunc(raw)) : 0;
+  }
+
   async create(uid: string, expiresAtMs: number): Promise<string> {
     const ref = await this.tickets(uid).add({
       status: "pending",
@@ -124,6 +144,22 @@ export class FirestoreTicketStore implements TicketStore {
       if (!expiresAt || expiresAt.toMillis() < nowMs) {
         tx.update(ticketRef, { status: "expired" });
         return "expired";
+      }
+
+      // Hotfix madde 4: tavan kontrolü transaction İÇİNDE (yarış-güvenli).
+      const user = await tx.get(userRef);
+      const currentRaw = user.data()?.["rewardCredits"];
+      const current =
+        typeof currentRaw === "number" ? Math.max(0, Math.trunc(currentRaw)) : 0;
+      if (current >= MAX_REWARD_CREDITS) {
+        // Bilet tüketilir (tekrar denenemez) ama kredi VERİLMEZ.
+        tx.update(ticketRef, {
+          status: "granted",
+          transactionId,
+          capped: true,
+          grantedAt: FieldValue.serverTimestamp(),
+        });
+        return "capped";
       }
 
       tx.update(ticketRef, {

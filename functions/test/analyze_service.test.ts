@@ -140,8 +140,8 @@ function make(overrides?: { spendTotal?: number; dailyLimit?: number }) {
   const spend = new FakeSpend();
   const counter = new MemoryCounter();
   spend.total = overrides?.spendTotal ?? 0;
-  const breaker = new CostCircuitBreaker(spend, 0.35);
-  const daily = new DailyAnalysisLimiter(counter, overrides?.dailyLimit ?? 50);
+  const breaker = new CostCircuitBreaker(spend, 0.15);
+  const daily = new DailyAnalysisLimiter(counter, overrides?.dailyLimit ?? 20);
   const service = new AnalyzeService(ports, gateway, rate, breaker, daily);
   return { service, ports, gateway, rate, spend, counter };
 }
@@ -264,7 +264,7 @@ describe("koruma sırası", () => {
   });
 
   it("günlük tavan aşımı: free kullanıcı ai-unavailable", async () => {
-    const { service } = make({ spendTotal: 0.36 }); // > $0,35
+    const { service } = make({ spendTotal: 0.16 }); // > $0,15
     const error = await service.run(ctx, request).catch((e: unknown) => e);
     expect((error as AppError).code).toBe("ai-unavailable");
     expect((error as AppError).details?.["circuitBreaker"]).toBe(true);

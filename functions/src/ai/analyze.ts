@@ -10,10 +10,10 @@ import { log } from "../core/logger.js";
 import { geminiApiKey } from "../core/secrets.js";
 import { buildContext } from "../middleware/context.js";
 import {
-  DEFAULT_ANALYZE_LIMITS,
   FirestoreRateLimitStore,
   RateLimiter,
 } from "../quota/rate_limiter.js";
+import { PER_USER_ANALYZE_LIMITS } from "../config.js";
 import { AnalyzeService } from "./analyze_service.js";
 import { CostCircuitBreaker, FirestoreSpendStore } from "./cost_control.js";
 import {
@@ -39,7 +39,7 @@ export const analyzeDecision = onCall(
       const service = new AnalyzeService(
         new FirestoreAnalysisPorts(ctx.uid),
         new GeminiGateway(createGeminiClient(geminiApiKey.value())),
-        new RateLimiter(new FirestoreRateLimitStore(), DEFAULT_ANALYZE_LIMITS),
+        new RateLimiter(new FirestoreRateLimitStore(), PER_USER_ANALYZE_LIMITS),
         new CostCircuitBreaker(new FirestoreSpendStore()),
         new DailyAnalysisLimiter(new FirestoreDailyCounterStore()),
       );

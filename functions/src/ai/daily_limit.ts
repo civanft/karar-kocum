@@ -13,12 +13,12 @@
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
+import { DAILY_GLOBAL_ANALYSIS_LIMIT } from "../config.js";
 import { utcDayKey } from "./cost_control.js";
 
-/** Günlük global analiz limiti (env ile ezilebilir, deploy'suz değil). */
+/** Günlük global analiz limiti — merkezi config'ten (hotfix: 50 → 20). */
 export function dailyAnalysisLimit(): number {
-  const raw = Number(process.env["DAILY_ANALYSIS_LIMIT"]);
-  return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 50;
+  return DAILY_GLOBAL_ANALYSIS_LIMIT;
 }
 
 export interface DailyCounterStore {
@@ -32,7 +32,7 @@ export interface DailyCounterStore {
 export class DailyAnalysisLimiter {
   constructor(
     private readonly store: DailyCounterStore,
-    private readonly limit: number = dailyAnalysisLimit(),
+    private readonly limit: number = DAILY_GLOBAL_ANALYSIS_LIMIT,
     private readonly now: () => number = Date.now,
   ) {}
 

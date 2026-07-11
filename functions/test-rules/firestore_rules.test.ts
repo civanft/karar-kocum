@@ -157,6 +157,46 @@ describe("decisions belgesi", () => {
     await assertSucceeds(db("ali").doc("users/ali/decisions/d1").get());
   });
 
+  it("hotfix madde 5: decisionCount 50'de yeni karar reddedilir", async () => {
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc("users/ali").set({
+        plan: "free",
+        decisionCount: 50,
+      });
+    });
+    await assertFails(
+      db("ali").doc("users/ali/decisions/d51").set(validDecision("ali")),
+    );
+
+    // 49'da yeni karar geçer:
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc("users/ali").set({
+        plan: "free",
+        decisionCount: 49,
+      });
+    });
+    await assertSucceeds(
+      db("ali").doc("users/ali/decisions/d50").set(validDecision("ali")),
+    );
+  });
+
+  it("hotfix madde 5: decisionCount sıfırlama hilesi engellenir (±1)", async () => {
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().doc("users/ali").set({
+        plan: "free",
+        decisionCount: 40,
+      });
+    });
+    // 40 → 0 sıçraması reddedilir:
+    await assertFails(
+      db("ali").doc("users/ali").update({ decisionCount: 0 }),
+    );
+    // 40 → 41 (increment) serbest:
+    await assertSucceeds(
+      db("ali").doc("users/ali").update({ decisionCount: 41 }),
+    );
+  });
+
   it("NEGATİF (Y-5): ownerUid ≠ yol uid'i → reddedilir", async () => {
     await assertFails(
       db("ali").doc("users/ali/decisions/d1").set(validDecision("veli")),

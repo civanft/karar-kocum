@@ -84,6 +84,29 @@ void main() {
     test('olmayan belge null döner', () async {
       expect(await repo.getById('yok'), isNull);
     });
+
+    test('hotfix madde 5: oluşturma decisionCount sayacını +1 yapar', () async {
+      await repo.upsert(decision(id: 'd1'));
+      await repo.upsert(decision(id: 'd2'));
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['decisionCount'], 2);
+    });
+
+    test('hotfix madde 5: aynı belgeyi tekrar upsert sayacı artırmaz',
+        () async {
+      await repo.upsert(decision(id: 'd1'));
+      await repo.upsert(decision(id: 'd1', title: 'Güncellendi'));
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['decisionCount'], 1); // 2 değil
+    });
+
+    test('hotfix madde 5: silme decisionCount sayacını -1 yapar', () async {
+      await repo.upsert(decision(id: 'd1'));
+      await repo.upsert(decision(id: 'd2'));
+      await repo.delete('d1');
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['decisionCount'], 1);
+    });
   });
 
   group('applyPatch (K-2 alan bazlı yazım)', () {

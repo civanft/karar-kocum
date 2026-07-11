@@ -26,8 +26,8 @@ const DAY1 = Date.UTC(2026, 6, 10, 12); // 2026-07-10
 const DAY2 = Date.UTC(2026, 6, 11, 12); // 2026-07-11
 
 describe("DailyAnalysisLimiter", () => {
-  it("varsayılan limit 50", () => {
-    expect(dailyAnalysisLimit()).toBe(50);
+  it("varsayılan limit 20 (hotfix)", () => {
+    expect(dailyAnalysisLimit()).toBe(20);
   });
 
   it("limit altında slot ayrılır ve sayaç artar", async () => {

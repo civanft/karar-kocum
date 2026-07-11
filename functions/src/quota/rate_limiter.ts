@@ -18,6 +18,8 @@ export interface WindowState {
 export interface RateLimitState {
   minute: WindowState;
   hour: WindowState;
+  /** Opsiyonel gün penceresi (perDay limiti tanımlıysa kullanılır). */
+  day?: WindowState;
 }
 
 export interface RateLimitStore {
@@ -31,12 +33,13 @@ export interface RateLimitStore {
 export interface RateLimits {
   perMinute: number;
   perHour: number;
+  /** Opsiyonel günlük limit (hotfix madde 3: analiz 3/gün). */
+  perDay?: number;
 }
-
-export const DEFAULT_ANALYZE_LIMITS: RateLimits = { perMinute: 3, perHour: 10 };
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
 
 export class RateLimiter {
   constructor(
@@ -57,18 +60,28 @@ export class RateLimiter {
     await this.store.update(key, (current) => {
       const minute = roll(current?.minute, nowMs, MINUTE_MS);
       const hour = roll(current?.hour, nowMs, HOUR_MS);
+      const day = roll(current?.day, nowMs, DAY_MS);
 
+      // Red durumunda hiçbir sayaç artmaz (state bozulmaz).
       if (minute.count >= this.limits.perMinute) {
         rejectedRetryAfterSec = remainingSec(minute, nowMs, MINUTE_MS);
-        return { minute, hour }; // sayaç ARTMAZ — red yazımı state'i bozmaz
+        return { minute, hour, day };
       }
       if (hour.count >= this.limits.perHour) {
         rejectedRetryAfterSec = remainingSec(hour, nowMs, HOUR_MS);
-        return { minute, hour };
+        return { minute, hour, day };
+      }
+      if (
+        this.limits.perDay != null &&
+        day.count >= this.limits.perDay
+      ) {
+        rejectedRetryAfterSec = remainingSec(day, nowMs, DAY_MS);
+        return { minute, hour, day };
       }
       return {
         minute: { ...minute, count: minute.count + 1 },
         hour: { ...hour, count: hour.count + 1 },
+        day: { ...day, count: day.count + 1 },
       };
     });
 

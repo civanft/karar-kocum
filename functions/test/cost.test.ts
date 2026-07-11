@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dailySpendLimitUsd } from "../src/ai/config";
+import { DAILY_SPEND_LIMIT_USD } from "../src/config";
 import { computeCostUsd } from "../src/ai/cost_control";
 import { buildUserMessage } from "../src/ai/prompt";
 
@@ -20,8 +20,8 @@ describe("Gemini maliyet (6C-1 §7)", () => {
     ).toBeGreaterThan(0.001);
   });
 
-  it("günlük tavan varsayılanı $0,35 (MALIYET-AUDIT R1)", () => {
-    expect(dailySpendLimitUsd()).toBe(0.35);
+  it("günlük tavan varsayılanı $0,15 (cost hotfix)", () => {
+    expect(DAILY_SPEND_LIMIT_USD).toBe(0.15);
   });
 });
 
