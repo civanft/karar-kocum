@@ -24,9 +24,19 @@ function envStr(name: string, fallback: string): string {
   return raw && raw.length > 0 ? raw : fallback;
 }
 
-// ---- Gemini modeli ----
+// ---- Gemini modeli ve çağrı korumaları ----
+/** Düşük maliyetli model (flash-lite'a env ile düşülebilir). */
 export const GEMINI_MODEL = envStr("GEMINI_MODEL", "gemini-2.0-flash");
 export const MAX_OUTPUT_TOKENS = envInt("MAX_OUTPUT_TOKENS", 800);
+/** Derlenmiş kullanıcı mesajı için sabit üst sınır (karakter). Y-3 alan
+ *  limitleri şema düzeyinde sınırlar; bu, giriş-token patlamasına karşı
+ *  ikinci savunma (~24K kr ≈ ~6K token, zengin bir kararı rahat karşılar). */
+export const MAX_INPUT_CHARS = envInt("MAX_INPUT_CHARS", 24_000);
+/** Tek Gemini çağrısı için sert zaman aşımı (ms). onCall 60 sn'den kısa
+ *  olmalı ki timeout bizim kontrolümüzde retryable hataya dönüşsün. */
+export const GEMINI_TIMEOUT_MS = envInt("GEMINI_TIMEOUT_MS", 20_000);
+/** Gemini başına yeniden deneme sınırı (6B: tek deneme). */
+export const GEMINI_MAX_RETRIES = envInt("GEMINI_MAX_RETRIES", 1);
 
 // ---- Kredi modeli (istemci Limits ile senkron) ----
 /** Yeni kullanıcının başlangıç ücretsiz analiz kredisi (yenilenmez). */
@@ -45,6 +55,10 @@ export const DAILY_GLOBAL_ANALYSIS_LIMIT = envInt(
 );
 /** GLOBAL günlük maliyet devre kesici (USD). 0.35 → 0.15. */
 export const DAILY_SPEND_LIMIT_USD = envFloat("AI_DAILY_SPEND_LIMIT_USD", 0.15);
+/** GLOBAL günlük token tüketim tavanı (giriş+çıkış). $0,15/gün USD
+ *  kesiciyle tutarlı üçüncü emniyet: ~375K token ≈ $0,15 @ flash karma
+ *  fiyat. Aşılırsa analiz 'daily-limit' ile durur. */
+export const DAILY_TOKEN_LIMIT = envInt("DAILY_TOKEN_LIMIT", 375_000);
 /** KULLANICI BAŞINA analiz limitleri — perDay eklendi (madde 3: 3/gün). */
 export const PER_USER_ANALYZE_LIMITS = {
   perMinute: envInt("USER_ANALYZE_PER_MINUTE", 3),

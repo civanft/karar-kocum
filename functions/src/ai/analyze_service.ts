@@ -10,12 +10,14 @@ import type { RequestContext } from "../core/types.js";
 import {
   GEMINI_MODEL,
   INITIAL_FREE_CREDITS,
+  MAX_INPUT_CHARS,
   MAX_OUTPUT_TOKENS,
-} from "./config.js";
+} from "../config.js";
 import type { CostCircuitBreaker } from "./cost_control.js";
 import { computeCostUsd } from "./cost_control.js";
 import type { DailyAnalysisLimiter } from "./daily_limit.js";
 import type { AiGateway } from "./gemini_gateway.js";
+import type { DailyTokenGuard } from "./token_counter.js";
 import { buildUserMessage, PROMPT_VERSION, SYSTEM_PROMPT } from "./prompt.js";
 import {
   analyzeRequestSchema,
@@ -63,6 +65,7 @@ export class AnalyzeService {
     private readonly rateGuard: RateGuard,
     private readonly breaker: CostCircuitBreaker,
     private readonly dailyLimiter: DailyAnalysisLimiter,
+    private readonly tokenGuard: DailyTokenGuard,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -101,15 +104,28 @@ export class AnalyzeService {
       });
     }
     await this.breaker.ensureAllowed(credits.plan);
-    // [3b] Günlük GLOBAL adet limiti (7B): slot Gemini'den ÖNCE atomik
+    // [3b] Günlük GLOBAL token tavanı (cost guard) — Gemini'den ÖNCE.
+    await this.tokenGuard.ensureUnderLimit();
+    // [3c] Günlük GLOBAL adet limiti (7B): slot Gemini'den ÖNCE atomik
     // ayrılır — kullanıcı kredisi bu noktada HENÜZ yanmamıştır.
     await this.dailyLimiter.ensureSlot();
+
+    // [3d] Giriş boyutu sert tavanı (cost guard): şema alan limitlerine
+    // EK olarak derlenmiş mesajı sınırla → giriş-token patlaması engellenir.
+    const userMessage = buildUserMessage(content.data);
+    if (userMessage.length > MAX_INPUT_CHARS) {
+      throw new AppError(
+        "invalid-argument",
+        "Karar analiz için fazla büyük — bazı maddeleri kısaltıp tekrar dene.",
+        { maxInputChars: MAX_INPUT_CHARS },
+      );
+    }
 
     // [4] Gemini — moderasyon üretim çağrısına gömülü (6C-1 §2);
     // moderated/unavailable hataları burada fırlar, kredi YANMAZ.
     const completion = await this.gateway.completeAnalysis({
       system: SYSTEM_PROMPT,
-      user: buildUserMessage(content.data),
+      user: userMessage,
       model: GEMINI_MODEL,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
     });
@@ -126,9 +142,13 @@ export class AnalyzeService {
       initialCredits: INITIAL_FREE_CREDITS,
     });
 
-    // [6] maliyet kaydı + tek satır kapanış logu (metrik modülü yok — 6B)
+    // [6] maliyet + token kaydı + tek satır kapanış logu (metrik yok — 6B)
     const costUsd = computeCostUsd(GEMINI_MODEL, completion.usage);
     await this.breaker.record(costUsd);
+    await this.tokenGuard.record(
+      completion.usage.inputTokens,
+      completion.usage.outputTokens,
+    );
     log("info", "analysis_completed", ctx, {
       model: GEMINI_MODEL,
       promptVersion: PROMPT_VERSION,

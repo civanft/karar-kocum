@@ -13,6 +13,7 @@ import {
 } from "@google/generative-ai";
 
 import { AppError } from "../core/errors.js";
+import { GEMINI_MAX_RETRIES, GEMINI_TIMEOUT_MS } from "../config.js";
 import {
   analysisOutputSchema,
   geminiResponseSchema,
@@ -67,7 +68,7 @@ export const SELF_HARM_REDIRECT =
 type Sleep = (ms: number) => Promise<void>;
 const defaultSleep: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Üretim SDK adaptörü. */
+/** Üretim SDK adaptörü — sert zaman aşımı (GEMINI_TIMEOUT_MS) ile. */
 export function createGeminiClient(apiKey: string): GeminiClientLike {
   const genAI = new GoogleGenerativeAI(apiKey);
   return {
@@ -84,7 +85,8 @@ export function createGeminiClient(apiKey: string): GeminiClientLike {
             responseSchema: geminiResponseSchema,
           },
         })
-        .generateContent(params.user),
+        // requestOptions.timeout: SDK süre aşarsa reddeder → retryable'a eşlenir.
+        .generateContent(params.user, { timeout: GEMINI_TIMEOUT_MS }),
   };
 }
 
@@ -100,16 +102,17 @@ export class GeminiGateway implements AiGateway {
     model: string;
     maxOutputTokens: number;
   }): Promise<AnalysisCompletion> {
-    let retried = false;
+    let retries = 0;
+    const canRetry = () => retries < GEMINI_MAX_RETRIES;
 
     for (;;) {
       let result: GenerateContentResult;
       try {
         result = await this.client.generateContent(params);
       } catch (error) {
-        // 429 / 5xx / ağ hatası — tek yeniden deneme (6B kuralı).
-        if (!retried && isRetryableTransport(error)) {
-          retried = true;
+        // 429 / 5xx / ağ / timeout — GEMINI_MAX_RETRIES'a dek yeniden dene.
+        if (canRetry() && isRetryableTransport(error)) {
+          retries++;
           await this.sleep(1000);
           continue;
         }
@@ -143,8 +146,8 @@ export class GeminiGateway implements AiGateway {
         );
       }
       if (finishReason === "RECITATION") {
-        if (!retried) {
-          retried = true;
+        if (canRetry()) {
+          retries++;
           await this.sleep(1000);
           continue;
         }

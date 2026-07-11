@@ -17,6 +17,10 @@ import {
   type DailyCounterStore,
 } from "../src/ai/daily_limit";
 import {
+  DailyTokenGuard,
+  type TokenCounterStore,
+} from "../src/ai/token_counter";
+import {
   SELF_HARM_REDIRECT,
   type AiGateway,
   type AnalysisCompletion,
@@ -122,6 +126,19 @@ class MemoryCounter implements DailyCounterStore {
   }
 }
 
+class MemoryTokenStore implements TokenCounterStore {
+  totals = new Map<string, number>();
+  async todayTotal(dayKey: string): Promise<number> {
+    return this.totals.get(dayKey) ?? 0;
+  }
+  async add(dayKey: string, tokens: number): Promise<void> {
+    this.totals.set(dayKey, (this.totals.get(dayKey) ?? 0) + tokens);
+  }
+  get total(): number {
+    return [...this.totals.values()].reduce((a, b) => a + b, 0);
+  }
+}
+
 class FakeRate {
   calls = 0;
   shouldReject = false;
@@ -133,17 +150,34 @@ class FakeRate {
   }
 }
 
-function make(overrides?: { spendTotal?: number; dailyLimit?: number }) {
+function make(overrides?: {
+  spendTotal?: number;
+  dailyLimit?: number;
+  tokenLimit?: number;
+  tokenTotal?: number;
+}) {
   const ports = new FakePorts();
   const gateway = new FakeGateway();
   const rate = new FakeRate();
   const spend = new FakeSpend();
   const counter = new MemoryCounter();
+  const tokens = new MemoryTokenStore();
   spend.total = overrides?.spendTotal ?? 0;
+  if (overrides?.tokenTotal) {
+    tokens.totals.set(new Date().toISOString().slice(0, 10), overrides.tokenTotal);
+  }
   const breaker = new CostCircuitBreaker(spend, 0.15);
   const daily = new DailyAnalysisLimiter(counter, overrides?.dailyLimit ?? 20);
-  const service = new AnalyzeService(ports, gateway, rate, breaker, daily);
-  return { service, ports, gateway, rate, spend, counter };
+  const tokenGuard = new DailyTokenGuard(tokens, overrides?.tokenLimit ?? 375_000);
+  const service = new AnalyzeService(
+    ports,
+    gateway,
+    rate,
+    breaker,
+    daily,
+    tokenGuard,
+  );
+  return { service, ports, gateway, rate, spend, counter, tokens };
 }
 
 const request = { decisionId: "d1" };
@@ -261,6 +295,38 @@ describe("koruma sırası", () => {
     const { service, counter } = make();
     await service.run(ctx, request);
     expect(counter.total).toBe(1);
+  });
+
+  it("cost guard: başarılı analiz token sayacına giriş+çıkış ekler", async () => {
+    const { service, tokens } = make();
+    await service.run(ctx, request);
+    expect(tokens.total).toBe(2100); // 1500 giriş + 600 çıkış
+  });
+
+  it("cost guard: günlük token tavanı dolunca daily-limit, kredi YANMAZ", async () => {
+    const { service, ports, gateway } = make({ tokenTotal: 375_000 });
+    const error = await service.run(ctx, request).catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("daily-limit");
+    expect(gateway.completions).toBe(0);
+    expect(ports.credits).toBeNull();
+  });
+
+  it("cost guard: giriş boyutu MAX_INPUT_CHARS aşarsa invalid-argument", async () => {
+    const { service, ports, gateway } = make();
+    // 8 dolu seçenek × (20 artı + 20 eksi) × 140 kr ≈ 45K kr > 24K tavan.
+    ports.content = {
+      ...validContent,
+      options: Array.from({ length: 8 }, (_, i) => ({
+        id: `o${i}`,
+        title: `Seçenek ${i}`,
+        pros: Array.from({ length: 20 }, () => "x".repeat(140)),
+        cons: Array.from({ length: 20 }, () => "y".repeat(140)),
+      })),
+    };
+    const error = await service.run(ctx, request).catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("invalid-argument");
+    expect((error as AppError).details?.["maxInputChars"]).toBe(24_000);
+    expect(gateway.completions).toBe(0);
   });
 
   it("günlük tavan aşımı: free kullanıcı ai-unavailable", async () => {

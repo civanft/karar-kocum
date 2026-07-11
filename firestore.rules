@@ -114,5 +114,11 @@ service cloud.firestore {
     match /rateLimits/{uid} {
       allow read, write: if false; // sayaçlar yalnız Functions transaction'ı
     }
+
+    // Ops sayaçları (dailySpend / dailyAnalysisCount / dailyTokens):
+    // yalnız Functions admin SDK. Default-deny zaten kapatıyor; niyet açık.
+    match /ops/{id} {
+      allow read, write: if false;
+    }
   }
 }

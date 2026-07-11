@@ -123,6 +123,17 @@ describe("retry (6B tek kural: 1 deneme)", () => {
     expect(c.calls).toBe(2);
   });
 
+  it("timeout (status'suz hata) → retryable, tek deneme sonrası durur", async () => {
+    // SDK timeout'u status içermeyen bir Error fırlatır → ağ/timeout sınıfı.
+    const c = client([new Error("timeout"), new Error("timeout")]);
+    const error = await new GeminiGateway(c, noSleep)
+      .completeAnalysis(params)
+      .catch((e: unknown) => e);
+    expect((error as AppError).code).toBe("ai-unavailable");
+    expect((error as AppError).details?.["retryable"]).toBe(true);
+    expect(c.calls).toBe(2); // GEMINI_MAX_RETRIES = 1
+  });
+
   it("RECITATION → 1 yeniden deneme; tekrarında ai-unavailable", async () => {
     const c = client([
       response({ finishReason: "RECITATION", text: null }),

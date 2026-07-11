@@ -22,6 +22,10 @@ import {
 } from "./daily_limit.js";
 import { FirestoreAnalysisPorts } from "./firestore_ports.js";
 import { createGeminiClient, GeminiGateway } from "./gemini_gateway.js";
+import {
+  DailyTokenGuard,
+  FirestoreTokenCounterStore,
+} from "./token_counter.js";
 
 export const analyzeDecision = onCall(
   {
@@ -42,6 +46,7 @@ export const analyzeDecision = onCall(
         new RateLimiter(new FirestoreRateLimitStore(), PER_USER_ANALYZE_LIMITS),
         new CostCircuitBreaker(new FirestoreSpendStore()),
         new DailyAnalysisLimiter(new FirestoreDailyCounterStore()),
+        new DailyTokenGuard(new FirestoreTokenCounterStore()),
       );
       return await service.run(ctx, request.data);
     } catch (error) {
