@@ -1,22 +1,20 @@
 /**
- * Cloud Functions giriş noktası — sadeleştirilmiş MVP envanteri (6B):
- * analyzeDecision (Gemini) + billing webhook + KVKK stub'ları.
- * (suggestCriteria/scoreOptions kaldırıldı — statik şablon kriterleri
- * ve premium AI puanlama sonraki sprintlerde.)
+ * Cloud Functions giriş noktası — MVP DEPLOY YÜZEYİ (PR #6E-3A).
+ *
+ * Yalnız CANLIDA İŞ GÖREN fonksiyonlar export edilir. Boş stub'lar
+ * (revenuecatWebhook / deleteAccount / exportData) index'ten ÇIKARILDI:
+ * deploy edilirlerse iş yapmayan ama saldırı yüzeyi + soğuk-başlatma
+ * maliyeti taşıyan instance'lar olurlardı. Kaynak dosyaları duruyor;
+ * ilgili sprintte (billing Sprint 5, KVKK Sprint 6) gerçek gövdeyle
+ * birlikte yeniden export edilecek.
  */
 import { initializeApp } from "firebase-admin/app";
 
 initializeApp();
 
+// AI analiz (Gemini) — çekirdek özellik.
 export { analyzeDecision } from "./ai/analyze.js";
 
-// Ödüllü reklam kredisi (7A): bilet + AdMob SSV callback'i
+// Ödüllü reklam kredisi (7A): bilet callable'ı + AdMob SSV callback'i.
 export { createRewardTicket } from "./rewards/createRewardTicket.js";
 export { admobRewardCallback } from "./rewards/admobRewardCallback.js";
-
-// Abonelik: RevenueCat webhook → users/{uid}.plan (Sprint 5)
-export { revenuecatWebhook } from "./billing/revenuecatWebhook.js";
-
-// KVKK (Sprint 6)
-export { deleteAccount } from "./privacy/deleteAccount.js";
-export { exportData } from "./privacy/exportData.js";
