@@ -1,3 +1,4 @@
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
@@ -40,6 +41,7 @@ abstract final class FirebaseBootstrap {
 
     try {
       await Firebase.initializeApp(options: options);
+      await _activateAppCheck();
       await _ensureSignedIn();
       return FirebaseStatus.ready;
     } catch (error, stackTrace) {
@@ -47,6 +49,23 @@ abstract final class FirebaseBootstrap {
       debugPrint('FirebaseBootstrap: başlatılamadı, yerel mod. $error');
       debugPrintStack(stackTrace: stackTrace, maxFrames: 8);
       return FirebaseStatus.localMode;
+    }
+  }
+
+  /// App Check aktivasyonu — analyzeDecision consumeAppCheckToken ister.
+  /// Sağlayıcılar: iOS App Attest / Android Play Integrity; debug build'de
+  /// debug provider (Console'da debug token kaydı gerekir).
+  /// Aktivasyon başarısızlığı çökme değildir — istek reddi olarak yansır.
+  static Future<void> _activateAppCheck() async {
+    try {
+      await FirebaseAppCheck.instance.activate(
+        androidProvider:
+            kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
+        appleProvider:
+            kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
+      );
+    } catch (error) {
+      debugPrint('FirebaseBootstrap: App Check aktive edilemedi. $error');
     }
   }
 

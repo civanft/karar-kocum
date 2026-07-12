@@ -1,8 +1,16 @@
+import 'dart:async';
+
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/config/firebase_bootstrap.dart';
+import '../../../../core/services/analytics/analytics_service.dart';
+import '../../data/firebase_ai_analysis_client.dart';
+import '../../data/mock_ai_analysis_client.dart';
 import '../../domain/entities/ai_analysis.dart';
+import '../../domain/repositories/ai_analysis_client.dart';
 
-/// Analiz durum makinesi — kartın 5 durumu (PR #6D-1).
+/// Analiz durum makinesi — kartın 5 durumu (PR #6D-1, UI değişmedi).
 sealed class AnalysisState {
   const AnalysisState();
 }
@@ -34,19 +42,17 @@ class AnalysisQuotaExceeded extends AnalysisState {
   final int totalCredits;
 }
 
-/// 6D-1 mock senaryosu: gerçek istemci (6D-2) gelene dek kontrolcünün
-/// hangi sonucu döndüreceğini belirler. Testler/galeri override eder.
-enum MockScenario { success, error, quotaExceeded }
+/// AI istemcisi bağlama noktası (6D-2): Firebase hazırsa gerçek callable,
+/// aksi halde yerel/test mock'u. Testler bu provider'ı override eder.
+final aiAnalysisClientProvider = Provider<AiAnalysisClient>((ref) {
+  final ready = ref.watch(firebaseStatusProvider) == FirebaseStatus.ready;
+  return ready
+      ? FirebaseAiAnalysisClient(FirebaseFunctions.instance)
+      : MockAiAnalysisClient();
+});
 
-final mockScenarioProvider =
-    Provider<MockScenario>((_) => MockScenario.success);
-
-/// Mock gecikme — gerçek çağrı hissi; testlerde Duration.zero.
-final mockAnalysisDelayProvider =
-    Provider<Duration>((_) => const Duration(milliseconds: 1400));
-
-/// Karar başına analiz durumu. 6D-2'de gövde gerçek callable çağrısıyla
-/// değişecek; ARAYÜZ (state + analyze/reset) aynı kalacak.
+/// Karar başına analiz durumu — gövde artık gerçek callable çağırır (6D-2).
+/// ARAYÜZ (analyze/reanalyze/sendFeedback + AnalysisState) DEĞİŞMEDİ.
 class AnalysisController
     extends AutoDisposeFamilyNotifier<AnalysisState, String> {
   @override
@@ -56,18 +62,36 @@ class AnalysisController
     if (state is AnalysisLoading) return; // çift istek koruması (6B kararı)
     state = const AnalysisLoading();
 
-    await Future<void>.delayed(ref.read(mockAnalysisDelayProvider));
+    unawaited(
+      ref.read(analyticsServiceProvider).logAnalysisRequested(tier: 'basic'),
+    );
 
-    state = switch (ref.read(mockScenarioProvider)) {
-      MockScenario.success => AnalysisSuccess(AiAnalysis.mock()),
-      MockScenario.error => const AnalysisError(
-          message: 'Analiz şu an yapılamadı. İnternet bağlantını kontrol '
-              'edip tekrar deneyebilirsin.',
-          retryable: true,
-        ),
-      MockScenario.quotaExceeded =>
-        const AnalysisQuotaExceeded(totalCredits: 5),
-    };
+    try {
+      final analysis = await ref.read(aiAnalysisClientProvider).analyze(arg);
+      state = AnalysisSuccess(analysis);
+      unawaited(
+        ref.read(analyticsServiceProvider).logAnalysisCompleted(
+              tier: 'basic',
+              latencyMs: 0, // sunucu tarafı ölçüyor; istemci süresi Sprint 3+
+              cached: false,
+            ),
+      );
+    } on AiAnalysisFailure catch (f) {
+      state = switch (f.kind) {
+        AnalysisFailureKind.quotaExceeded =>
+          AnalysisQuotaExceeded(totalCredits: f.totalCredits ?? 5),
+        AnalysisFailureKind.retryable =>
+          AnalysisError(message: f.message, retryable: true),
+        AnalysisFailureKind.nonRetryable =>
+          AnalysisError(message: f.message, retryable: false),
+      };
+    } catch (_) {
+      // Beklenmedik istisna: güvenli, yeniden denenebilir hata.
+      state = const AnalysisError(
+        message: 'Analiz şu an yapılamadı, birazdan tekrar dene.',
+        retryable: true,
+      );
+    }
   }
 
   /// "Yeniden analiz et" onayından sonra çağrılır.
@@ -76,8 +100,14 @@ class AnalysisController
     return analyze();
   }
 
-  /// 👍/👎 — 6D-2'de analytics'e bağlanır (analysis_feedback olayı).
-  void sendFeedback({required bool thumbsUp}) {}
+  /// 👍/👎 — analysis_feedback olayı (6D-2 bağlandı).
+  void sendFeedback({required bool thumbsUp}) {
+    unawaited(
+      ref.read(analyticsServiceProvider).logAnalysisFeedback(
+            thumbsUp: thumbsUp,
+          ),
+    );
+  }
 }
 
 final analysisControllerProvider = NotifierProvider.autoDispose
