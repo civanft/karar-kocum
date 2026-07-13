@@ -19,8 +19,11 @@ void main() {
 
   test('kriter sayısı 1-6 arası (tasarım kararı: aşırı yükleme yok)', () {
     for (final t in catalog.all()) {
-      expect(t.criteria.length, inInclusiveRange(1, 6),
-          reason: 'şablon: ${t.id}');
+      expect(
+        t.criteria.length,
+        inInclusiveRange(1, 6),
+        reason: 'şablon: ${t.id}',
+      );
     }
   });
 
@@ -41,16 +44,21 @@ void main() {
 
   test('şablon başlıkları geçerli karar başlığıdır (Limits uyumu)', () {
     for (final t in catalog.all()) {
-      expect(t.title.trim().length,
-          inInclusiveRange(Limits.titleMinLength, Limits.titleMaxLength),
-          reason: 'şablon: ${t.id}');
+      expect(
+        t.title.trim().length,
+        inInclusiveRange(Limits.titleMinLength, Limits.titleMaxLength),
+        reason: 'şablon: ${t.id}',
+      );
     }
   });
 
   test('örnek seçenek sayısı maxOptions sınırının altında', () {
     for (final t in catalog.all()) {
-      expect(t.sampleOptions.length, lessThanOrEqualTo(Limits.maxOptions),
-          reason: 'şablon: ${t.id}');
+      expect(
+        t.sampleOptions.length,
+        lessThanOrEqualTo(Limits.maxOptions),
+        reason: 'şablon: ${t.id}',
+      );
     }
   });
 

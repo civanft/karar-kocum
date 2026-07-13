@@ -92,8 +92,10 @@ void main() {
       };
 
       expect(decision.criteria, hasLength(3));
-      expect(decision.criteria.map((c) => c.name),
-          ['Fiyat', 'Kamera', 'Pil ömrü']);
+      expect(
+        decision.criteria.map((c) => c.name),
+        ['Fiyat', 'Kamera', 'Pil ömrü'],
+      );
       expect(decision.criteria.map((c) => c.weight), [8, 7, 6]);
       // Şablon kriteri user kaynaklıdır — aiSuggested A2'ye ayrıldı
       // (metrik karışmasın diye; SPRINT-A-TASARIM §3).
