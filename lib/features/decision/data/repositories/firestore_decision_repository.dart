@@ -1,9 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../domain/entities/decision.dart';
 import '../../domain/repositories/decision_repository.dart';
 import '../dtos/decision_firestore_mapper.dart';
-import 'package:flutter/foundation.dart';
 
 /// Firestore karar deposu — FIRESTORE-VERI-MODELI.md §2.
 ///
@@ -31,20 +31,20 @@ class FirestoreDecisionRepository implements DecisionRepository {
       _userDoc.collection('decisions');
 
   @override
-Stream<List<Decision>> watchAll() {
-  debugPrint('WATCHALL START UID=$_uid');
+  Stream<List<Decision>> watchAll() {
+    debugPrint('WATCHALL START UID=$_uid');
 
-  return _collection
-      .orderBy('updatedAt', descending: true)
-      .snapshots(includeMetadataChanges: false)
-      .map((query) {
-        debugPrint('WATCHALL SNAPSHOT docs=${query.docs.length}');
-        return [
-          for (final doc in query.docs)
-            DecisionFirestoreMapper.fromFirestore(doc),
-        ];
-      });
-}
+    return _collection
+        .orderBy('updatedAt', descending: true)
+        .snapshots(includeMetadataChanges: false)
+        .map((query) {
+      debugPrint('WATCHALL SNAPSHOT docs=${query.docs.length}');
+      return [
+        for (final doc in query.docs)
+          DecisionFirestoreMapper.fromFirestore(doc),
+      ];
+    });
+  }
 
   @override
   Stream<Decision?> watchById(String id) => _collection.doc(id).snapshots().map(
@@ -67,29 +67,29 @@ Stream<List<Decision>> watchAll() {
     final batch = _firestore.batch()
       ..set(docRef, DecisionFirestoreMapper.toFirestore(decision, _uid));
     if (!exists) {
-  final userExists = (await _userDoc.get()).exists;
+      final userExists = (await _userDoc.get()).exists;
 
-  batch.set(
-    _userDoc,
-    {
-      if (!userExists) 'plan': 'free',
-      'decisionCount': FieldValue.increment(1),
-    },
-    SetOptions(merge: true),
-  );
-}
+      batch.set(
+        _userDoc,
+        {
+          if (!userExists) 'plan': 'free',
+          'decisionCount': FieldValue.increment(1),
+        },
+        SetOptions(merge: true),
+      );
+    }
     debugPrint('UPSERT UID=$_uid');
-debugPrint('UPSERT DOC=${decision.id}');
-debugPrint('COMMIT START');
+    debugPrint('UPSERT DOC=${decision.id}');
+    debugPrint('COMMIT START');
 
-try {
-  await batch.commit();
-  debugPrint('COMMIT OK');
-} catch (e) {
-  debugPrint('COMMIT ERROR: $e');
-  rethrow;
-}
-}
+    try {
+      await batch.commit();
+      debugPrint('COMMIT OK');
+    } catch (e) {
+      debugPrint('COMMIT ERROR: $e');
+      rethrow;
+    }
+  }
 
   @override
   Future<void> applyPatch(String id, DecisionPatch patch) async {

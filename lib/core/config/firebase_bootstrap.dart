@@ -72,15 +72,16 @@ abstract final class FirebaseBootstrap {
   /// US-E1: giriş yapmadan ilk karar — açılışta sessiz anonim oturum.
   /// Mevcut oturum (anonim ya da bağlı hesap) varsa dokunulmaz.
   static Future<void> _ensureSignedIn() async {
-  final auth = FirebaseAuth.instance;
+    final auth = FirebaseAuth.instance;
 
-  debugPrint('AUTH currentUser: ${auth.currentUser?.uid}');
+    debugPrint('AUTH currentUser: ${auth.currentUser?.uid}');
 
-  if (auth.currentUser == null) {
-    final result = await auth.signInAnonymously();
+    if (auth.currentUser == null) {
+      final result = await auth.signInAnonymously();
 
-    debugPrint(
-      'AUTH anonymous login success uid=${result.user?.uid}',
-    );
+      debugPrint(
+        'AUTH anonymous login success uid=${result.user?.uid}',
+      );
+    }
   }
-}}
+}

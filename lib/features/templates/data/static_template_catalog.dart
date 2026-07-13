@@ -58,7 +58,8 @@ class StaticTemplateCatalog implements TemplateCatalog {
       id: 'city-move',
       emoji: '🏙️',
       title: 'Hangi şehirde yaşamalıyım?',
-      description: 'Taşınma kararını iş, maliyet ve yaşam kalitesiyle değerlendir.',
+      description:
+          'Taşınma kararını iş, maliyet ve yaşam kalitesiyle değerlendir.',
       category: TemplateCategory.lifestyle,
       criteria: [
         TemplateCriterion('Yaşam maliyeti', 8),
