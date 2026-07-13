@@ -471,6 +471,7 @@ sealed class Failure {
 ```
 onboarding_completed
 decision_created        {template_id?, source: blank|template}
+template_selected       {template_id}                ← önizleme sheet CTA anı (A1)
 options_completed       {option_count}
 criteria_completed      {criterion_count, ai_suggested_count}
 analysis_requested      {tier}

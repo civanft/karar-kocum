@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/config/firebase_bootstrap.dart';
@@ -27,7 +28,7 @@ final decisionRepositoryProvider = Provider<DecisionRepository>((ref) {
   // select: yalnız uid DEĞİŞİNCE yeniden kur — AsyncLoading→AsyncData
   // geçişi repo'yu boşuna yeniden yaratıp in-memory veriyi düşürmesin.
   final uid = ref.watch(authStateProvider.select((s) => s.valueOrNull?.uid));
-
+  debugPrint('REPO firebaseReady=$firebaseReady uid=$uid');
   if (firebaseReady && uid != null) {
     return FirestoreDecisionRepository(
       ref.watch(firestoreInstanceProvider),
