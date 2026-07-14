@@ -92,12 +92,40 @@ void main() {
       expect(user.data()!['decisionCount'], 2);
     });
 
-    test('hotfix madde 5: aynı belgeyi tekrar upsert sayacı artırmaz',
+    test(
+        'CREATE-ONLY sözleşme: varlık ön-okuması YOK — aynı id ile '
+        'yanlış kullanım sayacı yine artırır (latency fix; tek çağıran '
+        'CreateDecision daima taze id üretir, bu yol üründe erişilemez)',
         () async {
       await repo.upsert(decision(id: 'd1'));
-      await repo.upsert(decision(id: 'd1', title: 'Güncellendi'));
+      await repo.upsert(decision(id: 'd1', title: 'Tekrar'));
       final user = await firestore.collection('users').doc(uid).get();
-      expect(user.data()!['decisionCount'], 1); // 2 değil
+      // Eski davranış 1 idi (exists ön-okuması); yeni sözleşme: 2.
+      expect(user.data()!['decisionCount'], 2);
+    });
+
+    test('ilk create: user belgesi plan:free ile oluşur (rules create şartı)',
+        () async {
+      await repo.upsert(decision(id: 'd1'));
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['plan'], 'free');
+      expect(user.data()!['decisionCount'], 1);
+    });
+
+    test(
+        'PREMIUM GÜVENLİĞİ: mevcut plan create ile ASLA ezilmez '
+        '(rules plan-diff korumasına takılmama garantisi)', () async {
+      await firestore
+          .collection('users')
+          .doc(uid)
+          .set({'plan': 'premium', 'decisionCount': 5});
+
+      await repo.upsert(decision(id: 'd1'));
+      await repo.upsert(decision(id: 'd2'));
+
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['plan'], 'premium'); // korundu
+      expect(user.data()!['decisionCount'], 7);
     });
 
     test('hotfix madde 5: silme decisionCount sayacını -1 yapar', () async {

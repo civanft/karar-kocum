@@ -51,28 +51,44 @@ class FirestoreDecisionRepository implements DecisionRepository {
     return doc.exists ? DecisionFirestoreMapper.fromFirestore(doc) : null;
   }
 
-  /// Oluşturma: karar + kullanıcı karar sayacı TEK BATCH'te (hotfix madde 5).
-  /// Sayacı rules ±1 ile koruyor; cap kontrolü create rule'ında get() ile.
-  /// Yeni belge değilse sayaç artırılmaz (idempotent — upsert oluşturma için).
+  /// CREATE-ONLY oluşturma (latency fix): karar + kullanıcı sayacı TEK
+  /// BATCH'te, varlık ÖN-OKUMASI YOK — "Devam Et" artık tek sunucu turu.
+  ///
+  /// Sözleşme: tek çağıran CreateDecision her seferinde TAZE id üretir;
+  /// bu yüzden decision-belgesi exists kontrolü gereksizdi (eski hâli
+  /// 3 ardışık tura mal oluyordu — uzun spinner'ın kök nedeni).
+  ///
+  /// plan:'free' YALNIZ user belgesinin varlığı bilinmiyorken gönderilir
+  /// (repo-örneği başına en fazla 1 okuma, sonrası önbellekli):
+  ///  - belge yoksa create kuralı plan'ı zorunlu kılar → gönderilir
+  ///  - belge varsa plan GÖNDERİLMEZ → premium planı ezme/rules
+  ///    plan-diff reddi imkânsız (testli: PREMIUM GÜVENLİĞİ)
+  bool _userDocKnownToExist = false;
+
   @override
   Future<void> upsert(Decision decision) async {
-    final docRef = _collection.doc(decision.id);
-    final exists = (await docRef.get()).exists;
     final batch = _firestore.batch()
-      ..set(docRef, DecisionFirestoreMapper.toFirestore(decision, _uid));
-    if (!exists) {
-      final userExists = (await _userDoc.get()).exists;
-
-      batch.set(
-        _userDoc,
-        {
-          if (!userExists) 'plan': 'free',
-          'decisionCount': FieldValue.increment(1),
-        },
-        SetOptions(merge: true),
+      ..set(
+        _collection.doc(decision.id),
+        DecisionFirestoreMapper.toFirestore(decision, _uid),
       );
+
+    var includePlan = false;
+    if (!_userDocKnownToExist) {
+      // Oturum başına tek tur: sonraki create'ler 1 RTT'ye iner.
+      includePlan = !(await _userDoc.get()).exists;
     }
+    batch.set(
+      _userDoc,
+      {
+        if (includePlan) 'plan': 'free',
+        'decisionCount': FieldValue.increment(1),
+      },
+      SetOptions(merge: true),
+    );
+
     await batch.commit();
+    _userDocKnownToExist = true; // commit user belgesini garantiledi
   }
 
   @override
