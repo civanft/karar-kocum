@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../core/services/analytics/analytics_service.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../decision/presentation/providers/decision_providers.dart';
 import '../../domain/entities/decision_template.dart';
+import '../providers/template_decision_creator.dart';
 
 /// Şablon önizleme sheet'i (SPRINT-A §1.1): taahhütten ÖNCE içerik gösterir —
 /// kullanıcı ne alacağını görmeden karar YARATILMAZ (çöp taslak +
@@ -55,33 +55,26 @@ class _TemplatePreviewContentState
       _errorText = null;
     });
 
-    final template = widget.template;
-    final result = await ref.read(createDecisionProvider)(
+    // İş mantığı TemplateDecisionCreator'da (birim testli) — sheet yalnız
+    // durum + navigasyon tutar.
+    final decisionId = await ref.read(templateDecisionCreatorProvider)(
       ownerUid: ref.read(currentUidProvider),
       title: _titleController.text,
-      templateId: template.id,
-      initialCriteria: [
-        for (final c in template.criteria) (name: c.name, weight: c.weight),
-      ],
-      initialOptions: template.sampleOptions,
+      template: widget.template,
     );
 
     if (!mounted) return;
-    result.when(
-      ok: (decision) {
-        final analytics = ref.read(analyticsServiceProvider);
-        unawaited(analytics.logTemplateSelected(templateId: template.id));
-        unawaited(analytics.logDecisionCreated(source: 'template'));
-        // Sheet'i kapat + editöre git (Seçenekler sekmesi açık gelir;
-        // kriterler zaten dolu — "sonraki boş iş" ilkesi).
-        context.pop();
-        context.push('/decision/${decision.id}/edit');
-      },
-      err: (_) => setState(() {
+    if (decisionId == null) {
+      setState(() {
         _creating = false;
         _errorText = 'Karar oluşturulamadı, tekrar deneyin.';
-      }),
-    );
+      });
+      return;
+    }
+    // Sheet'i kapat + editöre git (Seçenekler sekmesi açık gelir;
+    // kriterler zaten dolu — "sonraki boş iş" ilkesi).
+    context.pop();
+    unawaited(context.push('/decision/$decisionId/edit'));
   }
 
   @override
@@ -150,14 +143,12 @@ class _TemplatePreviewContentState
                   onPressed: _creating
                       ? null
                       : () {
-                          final title = _titleController.text;
-                          context.pop();
-                          context.push(
-                            Uri(
-                              path: '/decision/new',
-                              queryParameters: {'title': title},
-                            ).toString(),
+                          final location =
+                              TemplateDecisionCreator.blankStartLocation(
+                            _titleController.text,
                           );
+                          context.pop();
+                          context.push(location);
                         },
                   child: const Text('Boş başla'),
                 ),
