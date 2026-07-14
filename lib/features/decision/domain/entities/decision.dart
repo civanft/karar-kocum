@@ -43,6 +43,42 @@ class Decision with _$Decision {
     }
     return true;
   }
+
+  // ---- PR-A3 türetilmiş ilerleme getter'ları ----
+  // JSON'a girmez (freezed alanı değil) → Firestore şeması DEĞİŞMEZ.
+  // Yalnız aktif seçenek/kriter kesişimi sayılır; silme artığı hayalet
+  // puanlar toplamı şişirmez.
+
+  int get totalScoreCells => options.length * criteria.length;
+
+  int get filledScoreCells {
+    var filled = 0;
+    for (final o in options) {
+      for (final c in criteria) {
+        if (scores[o.id]?[c.id] != null) filled++;
+      }
+    }
+    return filled;
+  }
+
+  /// Seçenek kartı rozeti için: o seçeneğin dolu hücre sayısı.
+  int filledScoreCellsFor(String optionId) {
+    var filled = 0;
+    for (final c in criteria) {
+      if (scores[optionId]?[c.id] != null) filled++;
+    }
+    return filled;
+  }
+
+  /// 0.0–1.0 ilerleme oranı; total 0 iken 0.0 (sıfıra bölme yok).
+  double get scoringCompletionPercent =>
+      totalScoreCells == 0 ? 0.0 : filledScoreCells / totalScoreCells;
+
+  /// İlerleme UI'ı tanımı: tüm hücreler dolu (total > 0).
+  /// DİKKAT: [isScoreMatrixComplete]'ten farklıdır — o SONUÇ KAPISI
+  /// tanımıdır (min 2 seçenek şartı taşır) ve değişmemiştir.
+  bool get isScoringComplete =>
+      totalScoreCells > 0 && filledScoreCells == totalScoreCells;
 }
 
 @freezed

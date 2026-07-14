@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/tokens.dart';
 import '../providers/decision_editor.dart';
+import 'scoring_progress_header.dart';
 
 /// Seçenek × kriter puan matrisi.
 /// "AI puanlasın" düğmesi Sprint 3'te (premium) eklenecek.
@@ -30,82 +31,137 @@ class ScoresTab extends ConsumerWidget {
 
     final notifier = ref.read(decisionEditorProvider(decisionId).notifier);
 
-    return ListView(
-      padding: const EdgeInsets.all(AppTokens.s4),
+    return Column(
       children: [
-        for (final option in decision.options)
-          Card(
-            margin: const EdgeInsets.only(bottom: AppTokens.s3),
-            child: Padding(
-              padding: const EdgeInsets.all(AppTokens.s3),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    option.title,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: AppTokens.s2),
-                  for (final criterion in decision.criteria)
-                    Row(
+        ScoringProgressHeader(decisionId: decisionId),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(AppTokens.s4),
+            children: [
+              for (final option in decision.options)
+                Card(
+                  margin: const EdgeInsets.only(bottom: AppTokens.s3),
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppTokens.s3),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SizedBox(
-                          width: 110,
-                          child: Text(
-                            criterion.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            value: (decision.scores[option.id]?[criterion.id]
-                                        ?.value ??
-                                    5)
-                                .toDouble(),
-                            min: 1,
-                            max: 10,
-                            divisions: 9,
-                            label:
-                                '${decision.scores[option.id]?[criterion.id]?.value ?? "—"}',
-                            // İlk dokunuşta 5 varsayılanından başlar; hücre
-                            // ancak kullanıcı dokununca "dolu" sayılır.
-                            onChanged: (v) => notifier.setScore(
-                              option.id,
-                              criterion.id,
-                              v.round(),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                option.title,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
                             ),
-                            // Y-2: sürükleme boyunca yazım birikir,
-                            // bırakınca tek yazım gider.
-                            onChangeEnd: (_) => notifier.flushPendingWrites(),
-                          ),
+                            _OptionScoreBadge(
+                              filled: decision.filledScoreCellsFor(option.id),
+                              total: decision.criteria.length,
+                            ),
+                          ],
                         ),
-                        SizedBox(
-                          width: 28,
-                          child: Text(
-                            '${decision.scores[option.id]?[criterion.id]?.value ?? "—"}',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelLarge
-                                ?.copyWith(
-                                  color: decision.scores[option.id]
-                                              ?[criterion.id] ==
-                                          null
-                                      ? Theme.of(context).colorScheme.outline
-                                      : null,
+                        const SizedBox(height: AppTokens.s2),
+                        for (final criterion in decision.criteria)
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: 110,
+                                child: Text(
+                                  criterion.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodyMedium,
                                 ),
+                              ),
+                              Expanded(
+                                child: Slider(
+                                  value: (decision
+                                              .scores[option.id]?[criterion.id]
+                                              ?.value ??
+                                          5)
+                                      .toDouble(),
+                                  min: 1,
+                                  max: 10,
+                                  divisions: 9,
+                                  label:
+                                      '${decision.scores[option.id]?[criterion.id]?.value ?? "—"}',
+                                  // İlk dokunuşta 5 varsayılanından başlar; hücre
+                                  // ancak kullanıcı dokununca "dolu" sayılır.
+                                  onChanged: (v) => notifier.setScore(
+                                    option.id,
+                                    criterion.id,
+                                    v.round(),
+                                  ),
+                                  // Y-2: sürükleme boyunca yazım birikir,
+                                  // bırakınca tek yazım gider.
+                                  onChangeEnd: (_) =>
+                                      notifier.flushPendingWrites(),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 28,
+                                child: Text(
+                                  '${decision.scores[option.id]?[criterion.id]?.value ?? "—"}',
+                                  textAlign: TextAlign.center,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelLarge
+                                      ?.copyWith(
+                                        color: decision.scores[option.id]
+                                                    ?[criterion.id] ==
+                                                null
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .outline
+                                            : null,
+                                      ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
                       ],
                     ),
-                ],
-              ),
-            ),
+                  ),
+                ),
+              const SizedBox(height: 96),
+            ],
           ),
-        const SizedBox(height: 96),
+        ),
       ],
+    );
+  }
+}
+
+/// Seçenek kartı ilerleme rozeti: "3/5" — tamam olunca primary renk.
+class _OptionScoreBadge extends StatelessWidget {
+  const _OptionScoreBadge({required this.filled, required this.total});
+
+  final int filled;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final complete = total > 0 && filled == total;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTokens.s2,
+        vertical: 2,
+      ),
+      decoration: BoxDecoration(
+        color: complete
+            ? theme.colorScheme.primaryContainer
+            : theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppTokens.s2),
+      ),
+      child: Text(
+        '$filled/$total',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: complete
+              ? theme.colorScheme.onPrimaryContainer
+              : theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
     );
   }
 }
