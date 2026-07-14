@@ -13,6 +13,9 @@ final analyticsConsentProvider = StateProvider<bool>((_) => false);
 abstract interface class AnalyticsService {
   // Aktivasyon hunisi
   Future<void> logDecisionCreated({required String source}); // blank|template
+  Future<void> logTemplateSelected({
+    required String templateId,
+  }); // A1 sheet CTA
   Future<void> logOptionsCompleted({required int optionCount});
   Future<void> logCriteriaCompleted({
     required int criterionCount,
@@ -52,6 +55,10 @@ class FirebaseAnalyticsService implements AnalyticsService {
   @override
   Future<void> logDecisionCreated({required String source}) =>
       _log('decision_created', {'source': source});
+
+  @override
+  Future<void> logTemplateSelected({required String templateId}) =>
+      _log('template_selected', {'template_id': templateId});
 
   @override
   Future<void> logOptionsCompleted({required int optionCount}) =>
@@ -130,6 +137,9 @@ class NoopAnalyticsService implements AnalyticsService {
 
   @override
   Future<void> logDecisionCreated({required String source}) async {}
+
+  @override
+  Future<void> logTemplateSelected({required String templateId}) async {}
   @override
   Future<void> logOptionsCompleted({required int optionCount}) async {}
   @override

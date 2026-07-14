@@ -498,6 +498,21 @@ süre override'ı (decision_editor testlerindeki mevcut kalıp).
   `firestore.rules`'tan geçtiği (kriter dizisi + templateId alanıyla yazım) —
   şema değişmediğinin kanıtı.
 
+### 4.6 Manuel test senaryoları — PR-A1 (widget-test altyapı sınırı)
+
+Aşağıdaki üç senaryo widget testinde deterministik koşturulamadı (açık
+modal sheet + odaklı TextField'ın imleç zamanlayıcısı pumpAndSettle ve
+teardown'ı 10 dk timeout'a sürüklüyor; test gövdeleri checkpoint iziyle
+doğrulandı — ürün kodu hatası değil, test-altyapı etkileşimi). Her
+sürüm öncesi ELLE doğrulanır:
+
+| # | Senaryo | Adımlar | Beklenen |
+|---|---------|---------|----------|
+| M1 | Şablon başlığını düzenleyip oluşturma | Boş Home → şablon kartı → sheet'te başlığı "Pixel mi iPhone mu?" yap → "Bu şablonla başla" | Editör açılır; karar başlığı düzenlenen metindir; kriterler şablondan dolu |
+| M2 | Geçersiz başlıkla oluşturma denemesi | Sheet'te başlığı "ab" yap (< 3 kr) → "Bu şablonla başla" | Sheet KAPANMAZ; "Karar oluşturulamadı, tekrar deneyin." hatası görünür; Home listesinde yeni karar YOKTUR |
+| M3 | "Boş başla" yolu | Sheet'te "Boş başla" | Yeni Karar ekranı şablon başlığı ön-dolu açılır; karar HENÜZ oluşturulmamıştır (geri çıkınca liste boş) |
+| M4 | Şablonla oluşturma + yönlenme | Sheet'te "Bu şablonla başla" | Editör Seçenekler sekmesiyle açılır; Kriterler sekmesi şablondan dolu; Home listesinde karar 1 kez oluşmuştur (çift dokunuşta bile) |
+
 ### 4.5 Çıkış kriterleri (Definition of Done)
 
 - `flutter analyze` temiz; tüm mevcut testler yeşil (özellikle
