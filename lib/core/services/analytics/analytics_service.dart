@@ -21,6 +21,9 @@ abstract interface class AnalyticsService {
     required int criterionCount,
     required int aiSuggestedCount,
   });
+  Future<void> logCriterionSuggestionAccepted({
+    required String origin,
+  }); // A2 chip: template|keyword|generic
   Future<void> logScoringCompleted();
   Future<void> logResultViewed(); // v1 aktivasyon olayı (yerel skor)
 
@@ -73,6 +76,10 @@ class FirebaseAnalyticsService implements AnalyticsService {
         'criterion_count': criterionCount,
         'ai_suggested_count': aiSuggestedCount,
       });
+
+  @override
+  Future<void> logCriterionSuggestionAccepted({required String origin}) =>
+      _log('criterion_suggestion_accepted', {'origin': origin});
 
   @override
   Future<void> logScoringCompleted() => _log('scoring_completed');
@@ -146,6 +153,11 @@ class NoopAnalyticsService implements AnalyticsService {
   Future<void> logCriteriaCompleted({
     required int criterionCount,
     required int aiSuggestedCount,
+  }) async {}
+
+  @override
+  Future<void> logCriterionSuggestionAccepted({
+    required String origin,
   }) async {}
   @override
   Future<void> logScoringCompleted() async {}

@@ -105,6 +105,16 @@ void main() {
     expect(current().scores.containsKey(optionA), isFalse);
   });
 
+  test('PR-A2: addCriterion source parametresi persist edilir', () async {
+    final e = await editor();
+    await e.addCriterion('Fiyat', 5);
+    await e.addCriterion('Kamera', 5, source: CriterionSource.aiSuggested);
+
+    final d = current();
+    expect(d.criteria[0].source, CriterionSource.user); // varsayılan
+    expect(d.criteria[1].source, CriterionSource.aiSuggested);
+  });
+
   test('kriter silinince matristen ilgili sütun düşer', () async {
     final e = await editor();
     await e.addOption('A');

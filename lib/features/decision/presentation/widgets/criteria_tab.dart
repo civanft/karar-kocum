@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/error/failure.dart';
 import '../../../../core/theme/tokens.dart';
 import '../providers/decision_editor.dart';
+import 'criterion_suggestion_strip.dart';
 
 class CriteriaTab extends ConsumerWidget {
   const CriteriaTab({super.key, required this.decisionId});
@@ -26,6 +27,7 @@ class CriteriaTab extends ConsumerWidget {
               ),
         ),
         const SizedBox(height: AppTokens.s4),
+        CriterionSuggestionStrip(decisionId: decisionId),
         for (final criterion in decision.criteria)
           Card(
             margin: const EdgeInsets.only(bottom: AppTokens.s3),

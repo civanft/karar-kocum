@@ -474,6 +474,7 @@ decision_created        {template_id?, source: blank|template}
 template_selected       {template_id}                ← önizleme sheet CTA anı (A1)
 options_completed       {option_count}
 criteria_completed      {criterion_count, ai_suggested_count}
+criterion_suggestion_accepted {origin: template|keyword|generic}  ← A2 chip anı
 analysis_requested      {tier}
 analysis_completed      {latency_ms, tier}          ← AKTİVASYON OLAYI
 analysis_feedback       {thumbs: up|down}
