@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/theme/tokens.dart';
+import '../../../templates/presentation/providers/template_providers.dart';
+import '../../../templates/presentation/widgets/template_card.dart';
+import '../../../templates/presentation/widgets/template_preview_sheet.dart';
 import '../../domain/entities/decision.dart';
 import '../providers/decision_providers.dart';
 
@@ -66,20 +69,15 @@ class _DecisionList extends StatelessWidget {
 }
 
 /// Boş durum — PRD §6.1: "İlk kararını oluştur" + örnek kartları.
-/// Şablon sistemi Sprint 2'de geliyor; kartlar şimdilik başlık önerisi taşır.
-class _EmptyState extends StatelessWidget {
+/// Boş durum: 4 şablon kartı + "Tüm şablonlar" (PR-A1).
+/// Kart, önizleme sheet'i açar — karar taahhütten önce YARATILMAZ.
+class _EmptyState extends ConsumerWidget {
   const _EmptyState();
 
-  static const _suggestions = [
-    ('📱', 'iPhone mu Samsung mu?'),
-    ('💼', 'Hangi iş teklifini kabul etmeliyim?'),
-    ('🎓', 'Hangi bölümü seçmeliyim?'),
-    ('🏙️', 'Hangi şehirde yaşamalıyım?'),
-  ];
-
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final templates = ref.watch(templateCatalogProvider).all().take(4);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppTokens.s6),
@@ -93,33 +91,24 @@ class _EmptyState extends StatelessWidget {
             ),
             const SizedBox(height: AppTokens.s2),
             Text(
-              'Seçeneklerini yaz, kriterlerini puanla,\nnet bir sonuç gör.',
+              'Bir şablonla başla — kriterler hazır,\nsen sadece puanla.',
               style: theme.textTheme.bodyMedium
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppTokens.s6),
-            for (final (emoji, title) in _suggestions)
+            for (final template in templates)
               Padding(
                 padding: const EdgeInsets.only(bottom: AppTokens.s2),
-                child: OutlinedButton(
-                  onPressed: () => context.push(
-                    Uri(
-                      path: '/decision/new',
-                      queryParameters: {
-                        'title': title,
-                      },
-                    ).toString(),
-                  ),
-                  child: Row(
-                    children: [
-                      Text(emoji),
-                      const SizedBox(width: AppTokens.s3),
-                      Expanded(child: Text(title)),
-                    ],
-                  ),
+                child: TemplateCard(
+                  template: template,
+                  onTap: () => showTemplatePreviewSheet(context, template),
                 ),
               ),
+            TextButton(
+              onPressed: () => context.push('/templates'),
+              child: const Text('Tüm şablonlar'),
+            ),
           ],
         ),
       ),

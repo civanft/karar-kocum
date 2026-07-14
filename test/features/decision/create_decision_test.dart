@@ -70,4 +70,78 @@ void main() {
     expect(ids, hasLength(100)); // çakışma yok
     expect(gen(length: 8), hasLength(8));
   });
+
+  group('şablon yolu (PR-A1)', () {
+    test('initialCriteria: kriterler benzersiz id + user source ile oluşur',
+        () async {
+      final result = await usecase(
+        ownerUid: 'u1',
+        title: 'Hangi telefonu almalıyım?',
+        templateId: 'phone',
+        initialCriteria: const [
+          (name: 'Fiyat', weight: 8),
+          (name: 'Kamera', weight: 7),
+          (name: 'Pil ömrü', weight: 6),
+        ],
+        initialOptions: const ['iPhone', 'Samsung'],
+      );
+
+      final decision = switch (result) {
+        Ok<Decision>(:final value) => value,
+        Err<Decision>() => fail('Ok bekleniyordu'),
+      };
+
+      expect(decision.criteria, hasLength(3));
+      expect(
+        decision.criteria.map((c) => c.name),
+        ['Fiyat', 'Kamera', 'Pil ömrü'],
+      );
+      expect(decision.criteria.map((c) => c.weight), [8, 7, 6]);
+      // Şablon kriteri user kaynaklıdır — aiSuggested A2'ye ayrıldı
+      // (metrik karışmasın diye; SPRINT-A-TASARIM §3).
+      expect(
+        decision.criteria.every((c) => c.source == CriterionSource.user),
+        isTrue,
+      );
+      final ids = {
+        ...decision.criteria.map((c) => c.id),
+        ...decision.options.map((o) => o.id),
+        decision.id,
+      };
+      expect(ids, hasLength(6)); // 3 kriter + 2 seçenek + karar: hepsi ayrı
+
+      expect(decision.options.map((o) => o.title), ['iPhone', 'Samsung']);
+      expect(decision.templateId, 'phone');
+      expect(decision.scores, isEmpty); // puanlar HER ZAMAN kullanıcıya ait
+
+      final persisted = await repo.getById(decision.id);
+      expect(persisted?.criteria, hasLength(3));
+    });
+
+    test('initialCriteria boş: mevcut davranış birebir (regresyon)', () async {
+      final result = await usecase(ownerUid: 'u1', title: 'Normal karar');
+      final decision = switch (result) {
+        Ok<Decision>(:final value) => value,
+        Err<Decision>() => fail('Ok bekleniyordu'),
+      };
+      expect(decision.criteria, isEmpty);
+      expect(decision.options, isEmpty);
+      expect(decision.templateId, isNull);
+    });
+
+    test('geçersiz başlık şablon yolunda da yazım yapmaz', () async {
+      final result = await usecase(
+        ownerUid: 'u1',
+        title: 'ab',
+        initialCriteria: const [(name: 'Fiyat', weight: 8)],
+      );
+      expect(result, isA<Err<Decision>>());
+
+      var count = 0;
+      final sub = repo.watchAll().listen((list) => count = list.length);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+      expect(count, 0);
+    });
+  });
 }

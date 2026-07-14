@@ -277,7 +277,13 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
 
   // ---- Kriterler (US-B2) ----
 
-  Future<Failure?> addCriterion(String name, int weight) async {
+  /// [source]: öneri chip'inden gelen kriter aiSuggested etiketlenir
+  /// (PR-A2) — logCriteriaCompleted.aiSuggestedCount hunisi bununla ölçer.
+  Future<Failure?> addCriterion(
+    String name,
+    int weight, {
+    CriterionSource source = CriterionSource.user,
+  }) async {
     if (name.trim().isEmpty) {
       return const ValidationFailure(
         field: 'criterionName',
@@ -291,7 +297,7 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
       (d) => d.copyWith(
         criteria: [
           ...d.criteria,
-          Criterion(id: id, name: name.trim(), weight: weight),
+          Criterion(id: id, name: name.trim(), weight: weight, source: source),
         ],
       ),
       (u) => DecisionPatch(criteria: u.criteria),

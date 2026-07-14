@@ -7,6 +7,7 @@ import 'features/decision/presentation/screens/decision_edit_screen.dart';
 import 'features/decision/presentation/screens/home_screen.dart';
 import 'features/decision/presentation/screens/new_decision_screen.dart';
 import 'features/results/presentation/screens/result_screen.dart';
+import 'features/templates/presentation/screens/template_gallery_screen.dart';
 
 /// Rota haritası — TEKNIK-MIMARI.md §6.2
 /// Sprint 1: çekirdek akış gerçek ekranlarla bağlı.
@@ -16,6 +17,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     initialLocation: '/home',
     routes: [
       GoRoute(path: '/home', builder: (_, __) => const HomeScreen()),
+      GoRoute(
+        path: '/templates',
+        builder: (_, __) => const TemplateGalleryScreen(),
+      ),
       GoRoute(
         path: '/decision/new',
         builder: (_, state) => NewDecisionScreen(

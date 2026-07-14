@@ -13,11 +13,17 @@ final analyticsConsentProvider = StateProvider<bool>((_) => false);
 abstract interface class AnalyticsService {
   // Aktivasyon hunisi
   Future<void> logDecisionCreated({required String source}); // blank|template
+  Future<void> logTemplateSelected({
+    required String templateId,
+  }); // A1 sheet CTA
   Future<void> logOptionsCompleted({required int optionCount});
   Future<void> logCriteriaCompleted({
     required int criterionCount,
     required int aiSuggestedCount,
   });
+  Future<void> logCriterionSuggestionAccepted({
+    required String origin,
+  }); // A2 chip: template|keyword|generic
   Future<void> logScoringCompleted();
   Future<void> logResultViewed(); // v1 aktivasyon olayı (yerel skor)
 
@@ -54,6 +60,10 @@ class FirebaseAnalyticsService implements AnalyticsService {
       _log('decision_created', {'source': source});
 
   @override
+  Future<void> logTemplateSelected({required String templateId}) =>
+      _log('template_selected', {'template_id': templateId});
+
+  @override
   Future<void> logOptionsCompleted({required int optionCount}) =>
       _log('options_completed', {'option_count': optionCount});
 
@@ -66,6 +76,10 @@ class FirebaseAnalyticsService implements AnalyticsService {
         'criterion_count': criterionCount,
         'ai_suggested_count': aiSuggestedCount,
       });
+
+  @override
+  Future<void> logCriterionSuggestionAccepted({required String origin}) =>
+      _log('criterion_suggestion_accepted', {'origin': origin});
 
   @override
   Future<void> logScoringCompleted() => _log('scoring_completed');
@@ -130,12 +144,20 @@ class NoopAnalyticsService implements AnalyticsService {
 
   @override
   Future<void> logDecisionCreated({required String source}) async {}
+
+  @override
+  Future<void> logTemplateSelected({required String templateId}) async {}
   @override
   Future<void> logOptionsCompleted({required int optionCount}) async {}
   @override
   Future<void> logCriteriaCompleted({
     required int criterionCount,
     required int aiSuggestedCount,
+  }) async {}
+
+  @override
+  Future<void> logCriterionSuggestionAccepted({
+    required String origin,
   }) async {}
   @override
   Future<void> logScoringCompleted() async {}

@@ -27,7 +27,6 @@ final decisionRepositoryProvider = Provider<DecisionRepository>((ref) {
   // select: yalnız uid DEĞİŞİNCE yeniden kur — AsyncLoading→AsyncData
   // geçişi repo'yu boşuna yeniden yaratıp in-memory veriyi düşürmesin.
   final uid = ref.watch(authStateProvider.select((s) => s.valueOrNull?.uid));
-
   if (firebaseReady && uid != null) {
     return FirestoreDecisionRepository(
       ref.watch(firestoreInstanceProvider),

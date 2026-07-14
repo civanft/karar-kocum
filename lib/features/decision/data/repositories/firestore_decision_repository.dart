@@ -61,9 +61,14 @@ class FirestoreDecisionRepository implements DecisionRepository {
     final batch = _firestore.batch()
       ..set(docRef, DecisionFirestoreMapper.toFirestore(decision, _uid));
     if (!exists) {
+      final userExists = (await _userDoc.get()).exists;
+
       batch.set(
         _userDoc,
-        {'decisionCount': FieldValue.increment(1)},
+        {
+          if (!userExists) 'plan': 'free',
+          'decisionCount': FieldValue.increment(1),
+        },
         SetOptions(merge: true),
       );
     }
