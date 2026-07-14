@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/limits.dart';
+import '../../../../core/error/failure.dart';
 import '../../../../core/services/analytics/analytics_service.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../templates/presentation/providers/template_providers.dart';
@@ -44,26 +45,37 @@ class _NewDecisionScreenState extends ConsumerState<NewDecisionScreen> {
       _submitting = true;
     });
 
-    final result = await ref.read(createDecisionProvider)(
-      ownerUid: ref.read(currentUidProvider),
-      title: _controller.text,
-    );
+    // SPINNER HOTFIX: usecase artık fırlatmıyor (Err döner) ama bu
+    // ekran YİNE DE kuşaklı: beklenmedik herhangi bir istisna spinner'ı
+    // ASLA kilitleyemez (catch → hata mesajı; state her yolda çözülür).
+    try {
+      final result = await ref.read(createDecisionProvider)(
+        ownerUid: ref.read(currentUidProvider),
+        title: _controller.text,
+      );
 
-    if (!mounted) return;
-    result.when(
-      ok: (decision) {
-        unawaited(
-          ref.read(analyticsServiceProvider).logDecisionCreated(
-                source: widget.initialTitle != null ? 'template' : 'blank',
-              ),
-        );
-        context.pushReplacement('/decision/${decision.id}/edit');
-      },
-      err: (f) => setState(() {
+      if (!mounted) return;
+      result.when(
+        ok: (decision) {
+          unawaited(
+            ref.read(analyticsServiceProvider).logDecisionCreated(
+                  source: widget.initialTitle != null ? 'template' : 'blank',
+                ),
+          );
+          context.pushReplacement('/decision/${decision.id}/edit');
+        },
+        err: (f) => setState(() {
+          _submitting = false;
+          _errorText = f.userMessage;
+        }),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
         _submitting = false;
-        _errorText = 'Karar oluşturulamadı, tekrar deneyin.';
-      }),
-    );
+        _errorText = 'Kaydedilemedi — tekrar dene.';
+      });
+    }
   }
 
   @override

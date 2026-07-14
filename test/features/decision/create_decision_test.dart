@@ -71,6 +71,27 @@ void main() {
     expect(gen(length: 8), hasLength(8));
   });
 
+  group('dayanıklılık (spinner hotfix)', () {
+    test('repo exception fırlatırsa Err(UnexpectedFailure) döner — THROW YOK',
+        () async {
+      final throwingRepo = _ThrowingRepository();
+      final resilient = CreateDecision(throwingRepo, IdGenerator());
+
+      final result = await resilient(
+        ownerUid: 'u1',
+        title: 'Geçerli başlık',
+      );
+
+      final failure = switch (result) {
+        Err<Decision>(:final failure) => failure,
+        Ok<Decision>() => fail('Err bekleniyordu — exception yutulmadı mı?'),
+      };
+      expect(failure, isA<UnexpectedFailure>());
+      // Kullanıcı-dostu mesaj hazır (spinner çözülüp bu gösterilecek):
+      expect(failure.userMessage, isNotEmpty);
+    });
+  });
+
   group('şablon yolu (PR-A1)', () {
     test('initialCriteria: kriterler benzersiz id + user source ile oluşur',
         () async {
@@ -144,4 +165,12 @@ void main() {
       expect(count, 0);
     });
   });
+}
+
+/// permission-denied benzeri: upsert her çağrıda fırlatır.
+class _ThrowingRepository extends InMemoryDecisionRepository {
+  @override
+  Future<void> upsert(Decision decision) async {
+    throw Exception('[cloud_firestore/permission-denied] simülasyonu');
+  }
 }
