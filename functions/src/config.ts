@@ -60,10 +60,13 @@ export const DAILY_SPEND_LIMIT_USD = envFloat("AI_DAILY_SPEND_LIMIT_USD", 0.15);
  *  fiyat. Aşılırsa analiz 'daily-limit' ile durur. */
 export const DAILY_TOKEN_LIMIT = envInt("DAILY_TOKEN_LIMIT", 375_000);
 /** KULLANICI BAŞINA analiz limitleri — perDay eklendi (madde 3: 3/gün). */
+// GELİŞTİRME LİMİTLERİ (geçici) — üretim öncesi 3/10/3'e geri alınacak.
+// Yalnız per-user rate limiter'ı besler; global kotaları (daily_limit,
+// token_counter, cost_control) ETKİLEMEZ.
 export const PER_USER_ANALYZE_LIMITS = {
-  perMinute: envInt("USER_ANALYZE_PER_MINUTE", 3),
-  perHour: envInt("USER_ANALYZE_PER_HOUR", 10),
-  perDay: envInt("USER_ANALYZE_PER_DAY", 3),
+  perMinute: envInt("USER_ANALYZE_PER_MINUTE", 20),
+  perHour: envInt("USER_ANALYZE_PER_HOUR", 200),
+  perDay: envInt("USER_ANALYZE_PER_DAY", 1000),
 } as const;
 
 // ---- Ödül bileti ----
