@@ -4,14 +4,14 @@ import { DAILY_SPEND_LIMIT_USD } from "../src/config";
 import { computeCostUsd } from "../src/ai/cost_control";
 import { buildUserMessage } from "../src/ai/prompt";
 
-describe("Gemini maliyet (6C-1 §7)", () => {
-  it("analiz başına maliyet hedefi: < $0,001", () => {
-    const cost = computeCostUsd("gemini-2.0-flash", {
+describe("OpenAI maliyet (gpt-4.1-mini)", () => {
+  it("analiz başına maliyet hedefi: < $0,002 (gpt-4.1-mini)", () => {
+    const cost = computeCostUsd("gpt-4.1-mini", {
       inputTokens: 1500,
       outputTokens: 600,
     });
-    expect(cost).toBeCloseTo(0.00039, 5);
-    expect(cost).toBeLessThan(0.001);
+    expect(cost).toBeCloseTo(0.00156, 5);
+    expect(cost).toBeLessThan(0.002);
   });
 
   it("bilinmeyen model muhafazakâr tarifeye düşer (asla 0 değil)", () => {

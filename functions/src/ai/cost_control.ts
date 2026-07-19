@@ -7,7 +7,7 @@ import { getFirestore } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
 import { DAILY_SPEND_LIMIT_USD } from "../config.js";
-import type { TokenUsage } from "./gemini_gateway.js";
+import type { TokenUsage } from "./openai_gateway.js";
 
 interface ModelPrice {
   inputPer1M: number;
@@ -15,8 +15,8 @@ interface ModelPrice {
 }
 
 const PRICES: Record<string, ModelPrice> = {
-  "gemini-2.0-flash": { inputPer1M: 0.1, outputPer1M: 0.4 },
-  "gemini-2.0-flash-lite": { inputPer1M: 0.075, outputPer1M: 0.3 },
+  // gpt-4.1-mini resmi fiyatı (doğrulandı): $0,40 girdi / $1,60 çıktı / 1M.
+  "gpt-4.1-mini": { inputPer1M: 0.4, outputPer1M: 1.6 },
 };
 
 const FALLBACK_PRICE: ModelPrice = { inputPer1M: 5, outputPer1M: 15 };

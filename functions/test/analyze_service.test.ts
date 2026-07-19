@@ -24,7 +24,7 @@ import {
   SELF_HARM_REDIRECT,
   type AiGateway,
   type AnalysisCompletion,
-} from "../src/ai/gemini_gateway";
+} from "../src/ai/openai_gateway";
 import type { AnalysisOutput } from "../src/ai/schema";
 import { AppError } from "../src/core/errors";
 import { hashUid } from "../src/core/logger";
@@ -190,13 +190,13 @@ describe("mutlu yol", () => {
     expect(result.analysisId).toBe(LATEST_ANALYSIS_ID);
     expect(result.analysis.summary).toBe(validOutput.summary);
     expect(result.analysis.recommendation).toContain("iPhone");
-    expect(result.analysis.model).toBe("gemini-2.0-flash");
+    expect(result.analysis.model).toBe("gpt-4.1-mini");
     expect(result.analysis.promptVersion).toBe("mvp-1");
     expect(ports.commits).toBe(1);
     expect(ports.credits).toBe(4); // lazy-init 5 → 4
     expect(spend.total).toBeGreaterThan(0);
-    // Maliyet hedefi (6C-1 §7): analiz başına < $0,001
-    expect(spend.total).toBeLessThan(0.001);
+    // Maliyet hedefi: analiz başına < $0,002 (gpt-4.1-mini ~$0,00156)
+    expect(spend.total).toBeLessThan(0.002);
   });
 
   it("yeniden analiz aynı kimliğe yazar (üzerine yazma — geçmiş yok)", async () => {
@@ -210,7 +210,7 @@ describe("mutlu yol", () => {
 });
 
 describe("kredi adaleti (6C-2 invariant'ları)", () => {
-  it("kredi 0 → quota-exceeded, Gemini hiç çağrılmaz", async () => {
+  it("kredi 0 → quota-exceeded, OpenAI hiç çağrılmaz", async () => {
     const { service, ports, gateway } = make();
     ports.credits = 0;
     const error = await service.run(ctx, request).catch((e: unknown) => e);
@@ -233,7 +233,7 @@ describe("kredi adaleti (6C-2 invariant'ları)", () => {
     expect(gateway.completions).toBe(1);
   });
 
-  it("Gemini moderasyon bloğu kredi YAKMAZ", async () => {
+  it("OpenAI moderasyon bloğu kredi YAKMAZ", async () => {
     const { service, ports, gateway } = make();
     gateway.failWith = new AppError("moderated", SELF_HARM_REDIRECT, {
       selfHarm: true,
@@ -246,7 +246,7 @@ describe("kredi adaleti (6C-2 invariant'ları)", () => {
     expect(ports.commits).toBe(0);
   });
 
-  it("Gemini kesintisi (ai-unavailable) kredi YAKMAZ", async () => {
+  it("OpenAI kesintisi (ai-unavailable) kredi YAKMAZ", async () => {
     const { service, ports, gateway } = make();
     gateway.failWith = new AppError("ai-unavailable", "kesinti", {
       retryable: true,
@@ -266,7 +266,7 @@ describe("kredi adaleti (6C-2 invariant'ları)", () => {
 });
 
 describe("koruma sırası", () => {
-  it("rate reddi Gemini'den önce keser", async () => {
+  it("rate reddi OpenAI'den önce keser", async () => {
     const { service, ports, gateway, rate } = make();
     rate.shouldReject = true;
     const error = await service.run(ctx, request).catch((e: unknown) => e);

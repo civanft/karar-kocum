@@ -82,68 +82,70 @@ class _NewDecisionScreenState extends ConsumerState<NewDecisionScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Yeni Karar')),
-      body: Padding(
-        padding: const EdgeInsets.all(AppTokens.s4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Neye karar vereceksin?',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: AppTokens.s4),
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              maxLength: Limits.titleMaxLength,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _submit(),
-              decoration: InputDecoration(
-                hintText: 'Örn. iPhone mu Samsung mu?',
-                border: const OutlineInputBorder(),
-                errorText: _errorText,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(AppTokens.s4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Neye karar vereceksin?',
+                style: Theme.of(context).textTheme.titleLarge,
               ),
-            ),
-            const SizedBox(height: AppTokens.s4),
-            FilledButton(
-              onPressed: _submitting ? null : _submit,
-              child: _submitting
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Devam Et'),
-            ),
-            const SizedBox(height: AppTokens.s6),
-            // A1-b: dönen kullanıcı için şablon şeridi.
-            Text(
-              'Ya da bir şablonla başla',
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ),
-            const SizedBox(height: AppTokens.s2),
-            SizedBox(
-              height: 132,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  for (final template
-                      in ref.watch(templateCatalogProvider).all())
-                    Padding(
-                      padding: const EdgeInsets.only(right: AppTokens.s2),
-                      child: TemplateCard(
-                        template: template,
-                        compact: true,
-                        onTap: () =>
-                            showTemplatePreviewSheet(context, template),
-                      ),
+              const SizedBox(height: AppTokens.s4),
+              TextField(
+                controller: _controller,
+                autofocus: true,
+                maxLength: Limits.titleMaxLength,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _submit(),
+                decoration: InputDecoration(
+                  hintText: 'Örn. iPhone mu Samsung mu?',
+                  border: const OutlineInputBorder(),
+                  errorText: _errorText,
+                ),
+              ),
+              const SizedBox(height: AppTokens.s4),
+              FilledButton(
+                onPressed: _submitting ? null : _submit,
+                child: _submitting
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Devam Et'),
+              ),
+              const SizedBox(height: AppTokens.s6),
+              // A1-b: dönen kullanıcı için şablon şeridi.
+              Text(
+                'Ya da bir şablonla başla',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
-                ],
               ),
-            ),
-          ],
+              const SizedBox(height: AppTokens.s2),
+              SizedBox(
+                height: 132,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    for (final template
+                        in ref.watch(templateCatalogProvider).all())
+                      Padding(
+                        padding: const EdgeInsets.only(right: AppTokens.s2),
+                        child: TemplateCard(
+                          template: template,
+                          compact: true,
+                          onTap: () =>
+                              showTemplatePreviewSheet(context, template),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

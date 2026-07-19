@@ -8,15 +8,15 @@ import { AppError } from "../core/errors.js";
 import { log } from "../core/logger.js";
 import type { RequestContext } from "../core/types.js";
 import {
-  GEMINI_MODEL,
   INITIAL_FREE_CREDITS,
   MAX_INPUT_CHARS,
   MAX_OUTPUT_TOKENS,
+  OPENAI_MODEL,
 } from "../config.js";
 import type { CostCircuitBreaker } from "./cost_control.js";
 import { computeCostUsd } from "./cost_control.js";
 import type { DailyAnalysisLimiter } from "./daily_limit.js";
-import type { AiGateway } from "./gemini_gateway.js";
+import type { AiGateway } from "./openai_gateway.js";
 import type { DailyTokenGuard } from "./token_counter.js";
 import { buildUserMessage, PROMPT_VERSION, SYSTEM_PROMPT } from "./prompt.js";
 import {
@@ -121,19 +121,19 @@ export class AnalyzeService {
       );
     }
 
-    // [4] Gemini — moderasyon üretim çağrısına gömülü (6C-1 §2);
+    // [4] OpenAI — moderasyon yanıt finish_reason'da;
     // moderated/unavailable hataları burada fırlar, kredi YANMAZ.
     const completion = await this.gateway.completeAnalysis({
       system: SYSTEM_PROMPT,
       user: userMessage,
-      model: GEMINI_MODEL,
+      model: OPENAI_MODEL,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
     });
 
     // [5] tek transaction: kredi ANCAK burada, başarıyla birlikte düşer
     const analysis: StoredAnalysis = {
       ...completion.output,
-      model: GEMINI_MODEL,
+      model: OPENAI_MODEL,
       promptVersion: PROMPT_VERSION,
     };
     const analysisId = await this.ports.commitAnalysis({
@@ -143,14 +143,14 @@ export class AnalyzeService {
     });
 
     // [6] maliyet + token kaydı + tek satır kapanış logu (metrik yok — 6B)
-    const costUsd = computeCostUsd(GEMINI_MODEL, completion.usage);
+    const costUsd = computeCostUsd(OPENAI_MODEL, completion.usage);
     await this.breaker.record(costUsd);
     await this.tokenGuard.record(
       completion.usage.inputTokens,
       completion.usage.outputTokens,
     );
     log("info", "analysis_completed", ctx, {
-      model: GEMINI_MODEL,
+      model: OPENAI_MODEL,
       promptVersion: PROMPT_VERSION,
       tokensIn: completion.usage.inputTokens,
       tokensOut: completion.usage.outputTokens,

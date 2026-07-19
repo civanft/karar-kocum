@@ -4,7 +4,7 @@
  * (hotfix). Bu dosya mevcut import yollarını kırmamak için re-export eder.
  */
 export {
-  GEMINI_MODEL,
+  OPENAI_MODEL,
   MAX_OUTPUT_TOKENS,
   INITIAL_FREE_CREDITS,
   DAILY_SPEND_LIMIT_USD,
