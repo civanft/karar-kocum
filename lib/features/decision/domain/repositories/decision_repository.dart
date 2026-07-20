@@ -12,6 +12,8 @@ class DecisionPatch {
     this.scores,
     this.isFavorite,
     this.status,
+    this.decisionStatus,
+    this.chosenOptionId,
   });
 
   final String? title;
@@ -21,23 +23,47 @@ class DecisionPatch {
   final bool? isFavorite;
   final DecisionStatus? status;
 
+  /// Sprint B — taahhüt patch'i. [decisionStatus] YÖNETİR: `decided` iken
+  /// [chosenOptionId] dolu olmalı (usecase garanti eder); `open` iken
+  /// chosenOptionId/decidedAt temizlenir (geri alma). null = dokunma.
+  final DecisionCommitStatus? decisionStatus;
+  final String? chosenOptionId;
+
   bool get isEmpty =>
       title == null &&
       options == null &&
       criteria == null &&
       scores == null &&
       isFavorite == null &&
-      status == null;
+      status == null &&
+      decisionStatus == null;
 
   /// Patch'i bir karara uygular (in-memory repo ve testler için).
-  Decision applyTo(Decision decision) => decision.copyWith(
-        title: title ?? decision.title,
-        options: options ?? decision.options,
-        criteria: criteria ?? decision.criteria,
-        scores: scores ?? decision.scores,
-        isFavorite: isFavorite ?? decision.isFavorite,
-        status: status ?? decision.status,
+  Decision applyTo(Decision decision) {
+    if (decisionStatus == DecisionCommitStatus.decided) {
+      return decision.copyWith(
+        decisionStatus: DecisionCommitStatus.decided,
+        chosenOptionId: chosenOptionId,
+        decidedAt: DateTime.now(),
       );
+    }
+    if (decisionStatus == DecisionCommitStatus.open) {
+      // Geri alma: taahhüt alanları temizlenir.
+      return decision.copyWith(
+        decisionStatus: DecisionCommitStatus.open,
+        chosenOptionId: null,
+        decidedAt: null,
+      );
+    }
+    return decision.copyWith(
+      title: title ?? decision.title,
+      options: options ?? decision.options,
+      criteria: criteria ?? decision.criteria,
+      scores: scores ?? decision.scores,
+      isFavorite: isFavorite ?? decision.isFavorite,
+      status: status ?? decision.status,
+    );
+  }
 }
 
 /// Karar deposu sözleşmesi — TEKNIK-MIMARI.md §4.1, FIRESTORE-VERI-MODELI.md §2

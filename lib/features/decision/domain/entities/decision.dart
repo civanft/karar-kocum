@@ -5,6 +5,10 @@ part 'decision.g.dart';
 
 enum DecisionStatus { draft, analyzed, archived }
 
+/// Sprint B — kullanıcının taahhüt durumu. `status`'tan (AI yaşam döngüsü,
+/// sunucu-korumalı 'analyzed') AYRI: bu istemci-yazılabilir taahhüt alanı.
+enum DecisionCommitStatus { open, decided }
+
 enum ScoreSource { manual, ai }
 
 enum CriterionSource { user, aiSuggested }
@@ -26,12 +30,21 @@ class Decision with _$Decision {
     @Default([]) List<Criterion> criteria,
     @Default({}) ScoreMatrix scores,
     @Default(false) bool isFavorite,
+    // Sprint B — "Kararımı Verdim". Migration-güvenli: eski belgelerde
+    // alanlar yok → null / open. chosenOptionId & decidedAt yalnız
+    // decisionStatus == decided iken doludur (usecase tutarlı yazar).
+    String? chosenOptionId,
+    DateTime? decidedAt,
+    @Default(DecisionCommitStatus.open) DecisionCommitStatus decisionStatus,
     required DateTime createdAt,
     required DateTime updatedAt,
   }) = _Decision;
 
   factory Decision.fromJson(Map<String, dynamic> json) =>
       _$DecisionFromJson(json);
+
+  /// Kullanıcı bir seçeneğe karar verdi mi (Sprint B).
+  bool get isDecided => decisionStatus == DecisionCommitStatus.decided;
 
   /// Analiz için tüm hücreler dolu mu? (partial analize izin verilmez)
   bool get isScoreMatrixComplete {

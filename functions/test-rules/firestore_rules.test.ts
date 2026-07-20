@@ -150,6 +150,63 @@ describe("users belgesi", () => {
 });
 
 describe("decisions belgesi", () => {
+  // ---- Sprint B: "Kararımı Verdim" taahhüt alanları ----
+
+  it("SPRINT B: taahhüt update'i İZİNLİ (decisionStatus/chosenOptionId/decidedAt)", async () => {
+    await db("ali").doc("users/ali/decisions/sb1").set(validDecision("ali"));
+    await assertSucceeds(
+      db("ali").doc("users/ali/decisions/sb1").update({
+        decisionStatus: "decided",
+        chosenOptionId: "a",
+        decidedAt: new Date(),
+      }),
+    );
+  });
+
+  it("SPRINT B: geri alma İZİNLİ (open + alanlar null)", async () => {
+    await db("ali").doc("users/ali/decisions/sb2").set({
+      ...validDecision("ali"),
+      decisionStatus: "decided",
+      chosenOptionId: "a",
+      decidedAt: new Date(),
+    });
+    await assertSucceeds(
+      db("ali").doc("users/ali/decisions/sb2").update({
+        decisionStatus: "open",
+        chosenOptionId: null,
+        decidedAt: null,
+      }),
+    );
+  });
+
+  it("SPRINT B: create taahhüt alanlarıyla da geçer (şema kabul)", async () => {
+    await assertSucceeds(
+      db("ali").doc("users/ali/decisions/sb3").set({
+        ...validDecision("ali"),
+        decisionStatus: "open",
+      }),
+    );
+  });
+
+  it("SPRINT B REGRESYON: taahhüt alanları sunucu korumasını DELMEZ", async () => {
+    await db("ali").doc("users/ali/decisions/sb4").set(validDecision("ali"));
+    // latestAnalysisId hâlâ yazılamaz — taahhüt alanıyla birlikte de:
+    await assertFails(
+      db("ali").doc("users/ali/decisions/sb4").update({
+        decisionStatus: "decided",
+        chosenOptionId: "a",
+        latestAnalysisId: "sahte",
+      }),
+    );
+    // status='analyzed' hâlâ engelli:
+    await assertFails(
+      db("ali").doc("users/ali/decisions/sb4").update({
+        decisionStatus: "decided",
+        status: "analyzed",
+      }),
+    );
+  });
+
   it("HOTFIX: BOŞ taslak create İZİNLİ (0 seçenek — 'Devam Et' yolu)", async () => {
     await assertSucceeds(
       db("ali")
