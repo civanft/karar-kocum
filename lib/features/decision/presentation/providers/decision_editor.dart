@@ -182,6 +182,11 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
       scores: newer.scores ?? older.scores,
       isFavorite: newer.isFavorite ?? older.isFavorite,
       status: newer.status ?? older.status,
+      // Sprint B: taahhüt alanları da taşınmalı — aksi halde bekleyen
+      // debounce yazımıyla birleşince commit/geri-alma DÜŞER ve patch
+      // boşalıp applyPatch fırlatır (iyimser güncelleme geri alınır).
+      decisionStatus: newer.decisionStatus ?? older.decisionStatus,
+      chosenOptionId: newer.chosenOptionId ?? older.chosenOptionId,
     );
   }
 
@@ -359,6 +364,38 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
   Future<Failure?> toggleFavorite() => _mutate(
         (d) => d.copyWith(isFavorite: !d.isFavorite),
         (u) => DecisionPatch(isFavorite: u.isFavorite),
+      );
+
+  // ---- Sprint B: "Kararımı Verdim" ----
+
+  /// Kullanıcı bir seçeneğe karar verir. chosenOptionId geçerli bir
+  /// seçenek olmalı; değilse dokunmadan geçer.
+  Future<Failure?> commitDecision(String optionId) {
+    final current = state.valueOrNull;
+    if (current == null || !current.options.any((o) => o.id == optionId)) {
+      return Future.value();
+    }
+    return _mutate(
+      (d) => d.copyWith(
+        decisionStatus: DecisionCommitStatus.decided,
+        chosenOptionId: optionId,
+        decidedAt: DateTime.now(),
+      ),
+      (_) => DecisionPatch(
+        decisionStatus: DecisionCommitStatus.decided,
+        chosenOptionId: optionId,
+      ),
+    );
+  }
+
+  /// Kararı geri al — taahhüt alanları temizlenir.
+  Future<Failure?> revertDecision() => _mutate(
+        (d) => d.copyWith(
+          decisionStatus: DecisionCommitStatus.open,
+          chosenOptionId: null,
+          decidedAt: null,
+        ),
+        (_) => const DecisionPatch(decisionStatus: DecisionCommitStatus.open),
       );
 }
 

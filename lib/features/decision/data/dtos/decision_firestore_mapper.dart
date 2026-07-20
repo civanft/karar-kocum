@@ -25,6 +25,11 @@ abstract final class DecisionFirestoreMapper {
     data['id'] = snapshot.id;
     data['createdAt'] = _dates.fromJson(data['createdAt']).toIso8601String();
     data['updatedAt'] = _dates.fromJson(data['updatedAt']).toIso8601String();
+    // Sprint B: decidedAt Timestamp → ISO; eski belgede yoksa null kalır
+    // (migration-güvenli — alan hiç yazılmamış).
+    if (data['decidedAt'] != null) {
+      data['decidedAt'] = _dates.fromJson(data['decidedAt']).toIso8601String();
+    }
     return Decision.fromJson(data);
   }
 
@@ -62,6 +67,17 @@ abstract final class DecisionFirestoreMapper {
         },
       if (patch.isFavorite != null) 'isFavorite': patch.isFavorite,
       if (patch.status != null) 'status': patch.status!.name,
+      // Sprint B — taahhüt: decisionStatus üçlüyü TUTARLI yazar.
+      if (patch.decisionStatus == DecisionCommitStatus.decided) ...{
+        'decisionStatus': 'decided',
+        'chosenOptionId': patch.chosenOptionId,
+        'decidedAt': FieldValue.serverTimestamp(), // Y-4: cihaz saati değil
+      },
+      if (patch.decisionStatus == DecisionCommitStatus.open) ...{
+        'decisionStatus': 'open',
+        'chosenOptionId': null, // geri alma → alanlar temizlenir
+        'decidedAt': null,
+      },
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }
