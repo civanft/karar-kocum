@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Sprint C.1: karar takibi YEREL bildirimi (FCM değil).
+         POST_NOTIFICATIONS: Android 13+ çalışma zamanı izni.
+         RECEIVE_BOOT_COMPLETED: 7 gün sonrasına planlanan bildirim
+         cihaz yeniden başlatılınca kaybolmasın diye gereklidir.
+         SCHEDULE_EXACT_ALARM İSTENMEZ — inexact planlama kullanıyoruz. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <application
         android:label="karar_veriyorum"
         android:name="${applicationName}"
@@ -30,6 +37,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Sprint C.1: yeniden başlatma sonrası planlı bildirimleri kurar. -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

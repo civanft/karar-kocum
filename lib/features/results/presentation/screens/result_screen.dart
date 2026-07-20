@@ -10,6 +10,7 @@ import '../../../ai_analysis/presentation/widgets/analysis_card.dart';
 import '../../../decision/domain/entities/decision.dart';
 import '../../../decision/presentation/providers/decision_editor.dart';
 import '../../../decision/presentation/providers/decision_providers.dart';
+import '../../../journey/presentation/providers/journey_providers.dart';
 import '../../../scoring/domain/entities/scoring_types.dart';
 
 /// Sonuç ekranı v1 — yerel ağırlıklı skor (US-C2).
@@ -77,12 +78,39 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
           bottomNavigationBar: _CommitSection(
             decision: decision,
             recommendedOptionId: result.recommendedOptionId,
-            onCommit: (optionId) => ref
-                .read(decisionEditorProvider(decisionId).notifier)
-                .commitDecision(optionId),
-            onRevert: () => ref
-                .read(decisionEditorProvider(decisionId).notifier)
-                .revertDecision(),
+            onCommit: (optionId) async {
+              await ref
+                  .read(decisionEditorProvider(decisionId).notifier)
+                  .commitDecision(optionId);
+              // Sprint C.1: söz zaten verilmişse vade yeni taahhütten başlar.
+              // (İlk kez karar verende tercih yok → no-op; sözü sheet sorar.)
+              // BEKLENMEZ: takip motoru en iyi çabadır, yerel depolama yavaş
+              // ya da erişilemez olduğunda kararın kaydını geciktirmemeli.
+              unawaited(
+                ref.read(followUpCoordinatorProvider).onCommitted(
+                      decisionId: decisionId,
+                      decisionTitle: decision.title,
+                    ),
+              );
+            },
+            onRevert: () async {
+              await ref
+                  .read(decisionEditorProvider(decisionId).notifier)
+                  .revertDecision();
+              // Sprint C.1: taahhüt kalktı → tutulacak söz kalmadı.
+              // Beklenmez (yukarıdaki gerekçe).
+              unawaited(
+                ref.read(followUpCoordinatorProvider).onReverted(decisionId),
+              );
+            },
+            // Sprint C.1: tercih CİHAZDA saklanır (Firestore'a yazılmaz) ve
+            // söz verildiyse +7 gün YEREL bildirim planlanır.
+            onPromiseAnswer: (optIn) =>
+                ref.read(followUpCoordinatorProvider).answerPromise(
+                      decisionId: decisionId,
+                      decisionTitle: decision.title,
+                      optIn: optIn,
+                    ),
           ),
           body: ListView(
             padding: const EdgeInsets.all(AppTokens.s4),
@@ -237,12 +265,14 @@ class _CommitSection extends StatelessWidget {
     required this.recommendedOptionId,
     required this.onCommit,
     required this.onRevert,
+    required this.onPromiseAnswer,
   });
 
   final Decision decision;
   final String recommendedOptionId;
   final Future<void> Function(String optionId) onCommit;
   final Future<void> Function() onRevert;
+  final Future<void> Function(bool optIn) onPromiseAnswer;
 
   @override
   Widget build(BuildContext context) {
@@ -298,6 +328,7 @@ class _CommitSection extends StatelessWidget {
         initialId: initial,
         recommendedOptionId: recommendedOptionId,
         canRevert: decision.isDecided,
+        onPromiseAnswer: onPromiseAnswer,
         onCommit: onCommit,
         onRevert: onRevert,
       ),
@@ -305,12 +336,13 @@ class _CommitSection extends StatelessWidget {
   }
 }
 
-class _CommitSheet extends StatefulWidget {
+class _CommitSheet extends ConsumerStatefulWidget {
   const _CommitSheet({
     required this.options,
     required this.initialId,
     required this.recommendedOptionId,
     required this.canRevert,
+    required this.onPromiseAnswer,
     required this.onCommit,
     required this.onRevert,
   });
@@ -321,18 +353,35 @@ class _CommitSheet extends StatefulWidget {
   final bool canRevert;
   final Future<void> Function(String optionId) onCommit;
   final Future<void> Function() onRevert;
+  final Future<void> Function(bool optIn) onPromiseAnswer;
 
   @override
-  State<_CommitSheet> createState() => _CommitSheetState();
+  ConsumerState<_CommitSheet> createState() => _CommitSheetState();
 }
 
-class _CommitSheetState extends State<_CommitSheet> {
+class _CommitSheetState extends ConsumerState<_CommitSheet> {
   late String _selected = widget.initialId;
   bool _saving = false;
+
+  /// Sprint C: taahhüt başarılı olunca sheet SÖZ fazına geçer.
+  bool _committed = false;
+
+  String get _selectedTitle =>
+      widget.options
+          .where((o) => o.id == _selected)
+          .map((o) => o.title)
+          .firstOrNull ??
+      'Seçimin';
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (_committed) {
+      return _PromiseView(
+        chosenTitle: _selectedTitle,
+        onAnswer: widget.onPromiseAnswer,
+      );
+    }
     return Padding(
       padding: EdgeInsets.only(
         left: AppTokens.s4,
@@ -396,12 +445,100 @@ class _CommitSheetState extends State<_CommitSheet> {
   Future<void> _commit() async {
     setState(() => _saving = true);
     await widget.onCommit(_selected);
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+    // Sprint C: kapatmak yerine SÖZ ekranına geç — journey'nin sözleşmesi
+    // taahhüt anında kurulur (Decision Journey §Aşama 3).
+    setState(() {
+      _saving = false;
+      _committed = true;
+    });
   }
 
   Future<void> _revert() async {
     setState(() => _saving = true);
     await widget.onRevert();
     if (mounted) Navigator.of(context).pop();
+  }
+}
+
+/// SÖZ EKRANI (Sprint C, Decision Journey §Aşama 3).
+///
+/// Taahhüt anının hemen ardından gelir ve journey'nin SÖZLEŞMESİNİ kurar:
+/// koç "1 hafta sonra soracağım" der. Tercih CİHAZDA saklanır — Firestore'a
+/// yazılmaz (bildirimler yerel planlanacak; maliyet artmaz).
+///
+/// Kutlama yok (konfeti değil mühür): ciddi karar ürününde sakin onay
+/// güveni korur.
+class _PromiseView extends StatefulWidget {
+  const _PromiseView({required this.chosenTitle, required this.onAnswer});
+
+  final String chosenTitle;
+
+  /// true = "Evet, sor" (takip sözü verildi), false = "Şimdi değil".
+  final Future<void> Function(bool optIn) onAnswer;
+
+  @override
+  State<_PromiseView> createState() => _PromiseViewState();
+}
+
+class _PromiseViewState extends State<_PromiseView> {
+  bool _busy = false;
+
+  void _answer({required bool optIn}) {
+    if (_busy) return;
+    setState(() => _busy = true);
+    // Tercih YEREL bir kayıt; yazımı beklemek kullanıcıyı sheet'te tutmamalı
+    // (depolama erişilemezse ekran kilitlenirdi). Kapat, yazımı arkada bırak.
+    unawaited(widget.onAnswer(optIn));
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppTokens.s6,
+        AppTokens.s4,
+        AppTokens.s6,
+        AppTokens.s6,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.check_circle, size: 48, color: theme.colorScheme.primary),
+          const SizedBox(height: AppTokens.s3),
+          Text(
+            'Kararın kaydedildi.',
+            style: theme.textTheme.titleLarge,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppTokens.s1),
+          Text(
+            widget.chosenTitle,
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.primary,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppTokens.s6),
+          Text(
+            '1 hafta sonra nasıl gittiğini sorayım mı?',
+            style: theme.textTheme.bodyLarge,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppTokens.s4),
+          FilledButton(
+            onPressed: _busy ? null : () => _answer(optIn: true),
+            child: const Text('Evet, sor'),
+          ),
+          TextButton(
+            onPressed: _busy ? null : () => _answer(optIn: false),
+            child: const Text('Şimdi değil'),
+          ),
+        ],
+      ),
+    );
   }
 }

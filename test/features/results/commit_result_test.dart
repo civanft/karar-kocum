@@ -109,6 +109,15 @@ void main() {
       container.read(decisionEditorProvider(id)).requireValue.isDecided,
       isTrue,
     );
+
+    // SPRINT C: sheet artık kapanmıyor, SÖZ fazına geçiyor. Alt bara
+    // ulaşmak için önce sözü geçmek gerekiyor.
+    await tester.tap(find.text('Şimdi değil'));
+    await tester.pump();
+    // Sheet kapanma animasyonu bitmeden alt bar hit-test almaz.
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+
     expect(find.text('Değiştir'), findsOneWidget);
 
     // Şimdi geri al:
