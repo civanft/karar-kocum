@@ -43,11 +43,15 @@ class TemplateCard extends StatelessWidget {
                 children: [
                   Text(template.emoji, style: theme.textTheme.titleLarge),
                   const SizedBox(height: AppTokens.s2),
-                  Text(
-                    template.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium,
+                  // Flexible: dar şeritte 2 satır başlık taşma üretmesin
+                  // (16px overflow düzeltmesi — görünüm aynı).
+                  Flexible(
+                    child: Text(
+                      template.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium,
+                    ),
                   ),
                   const SizedBox(height: AppTokens.s2),
                   badge,

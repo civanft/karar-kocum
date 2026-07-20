@@ -2,5 +2,7 @@
   "projects": {
     "default": "karar-veriyorum-dev",
     "dev": "karar-veriyorum-dev"
-  }
+  },
+  "targets": {},
+  "etags": {}
 }

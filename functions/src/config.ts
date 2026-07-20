@@ -26,17 +26,17 @@ function envStr(name: string, fallback: string): string {
 
 // ---- Gemini modeli ve çağrı korumaları ----
 /** Düşük maliyetli model (flash-lite'a env ile düşülebilir). */
-export const GEMINI_MODEL = envStr("GEMINI_MODEL", "gemini-2.0-flash");
+export const OPENAI_MODEL = envStr("OPENAI_MODEL", "gpt-4.1-mini");
 export const MAX_OUTPUT_TOKENS = envInt("MAX_OUTPUT_TOKENS", 800);
 /** Derlenmiş kullanıcı mesajı için sabit üst sınır (karakter). Y-3 alan
  *  limitleri şema düzeyinde sınırlar; bu, giriş-token patlamasına karşı
  *  ikinci savunma (~24K kr ≈ ~6K token, zengin bir kararı rahat karşılar). */
 export const MAX_INPUT_CHARS = envInt("MAX_INPUT_CHARS", 24_000);
-/** Tek Gemini çağrısı için sert zaman aşımı (ms). onCall 60 sn'den kısa
+/** Tek OpenAI çağrısı için sert zaman aşımı (ms). onCall 60 sn'den kısa
  *  olmalı ki timeout bizim kontrolümüzde retryable hataya dönüşsün. */
-export const GEMINI_TIMEOUT_MS = envInt("GEMINI_TIMEOUT_MS", 20_000);
-/** Gemini başına yeniden deneme sınırı (6B: tek deneme). */
-export const GEMINI_MAX_RETRIES = envInt("GEMINI_MAX_RETRIES", 1);
+export const OPENAI_TIMEOUT_MS = envInt("OPENAI_TIMEOUT_MS", 20_000);
+/** OpenAI başına yeniden deneme sınırı (tek deneme). */
+export const OPENAI_MAX_RETRIES = envInt("OPENAI_MAX_RETRIES", 1);
 
 // ---- Kredi modeli (istemci Limits ile senkron) ----
 /** Yeni kullanıcının başlangıç ücretsiz analiz kredisi (yenilenmez). */
@@ -60,10 +60,13 @@ export const DAILY_SPEND_LIMIT_USD = envFloat("AI_DAILY_SPEND_LIMIT_USD", 0.15);
  *  fiyat. Aşılırsa analiz 'daily-limit' ile durur. */
 export const DAILY_TOKEN_LIMIT = envInt("DAILY_TOKEN_LIMIT", 375_000);
 /** KULLANICI BAŞINA analiz limitleri — perDay eklendi (madde 3: 3/gün). */
+// GELİŞTİRME LİMİTLERİ (geçici) — üretim öncesi 3/10/3'e geri alınacak.
+// Yalnız per-user rate limiter'ı besler; global kotaları (daily_limit,
+// token_counter, cost_control) ETKİLEMEZ.
 export const PER_USER_ANALYZE_LIMITS = {
-  perMinute: envInt("USER_ANALYZE_PER_MINUTE", 3),
-  perHour: envInt("USER_ANALYZE_PER_HOUR", 10),
-  perDay: envInt("USER_ANALYZE_PER_DAY", 3),
+  perMinute: envInt("USER_ANALYZE_PER_MINUTE", 20),
+  perHour: envInt("USER_ANALYZE_PER_HOUR", 200),
+  perDay: envInt("USER_ANALYZE_PER_DAY", 1000),
 } as const;
 
 // ---- Ödül bileti ----

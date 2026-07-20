@@ -7,7 +7,7 @@ import { onCall } from "firebase-functions/v2/https";
 
 import { AppError, toHttpsError } from "../core/errors.js";
 import { log } from "../core/logger.js";
-import { geminiApiKey } from "../core/secrets.js";
+import { openaiApiKey } from "../core/secrets.js";
 import { buildContext } from "../middleware/context.js";
 import {
   FirestoreRateLimitStore,
@@ -21,7 +21,7 @@ import {
   FirestoreDailyCounterStore,
 } from "./daily_limit.js";
 import { FirestoreAnalysisPorts } from "./firestore_ports.js";
-import { createGeminiClient, GeminiGateway } from "./gemini_gateway.js";
+import { createOpenAIClient, OpenAIGateway } from "./openai_gateway.js";
 import {
   DailyTokenGuard,
   FirestoreTokenCounterStore,
@@ -31,7 +31,7 @@ export const analyzeDecision = onCall(
   {
     enforceAppCheck: true,
     consumeAppCheckToken: true,
-    secrets: [geminiApiKey],
+    secrets: [openaiApiKey],
     memory: "512MiB",
     timeoutSeconds: 60,
     concurrency: 20,
@@ -42,7 +42,7 @@ export const analyzeDecision = onCall(
     try {
       const service = new AnalyzeService(
         new FirestoreAnalysisPorts(ctx.uid),
-        new GeminiGateway(createGeminiClient(geminiApiKey.value())),
+        new OpenAIGateway(createOpenAIClient(openaiApiKey.value())),
         new RateLimiter(new FirestoreRateLimitStore(), PER_USER_ANALYZE_LIMITS),
         new CostCircuitBreaker(new FirestoreSpendStore()),
         new DailyAnalysisLimiter(new FirestoreDailyCounterStore()),

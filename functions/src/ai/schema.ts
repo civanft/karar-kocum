@@ -2,7 +2,6 @@
  * AI analiz şemaları — GEMINI-MVP-MIMARI.md §4 düz şeması.
  * Girdi limitleri Flutter Limits + firestore.rules ile senkron (üç katman).
  */
-import { SchemaType, type ResponseSchema } from "@google/generative-ai";
 import { z } from "zod";
 
 // ---- Girdi: istemci payload'ı yalnız kimlik taşır ----
@@ -52,34 +51,3 @@ export const analysisOutputSchema = z.object({
 });
 
 export type AnalysisOutput = z.infer<typeof analysisOutputSchema>;
-
-/** Gemini responseSchema (OpenAPI alt kümesi) — zod şemasının eşleniği. */
-export const geminiResponseSchema: ResponseSchema = {
-  type: SchemaType.OBJECT,
-  required: [
-    "summary",
-    "strengths",
-    "weaknesses",
-    "risks",
-    "recommendation",
-    "confidence",
-  ],
-  properties: {
-    summary: { type: SchemaType.STRING },
-    strengths: {
-      type: SchemaType.ARRAY,
-      items: { type: SchemaType.STRING },
-    },
-    weaknesses: {
-      type: SchemaType.ARRAY,
-      items: { type: SchemaType.STRING },
-    },
-    risks: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
-    recommendation: { type: SchemaType.STRING },
-    confidence: {
-      type: SchemaType.STRING,
-      format: "enum",
-      enum: ["low", "medium", "high"],
-    },
-  },
-};

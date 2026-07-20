@@ -150,6 +150,43 @@ describe("users belgesi", () => {
 });
 
 describe("decisions belgesi", () => {
+  it("HOTFIX: BOŞ taslak create İZİNLİ (0 seçenek — 'Devam Et' yolu)", async () => {
+    await assertSucceeds(
+      db("ali")
+        .doc("users/ali/decisions/blank1")
+        .set({ ...validDecision("ali"), options: [], criteria: [] }),
+    );
+  });
+
+  it("HOTFIX: 2 seçenekli create izinli kalır (şablon yolu)", async () => {
+    await assertSucceeds(
+      db("ali").doc("users/ali/decisions/tmpl1").set(validDecision("ali")),
+    );
+  });
+
+  it("HOTFIX: üst sınır KORUNUR — 11 seçenekli create reddedilir", async () => {
+    const options = Array.from({ length: 11 }, (_, i) => ({
+      id: `o${i}`,
+      title: `Seçenek ${i}`,
+      pros: [],
+      cons: [],
+    }));
+    await assertFails(
+      db("ali")
+        .doc("users/ali/decisions/toomany")
+        .set({ ...validDecision("ali"), options }),
+    );
+  });
+
+  it("HOTFIX: tek seçeneğe düşüren update izinli (silme akışı)", async () => {
+    await db("ali").doc("users/ali/decisions/upd1").set(validDecision("ali"));
+    await assertSucceeds(
+      db("ali").doc("users/ali/decisions/upd1").update({
+        options: [{ id: "a", title: "iPhone", pros: [], cons: [] }],
+      }),
+    );
+  });
+
   it("sahibi geçerli karar oluşturabilir ve okuyabilir", async () => {
     await assertSucceeds(
       db("ali").doc("users/ali/decisions/d1").set(validDecision("ali")),
@@ -218,16 +255,27 @@ describe("decisions belgesi", () => {
     );
   });
 
-  it("NEGATİF: limit ihlalleri — tek seçenek, uzun başlık", async () => {
-    const single = validDecision("ali");
-    single.options = [single.options[0]!];
-    await assertFails(
-      db("ali").doc("users/ali/decisions/d1").set(single),
-    );
-
+  it("NEGATİF: limit ihlalleri — uzun başlık, fazla kriter", async () => {
+    // NOT: 'tek seçenek reddedilir' beklentisi HOTFIX ile bilinçli
+    // kaldırıldı — taslaklar az seçenekle yaşayabilir; 'analiz için
+    // min 2' kuralı Functions/zod'da (analyze_service.test: tek seçenek
+    // → invalid-argument). Rules yalnız üst sınır şeklini korur.
     const longTitle = { ...validDecision("ali"), title: "x".repeat(101) };
     await assertFails(
       db("ali").doc("users/ali/decisions/d2").set(longTitle),
+    );
+
+    const manyCriteria = {
+      ...validDecision("ali"),
+      criteria: Array.from({ length: 16 }, (_, i) => ({
+        id: `c${i}`,
+        name: `K${i}`,
+        weight: 5,
+        source: "user",
+      })),
+    };
+    await assertFails(
+      db("ali").doc("users/ali/decisions/d3").set(manyCriteria),
     );
   });
 

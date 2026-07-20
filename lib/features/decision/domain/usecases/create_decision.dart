@@ -46,7 +46,15 @@ class CreateDecision {
       updatedAt: now,
     );
 
-    await _repository.upsert(decision);
+    // SPINNER HOTFIX: repository katmanından taşan HER istisna (rules
+    // reddi, ağ, beklenmedik) Err'e çevrilir — Result sözleşmesi artık
+    // tam: bu usecase ASLA fırlatmaz, çağıran spinner'ı her durumda
+    // kapatabilir. Domain saf kalır (Firebase tipine bağımlılık yok).
+    try {
+      await _repository.upsert(decision);
+    } catch (error, stackTrace) {
+      return Err(UnexpectedFailure(error, stackTrace));
+    }
     return Ok(decision);
   }
 }

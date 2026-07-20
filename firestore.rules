@@ -58,7 +58,11 @@ service cloud.firestore {
             && d.title is string
             && d.title.size() >= 3 && d.title.size() <= 100
             && d.options is list
-            && d.options.size() >= 2 && d.options.size() <= 10  // Limits.maxOptions
+            // HOTFIX: alt sınır YOK — taslak 0 seçenekle doğar ('Devam
+            // Et' yolu), düzenlemede 1'e düşebilir. "Analiz için min 2"
+            // İŞ kuralıdır ve Functions/zod'da zaten zorlanır
+            // (schema.ts options.min(2), testli). Üst sınırlar korunur.
+            && d.options.size() <= 10                       // Limits.maxOptions
             && d.criteria is list
             && d.criteria.size() <= 15;
           // Eleman-içi derin doğrulama (ad/açıklama/madde limitleri — Y-3)
