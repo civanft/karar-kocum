@@ -9,6 +9,12 @@ enum DecisionStatus { draft, analyzed, archived }
 /// sunucu-korumalı 'analyzed') AYRI: bu istemci-yazılabilir taahhüt alanı.
 enum DecisionCommitStatus { open, decided }
 
+/// Sprint C.2 — taahhütten 1 hafta sonraki kontrol cevabı.
+/// Kullanıcının kararından memnun olup olmadığı ÇEKİRDEK veridir:
+/// Karar Sağlığı, Yıllık Karne ve AI koçluğu bunu besler → Firestore'a
+/// yazılır. (Bildirim tercihi/planlaması CİHAZDA kalır — bkz. journey.)
+enum DecisionCheckIn { happy, neutral, regret }
+
 enum ScoreSource { manual, ai }
 
 enum CriterionSource { user, aiSuggested }
@@ -36,6 +42,11 @@ class Decision with _$Decision {
     String? chosenOptionId,
     DateTime? decidedAt,
     @Default(DecisionCommitStatus.open) DecisionCommitStatus decisionStatus,
+    // Sprint C.2 — 1 hafta kontrolü. Nullable: eski kararlarda alan hiç
+    // yazılmamıştır → null kalır, migration gerekmez. Karar başına TEK
+    // kayıt: bir kez yazılınca değişmez (istemci + rules zorlar).
+    DecisionCheckIn? checkInStatus,
+    DateTime? checkedInAt,
     required DateTime createdAt,
     required DateTime updatedAt,
   }) = _Decision;
@@ -45,6 +56,12 @@ class Decision with _$Decision {
 
   /// Kullanıcı bir seçeneğe karar verdi mi (Sprint B).
   bool get isDecided => decisionStatus == DecisionCommitStatus.decided;
+
+  /// 1 hafta kontrolü cevaplandı mı (Sprint C.2).
+  bool get hasCheckedIn => checkInStatus != null;
+
+  /// Kontrol sorulabilir mi: karar verilmiş ve henüz cevaplanmamış olmalı.
+  bool get canCheckIn => isDecided && !hasCheckedIn;
 
   /// Analiz için tüm hücreler dolu mu? (partial analize izin verilmez)
   bool get isScoreMatrixComplete {

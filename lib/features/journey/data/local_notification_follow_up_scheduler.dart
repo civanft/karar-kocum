@@ -22,29 +22,59 @@ class LocalNotificationFollowUpScheduler implements FollowUpScheduler {
   static const _channelDescription =
       'Verdiğin kararların bir hafta sonraki kontrolü';
 
-  bool _ready = false;
+  bool _permissionAsked = false;
 
   /// Bildirim kimliği — 32-bit pozitif aralığa sıkıştırılır (Android sınırı).
   static int notificationIdFor(String decisionId) =>
       decisionId.hashCode & 0x7fffffff;
 
-  /// Eklenti + saat dilimi kurulumu ve izin isteği — İLK PLANLAMADA yapılır.
-  /// Bilinçli tercih: izin dialogu uygulama açılışında değil, kullanıcı
-  /// gerçekten "Evet, sor" dediğinde çıkar (istek bağlamı net olsun).
-  Future<void> _ensureReady() async {
-    if (_ready) return;
+  /// AÇILIŞTA çağrılır (Sprint C.2). Eklentiyi kurar ve dokunma
+  /// callback'ini bağlar.
+  ///
+  /// NEDEN AÇILIŞTA: kurulumu ilk planlamaya ertelemek dokunma yolunu
+  /// çalışmaz kılar — soğuk açılışta hiç schedule() çağrılmaz, dolayısıyla
+  /// initialize() de çağrılmaz ve bildirime dokunuş kaybolur.
+  ///
+  /// İzin İSTENMEZ: o hâlâ ilk planlamada (kullanıcı "Evet, sor" dediğinde)
+  /// sorulur — açılışta bağlamsız izin dialogu çıkmasın diye.
+  ///
+  /// Soğuk açılış: uygulama bildirime dokunularak açıldıysa callback
+  /// tetiklenmeyebilir; [getNotificationAppLaunchDetails] ile telafi edilir.
+  @override
+  Future<void> initialize({
+    required void Function(String decisionId) onTap,
+  }) async {
     tz_data.initializeTimeZones();
+    void handle(String? payload) {
+      if (payload != null && payload.isNotEmpty) onTap(payload);
+    }
+
     await _plugin.initialize(
       const InitializationSettings(
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
         iOS: DarwinInitializationSettings(
-          // İzni burada değil, aşağıda açıkça istiyoruz.
+          // İzni burada değil, ilk planlamada istiyoruz.
           requestAlertPermission: false,
           requestBadgePermission: false,
           requestSoundPermission: false,
         ),
       ),
+      onDidReceiveNotificationResponse: (r) => handle(r.payload),
     );
+
+    final launch = await _plugin.getNotificationAppLaunchDetails();
+    if (launch?.didNotificationLaunchApp ?? false) {
+      handle(launch!.notificationResponse?.payload);
+    }
+  }
+
+  /// İzin isteği — İLK PLANLAMADA, yani kullanıcı sözü verdiği anda.
+  Future<void> _ensurePermission() async {
+    // initialize() çağrılmamış olabilir (ör. planlama başka bir yoldan
+    // tetiklendi) — tz.local'sız zonedSchedule patlar. İdempotent.
+    tz_data.initializeTimeZones();
+    if (_permissionAsked) return;
+    _permissionAsked = true;
     await _plugin
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
@@ -53,7 +83,6 @@ class LocalNotificationFollowUpScheduler implements FollowUpScheduler {
         .resolvePlatformSpecificImplementation<
             IOSFlutterLocalNotificationsPlugin>()
         ?.requestPermissions(alert: true, badge: true, sound: true);
-    _ready = true;
   }
 
   @override
@@ -62,7 +91,7 @@ class LocalNotificationFollowUpScheduler implements FollowUpScheduler {
     required String decisionTitle,
     required DateTime at,
   }) async {
-    await _ensureReady();
+    await _ensurePermission();
     await _plugin.zonedSchedule(
       notificationIdFor(decisionId),
       'Nasıl gitti?',
@@ -97,6 +126,20 @@ class LocalNotificationFollowUpScheduler implements FollowUpScheduler {
 class RecordingFollowUpScheduler implements FollowUpScheduler {
   final scheduled = <String, DateTime>{};
   final cancelled = <String>[];
+
+  /// initialize() ile bağlanan dokunma kancası — testler bunu çağırarak
+  /// gerçek bir bildirim dokunuşunu taklit eder.
+  void Function(String decisionId)? onTap;
+
+  @override
+  Future<void> initialize({
+    required void Function(String decisionId) onTap,
+  }) async {
+    this.onTap = onTap;
+  }
+
+  /// Testte "kullanıcı bildirime dokundu".
+  void simulateTap(String decisionId) => onTap?.call(decisionId);
 
   @override
   Future<void> schedule({

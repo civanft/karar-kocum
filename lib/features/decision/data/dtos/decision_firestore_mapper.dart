@@ -30,6 +30,11 @@ abstract final class DecisionFirestoreMapper {
     if (data['decidedAt'] != null) {
       data['decidedAt'] = _dates.fromJson(data['decidedAt']).toIso8601String();
     }
+    // Sprint C.2: aynı migration-güvenli davranış check-in için.
+    if (data['checkedInAt'] != null) {
+      data['checkedInAt'] =
+          _dates.fromJson(data['checkedInAt']).toIso8601String();
+    }
     return Decision.fromJson(data);
   }
 
@@ -77,6 +82,11 @@ abstract final class DecisionFirestoreMapper {
         'decisionStatus': 'open',
         'chosenOptionId': null, // geri alma → alanlar temizlenir
         'decidedAt': null,
+      },
+      // Sprint C.2 — kontrol cevabı: ikili TUTARLI yazılır, tek seferlik.
+      if (patch.checkInStatus != null) ...{
+        'checkInStatus': patch.checkInStatus!.name,
+        'checkedInAt': FieldValue.serverTimestamp(), // Y-4
       },
       'updatedAt': FieldValue.serverTimestamp(),
     };

@@ -408,4 +408,89 @@ describe("sunucu-sahipli koleksiyonlar", () => {
     await assertSucceeds(db("ali").doc("templates/t1").get());
     await assertFails(db("ali").doc("templates/t1").set({ title: "x" }));
   });
+
+  // ---- SPRINT C.2: 1 hafta kontrolü — karar başına TEK kayıt ----
+
+  it("SPRINT C.2: ilk check-in yazımı İZİNLİ", async () => {
+    await db("ali").doc("users/ali/decisions/c1").set({
+      ...validDecision("ali"),
+      decisionStatus: "decided",
+      chosenOptionId: "a",
+    });
+    await assertSucceeds(
+      db("ali").doc("users/ali/decisions/c1").update({
+        checkInStatus: "happy",
+        checkedInAt: new Date(),
+      }),
+    );
+  });
+
+  it("SPRINT C.2: ikinci check-in REDDEDİLİR (tek kayıt kuralı)", async () => {
+    await db("ali").doc("users/ali/decisions/c2").set({
+      ...validDecision("ali"),
+      decisionStatus: "decided",
+      chosenOptionId: "a",
+      checkInStatus: "happy",
+      checkedInAt: new Date(),
+    });
+    await assertFails(
+      db("ali").doc("users/ali/decisions/c2").update({
+        checkInStatus: "regret",
+        checkedInAt: new Date(),
+      }),
+    );
+  });
+
+  it("SPRINT C.2: yazılmış check-in SİLİNEMEZ", async () => {
+    await db("ali").doc("users/ali/decisions/c3").set({
+      ...validDecision("ali"),
+      checkInStatus: "neutral",
+      checkedInAt: new Date(),
+    });
+    await assertFails(
+      db("ali").doc("users/ali/decisions/c3").update({ checkInStatus: null }),
+    );
+  });
+
+  it("SPRINT C.2: geçersiz check-in değeri REDDEDİLİR", async () => {
+    await db("ali").doc("users/ali/decisions/c4").set(validDecision("ali"));
+    await assertFails(
+      db("ali").doc("users/ali/decisions/c4").update({
+        checkInStatus: "harika",
+        checkedInAt: new Date(),
+      }),
+    );
+  });
+
+  it("SPRINT C.2: check-in'e dokunmayan güncellemeler ETKİLENMEZ", async () => {
+    await db("ali").doc("users/ali/decisions/c5").set({
+      ...validDecision("ali"),
+      checkInStatus: "happy",
+      checkedInAt: new Date(),
+    });
+    // Başlık değişimi, cevap yazılmış olsa bile serbest kalmalı:
+    await assertSucceeds(
+      db("ali").doc("users/ali/decisions/c5").update({ title: "Yeni başlık" }),
+    );
+  });
+
+  it("SPRINT C.2 REGRESYON: check-in sunucu korumasını DELMEZ", async () => {
+    await db("ali").doc("users/ali/decisions/c6").set(validDecision("ali"));
+    await assertFails(
+      db("ali").doc("users/ali/decisions/c6").update({
+        checkInStatus: "happy",
+        latestAnalysisId: "sahte",
+      }),
+    );
+  });
+
+  it("SPRINT C.2: başkasının kararına check-in yazılamaz", async () => {
+    await db("ali").doc("users/ali/decisions/c7").set(validDecision("ali"));
+    await assertFails(
+      db("veli").doc("users/ali/decisions/c7").update({
+        checkInStatus: "happy",
+      }),
+    );
+  });
+
 });
