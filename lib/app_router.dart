@@ -35,8 +35,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/decision/:id/result',
-        builder: (_, state) =>
-            ResultScreen(decisionId: state.pathParameters['id']!),
+        builder: (_, state) => ResultScreen(
+          decisionId: state.pathParameters['id']!,
+          // Check-in akışından gelindiyse geri, Home'a döner (stack altında
+          // Home olmayabilir). Normal akışta parametre yok → varsayılan false.
+          returnHomeOnBack: state.uri.queryParameters['source'] == 'check-in',
+        ),
       ),
       // Sprint C.2 — bildirimden gelinen 1 hafta kontrolü.
       GoRoute(

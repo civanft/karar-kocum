@@ -47,7 +47,11 @@ class _CheckInScreenState extends ConsumerState<CheckInScreen> {
       );
       return;
     }
-    context.go('/decision/${widget.decisionId}/result');
+    // Kaynağı taşı: result ekranı geri davranışını buna göre Home'a çevirir
+    // (check-in akışında altta pop edilecek bir stack olmayabilir — cold-start
+    // veya go ile gelinen durumlar). Normal puanlama akışı bu parametreyi
+    // taşımaz, geri davranışı değişmez.
+    context.go('/decision/${widget.decisionId}/result?source=check-in');
   }
 
   @override

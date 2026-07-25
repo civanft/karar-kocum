@@ -16,8 +16,19 @@ import '../../../scoring/domain/entities/scoring_types.dart';
 /// Sonuç ekranı v1 — yerel ağırlıklı skor (US-C2).
 /// Sprint 3'te eklenecekler: AI yorumu, riskler, what-if slider'ları, paylaşım.
 class ResultScreen extends ConsumerStatefulWidget {
-  const ResultScreen({super.key, required this.decisionId});
+  const ResultScreen({
+    super.key,
+    required this.decisionId,
+    this.returnHomeOnBack = false,
+  });
   final String decisionId;
+
+  /// Check-in akışından gelindiğinde true: geri (AppBar butonu + sistem geri
+  /// hareketi) Home'a döner. Bu akışta `context.go(result)` navigation
+  /// yığınını değiştirdiğinden altta pop edilecek Home olmayabilir; salt
+  /// pop uygulamayı kapatırdı. Varsayılan false → normal puanlama akışının
+  /// mevcut geri davranışı (bir önceki rotaya pop) korunur.
+  final bool returnHomeOnBack;
 
   @override
   ConsumerState<ResultScreen> createState() => _ResultScreenState();
@@ -33,134 +44,159 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
     unawaited(ref.read(analyticsServiceProvider).logResultViewed());
   }
 
+  /// Check-in kaynaklı geri: her durumda (loading/error/data) Home'a döner.
+  void _goHome() {
+    if (!mounted) return;
+    context.go('/home');
+  }
+
+  /// returnHomeOnBack iken AppBar'da görünür, Home'a götüren geri butonu.
+  /// Aksi halde null → AppBar varsayılan davranışını (koşullu pop) korur.
+  Widget? get _leading =>
+      widget.returnHomeOnBack ? BackButton(onPressed: _goHome) : null;
+
   @override
   Widget build(BuildContext context) {
     final decisionAsync = ref.watch(decisionEditorProvider(decisionId));
 
-    return decisionAsync.when(
-      loading: () =>
-          const Scaffold(body: Center(child: CircularProgressIndicator())),
-      error: (e, _) => Scaffold(
-        appBar: AppBar(),
-        body: Center(child: Text('Yüklenemedi: $e')),
-      ),
-      data: (decision) {
-        if (!decision.isScoreMatrixComplete) {
-          // Derin bağlantıyla eksik karara gelinirse güvenli düşüş.
-          return Scaffold(
-            appBar: AppBar(title: const Text('Sonuç')),
-            body: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(AppTokens.s6),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Text('Sonuç için önce tüm puanlamayı tamamla.'),
-                    const SizedBox(height: AppTokens.s4),
-                    FilledButton(
-                      onPressed: () => context.go('/decision/$decisionId/edit'),
-                      child: const Text('Puanlamaya Dön'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }
-
-        final result = ref.read(computeResultProvider)(decision);
-        final byId = {for (final o in decision.options) o.id: o};
-        final winner = byId[result.recommendedOptionId]!;
-        final theme = Theme.of(context);
-
-        return Scaffold(
-          appBar: AppBar(title: const Text('Sonuç')),
-          bottomNavigationBar: _CommitSection(
-            decision: decision,
-            recommendedOptionId: result.recommendedOptionId,
-            onCommit: (optionId) async {
-              await ref
-                  .read(decisionEditorProvider(decisionId).notifier)
-                  .commitDecision(optionId);
-              // Sprint C.1: söz zaten verilmişse vade yeni taahhütten başlar.
-              // (İlk kez karar verende tercih yok → no-op; sözü sheet sorar.)
-              // BEKLENMEZ: takip motoru en iyi çabadır, yerel depolama yavaş
-              // ya da erişilemez olduğunda kararın kaydını geciktirmemeli.
-              unawaited(
-                ref.read(followUpCoordinatorProvider).onCommitted(
-                      decisionId: decisionId,
-                      decisionTitle: decision.title,
-                    ),
-              );
-            },
-            onRevert: () async {
-              await ref
-                  .read(decisionEditorProvider(decisionId).notifier)
-                  .revertDecision();
-              // Sprint C.1: taahhüt kalktı → tutulacak söz kalmadı.
-              // Beklenmez (yukarıdaki gerekçe).
-              unawaited(
-                ref.read(followUpCoordinatorProvider).onReverted(decisionId),
-              );
-            },
-            // Sprint C.1: tercih CİHAZDA saklanır (Firestore'a yazılmaz) ve
-            // söz verildiyse +7 gün YEREL bildirim planlanır.
-            onPromiseAnswer: (optIn) =>
-                ref.read(followUpCoordinatorProvider).answerPromise(
-                      decisionId: decisionId,
-                      decisionTitle: decision.title,
-                      optIn: optIn,
-                    ),
-          ),
-          body: ListView(
-            padding: const EdgeInsets.all(AppTokens.s4),
-            children: [
-              // Önerilen seçenek kartı
-              Card(
-                color: theme.colorScheme.primaryContainer,
+    return PopScope(
+      // Check-in akışında sistem geri hareketini yakalayıp Home'a çeviririz;
+      // aksi halde normal pop davranışına izin verilir.
+      canPop: !widget.returnHomeOnBack,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return; // pop gerçekleştiyse ikinci navigation üretme
+        _goHome();
+      },
+      child: decisionAsync.when(
+        loading: () => Scaffold(
+          // Yüklenirken de kullanıcı mahsur kalmasın: check-in akışında
+          // görünür geri butonu; normal akışta eski davranış (appBar yok).
+          appBar: widget.returnHomeOnBack ? AppBar(leading: _leading) : null,
+          body: const Center(child: CircularProgressIndicator()),
+        ),
+        error: (e, _) => Scaffold(
+          appBar: AppBar(leading: _leading),
+          body: Center(child: Text('Yüklenemedi: $e')),
+        ),
+        data: (decision) {
+          if (!decision.isScoreMatrixComplete) {
+            // Derin bağlantıyla eksik karara gelinirse güvenli düşüş.
+            return Scaffold(
+              appBar: AppBar(title: const Text('Sonuç'), leading: _leading),
+              body: Center(
                 child: Padding(
-                  padding: const EdgeInsets.all(AppTokens.s4),
+                  padding: const EdgeInsets.all(AppTokens.s6),
                   child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(
-                        'Önerilen seçenek',
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          color: theme.colorScheme.onPrimaryContainer,
-                        ),
+                      const Text('Sonuç için önce tüm puanlamayı tamamla.'),
+                      const SizedBox(height: AppTokens.s4),
+                      FilledButton(
+                        onPressed: () =>
+                            context.go('/decision/$decisionId/edit'),
+                        child: const Text('Puanlamaya Dön'),
                       ),
-                      const SizedBox(height: AppTokens.s1),
-                      Text(
-                        winner.title,
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.headlineSmall?.copyWith(
-                          color: theme.colorScheme.onPrimaryContainer,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: AppTokens.s2),
-                      _ConfidenceChip(result.confidence),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: AppTokens.s4),
-              Text('Sıralama', style: theme.textTheme.titleMedium),
-              const SizedBox(height: AppTokens.s2),
-              for (final (rank, score) in result.ranking.indexed)
-                _ScoreBar(
-                  rank: rank + 1,
-                  title: byId[score.optionId]?.title ?? '—',
-                  score: score.score,
-                  isWinner: score.optionId == result.recommendedOptionId,
-                  isChosen: score.optionId == decision.chosenOptionId,
+            );
+          }
+
+          final result = ref.read(computeResultProvider)(decision);
+          final byId = {for (final o in decision.options) o.id: o};
+          final winner = byId[result.recommendedOptionId]!;
+          final theme = Theme.of(context);
+
+          return Scaffold(
+            appBar: AppBar(title: const Text('Sonuç'), leading: _leading),
+            bottomNavigationBar: _CommitSection(
+              decision: decision,
+              recommendedOptionId: result.recommendedOptionId,
+              onCommit: (optionId) async {
+                await ref
+                    .read(decisionEditorProvider(decisionId).notifier)
+                    .commitDecision(optionId);
+                // Sprint C.1: söz zaten verilmişse vade yeni taahhütten başlar.
+                // (İlk kez karar verende tercih yok → no-op; sözü sheet sorar.)
+                // BEKLENMEZ: takip motoru en iyi çabadır, yerel depolama yavaş
+                // ya da erişilemez olduğunda kararın kaydını geciktirmemeli.
+                unawaited(
+                  ref.read(followUpCoordinatorProvider).onCommitted(
+                        decisionId: decisionId,
+                        decisionTitle: decision.title,
+                      ),
+                );
+              },
+              onRevert: () async {
+                await ref
+                    .read(decisionEditorProvider(decisionId).notifier)
+                    .revertDecision();
+                // Sprint C.1: taahhüt kalktı → tutulacak söz kalmadı.
+                // Beklenmez (yukarıdaki gerekçe).
+                unawaited(
+                  ref.read(followUpCoordinatorProvider).onReverted(decisionId),
+                );
+              },
+              // Sprint C.1: tercih CİHAZDA saklanır (Firestore'a yazılmaz) ve
+              // söz verildiyse +7 gün YEREL bildirim planlanır.
+              onPromiseAnswer: (optIn) =>
+                  ref.read(followUpCoordinatorProvider).answerPromise(
+                        decisionId: decisionId,
+                        decisionTitle: decision.title,
+                        optIn: optIn,
+                      ),
+            ),
+            body: ListView(
+              padding: const EdgeInsets.all(AppTokens.s4),
+              children: [
+                // Önerilen seçenek kartı
+                Card(
+                  color: theme.colorScheme.primaryContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppTokens.s4),
+                    child: Column(
+                      children: [
+                        Text(
+                          'Önerilen seçenek',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: theme.colorScheme.onPrimaryContainer,
+                          ),
+                        ),
+                        const SizedBox(height: AppTokens.s1),
+                        Text(
+                          winner.title,
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            color: theme.colorScheme.onPrimaryContainer,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: AppTokens.s2),
+                        _ConfidenceChip(result.confidence),
+                      ],
+                    ),
+                  ),
                 ),
-              const SizedBox(height: AppTokens.s6),
-              // AI analiz bölümü (6D-1: mock kontrolcü; 6D-2: gerçek istemci)
-              AnalysisSection(decisionId: decisionId),
-            ],
-          ),
-        );
-      },
+                const SizedBox(height: AppTokens.s4),
+                Text('Sıralama', style: theme.textTheme.titleMedium),
+                const SizedBox(height: AppTokens.s2),
+                for (final (rank, score) in result.ranking.indexed)
+                  _ScoreBar(
+                    rank: rank + 1,
+                    title: byId[score.optionId]?.title ?? '—',
+                    score: score.score,
+                    isWinner: score.optionId == result.recommendedOptionId,
+                    isChosen: score.optionId == decision.chosenOptionId,
+                  ),
+                const SizedBox(height: AppTokens.s6),
+                // AI analiz bölümü (6D-1: mock kontrolcü; 6D-2: gerçek istemci)
+                AnalysisSection(decisionId: decisionId),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 }
