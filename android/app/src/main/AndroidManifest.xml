@@ -38,6 +38,15 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Sprint C.2: planlanan bildirimi tetiklendiğinde GÖSTEREN receiver.
+             Plugin 17.2.x kaynak manifesti bunu kendisi eklemiyor; eksik
+             olduğunda AlarmManager PendingIntent'i teslim eder ama hedef
+             receiver kayıtlı olmadığı için onReceive() çalışmaz → bildirim
+             hiç görünmez (kanal da oluşmaz). Cihaz doğrulamasında kanıtlandı. -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false" />
+
         <!-- Sprint C.1: yeniden başlatma sonrası planlı bildirimleri kurar. -->
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
