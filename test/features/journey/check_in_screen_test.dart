@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:karar_veriyorum/features/decision/data/repositories/in_memory_decision_repository.dart';
 import 'package:karar_veriyorum/features/decision/domain/entities/decision.dart';
+import 'package:karar_veriyorum/features/decision/domain/repositories/decision_repository.dart';
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_editor.dart';
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_providers.dart';
 import 'package:karar_veriyorum/features/journey/data/local_notification_follow_up_scheduler.dart';
@@ -21,6 +25,7 @@ void main() {
     WidgetTester tester, {
     bool decided = true,
     DecisionCheckIn? alreadyAnswered,
+    DecisionRepository? repo,
   }) async {
     tester.view.physicalSize = const Size(1000, 2000);
     tester.view.devicePixelRatio = 1.0;
@@ -33,6 +38,8 @@ void main() {
         followUpPreferencesProvider
             .overrideWithValue(InMemoryFollowUpPreferences()),
         followUpSchedulerProvider.overrideWithValue(scheduler),
+        // Gönderim yazımını kontrol/geciktirmek için (kaydediliyor/başarısız).
+        if (repo != null) decisionRepositoryProvider.overrideWithValue(repo),
       ],
     );
     addTearDown(container.dispose);
@@ -60,8 +67,7 @@ void main() {
       routes: [
         GoRoute(
           path: '/decision/:id/check-in',
-          builder: (_, s) =>
-              CheckInScreen(decisionId: s.pathParameters['id']!),
+          builder: (_, s) => CheckInScreen(decisionId: s.pathParameters['id']!),
         ),
         GoRoute(
           path: '/decision/:id/result',
@@ -160,4 +166,127 @@ void main() {
       DecisionCheckIn.happy,
     );
   });
+
+  // ---- Gönderim flaşı düzeltmesi (cihaz testinde gözlenen UI kusuru) ----
+
+  testWidgets('gönderim sürerken KAYDEDİLİYOR görünür, _AlreadyDone GÖRÜNMEZ',
+      (tester) async {
+    final repo = _GatedRepo(InMemoryDecisionRepository());
+    addTearDown(repo.dispose);
+    await pumpCheckIn(tester, repo: repo);
+
+    // Sonraki yazımı (check-in) askıya al:
+    final gate = repo.gateNextPatch();
+    await tester.tap(find.text('Memnunum'));
+    await tester
+        .pump(); // _saving=true, iyimser güncelleme, applyPatch beklemede
+
+    // Kararlı kaydediliyor görünümü:
+    expect(find.text('Cevabın kaydediliyor…'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    // Flaş YOK:
+    expect(find.text('Bu kararın kontrolünü zaten yaptın.'), findsNothing);
+    // İkinci gönderim yapılamaz (seçenekler render edilmiyor):
+    expect(find.text('Memnunum'), findsNothing);
+    expect(find.text('Pişmanım'), findsNothing);
+
+    // Yazım tamamlanınca sonuç ekranına gidilir, flaş hiç görünmedi:
+    gate.complete();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('SONUÇ EKRANI'), findsOneWidget);
+    expect(find.text('Bu kararın kontrolünü zaten yaptın.'), findsNothing);
+  });
+
+  testWidgets(
+      'başarılı yazım → sonuç rotasına gider, _AlreadyDone hiç görünmez',
+      (tester) async {
+    final repo = _GatedRepo(InMemoryDecisionRepository());
+    addTearDown(repo.dispose);
+    final id = await pumpCheckIn(tester, repo: repo);
+
+    await tester.tap(find.text('Memnunum'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(lastRoute, '/decision/$id/result');
+    expect(find.text('SONUÇ EKRANI'), findsOneWidget);
+    expect(find.text('Bu kararın kontrolünü zaten yaptın.'), findsNothing);
+    // Kayıt gerçekten yazıldı:
+    expect(
+      container.read(decisionEditorProvider(id)).requireValue.checkInStatus,
+      DecisionCheckIn.happy,
+    );
+  });
+
+  testWidgets(
+      'yazım başarısız → kaydediliyor kalkar, seçenekler döner, snackbar',
+      (tester) async {
+    final repo = _GatedRepo(InMemoryDecisionRepository());
+    addTearDown(repo.dispose);
+    final id = await pumpCheckIn(tester, repo: repo);
+
+    repo.failNext = true;
+    await tester.tap(find.text('Pişmanım'));
+    await tester.pump(); // _saving=true
+    await tester.pump(); // applyPatch fırlatır → rollback → _saving=false
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Kaydediliyor kalktı, seçenekler geri geldi:
+    expect(find.text('Cevabın kaydediliyor…'), findsNothing);
+    expect(find.text('Memnunum'), findsOneWidget);
+    expect(find.text('Pişmanım'), findsOneWidget);
+    // Hata snackbar'ı:
+    expect(find.text('Kaydedilemedi, tekrar dener misin?'), findsOneWidget);
+    // Sonuç ekranına GİTMEDİ + kayıt yazılmadı (rollback):
+    expect(find.text('SONUÇ EKRANI'), findsNothing);
+    expect(
+      container.read(decisionEditorProvider(id)).requireValue.hasCheckedIn,
+      isFalse,
+    );
+  });
+}
+
+/// applyPatch'i test kontrolünde askıya alabilen/başarısız kılabilen sarmalayıcı.
+/// Diğer tüm çağrılar iç in-memory depoya iletilir.
+class _GatedRepo implements DecisionRepository {
+  _GatedRepo(this._inner);
+
+  final InMemoryDecisionRepository _inner;
+  Completer<void>? _gate;
+  bool failNext = false;
+
+  /// Sonraki applyPatch'i, dönen completer tamamlanana kadar askıya alır.
+  Completer<void> gateNextPatch() => _gate = Completer<void>();
+
+  void dispose() => _inner.dispose();
+
+  @override
+  Future<void> applyPatch(String id, DecisionPatch patch) async {
+    final gate = _gate;
+    if (gate != null) {
+      _gate = null;
+      await gate.future;
+    }
+    if (failNext) {
+      failNext = false;
+      throw Exception('yazım başarısız (test)');
+    }
+    return _inner.applyPatch(id, patch);
+  }
+
+  @override
+  Stream<List<Decision>> watchAll() => _inner.watchAll();
+
+  @override
+  Stream<Decision?> watchById(String id) => _inner.watchById(id);
+
+  @override
+  Future<Decision?> getById(String id) => _inner.getById(id);
+
+  @override
+  Future<void> upsert(Decision decision) => _inner.upsert(decision);
+
+  @override
+  Future<void> delete(String id) => _inner.delete(id);
 }

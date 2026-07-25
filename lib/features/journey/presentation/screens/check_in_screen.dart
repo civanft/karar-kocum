@@ -61,6 +61,13 @@ class _CheckInScreenState extends ConsumerState<CheckInScreen> {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Yüklenemedi: $e')),
         data: (decision) {
+          // Gönderim sürerken: submitCheckIn iyimser olarak checkInStatus'ı
+          // hemen yazar → canCheckIn false olur. Bu kontrol canCheckIn'den
+          // ÖNCE gelmezse, sonuç ekranına gitmeden hemen önce _AlreadyDone
+          // bir frame görünür (flaş). Kararlı "kaydediliyor" görünümü ver.
+          if (_saving) {
+            return const _SavingView();
+          }
           // Zaten cevaplanmış ya da karar geri alınmış → güvenli düşüş.
           if (!decision.canCheckIn) {
             return _AlreadyDone(
@@ -129,6 +136,30 @@ class _CheckInScreenState extends ConsumerState<CheckInScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+/// Cevap yazılırken gösterilen kararlı ara görünüm — _AlreadyDone flaşını
+/// engeller ve kullanıcıyı ikinci seçimden alıkoyar (seçenekler render
+/// edilmez; _answer da _saving guard'ıyla korunur).
+class _SavingView extends StatelessWidget {
+  const _SavingView();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: AppTokens.s4),
+          Text(
+            'Cevabın kaydediliyor…',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ],
       ),
     );
   }
