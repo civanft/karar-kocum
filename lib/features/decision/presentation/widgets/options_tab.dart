@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/limits.dart';
 import '../../../../core/error/failure.dart';
+import '../../../../core/theme/app_palette.dart';
 import '../../../../core/theme/tokens.dart';
+import '../../../../core/widgets/app_empty_hint.dart';
 import '../../domain/entities/decision.dart';
 import '../providers/decision_editor.dart';
 
@@ -16,9 +18,31 @@ class OptionsTab extends ConsumerWidget {
     final decision = ref.watch(decisionEditorProvider(decisionId)).value;
     if (decision == null) return const SizedBox.shrink();
 
+    // Boş durum: tek CTA'lı sıcak rehber (tekrarlayan ikinci buton YOK).
+    if (decision.options.isEmpty) {
+      return ListView(
+        padding: const EdgeInsets.all(AppTokens.s4),
+        children: [
+          const _OptionsGuide(),
+          const SizedBox(height: AppTokens.s4),
+          AppEmptyHint(
+            icon: Icons.alt_route_outlined,
+            title: 'İlk seçeneğini ekle',
+            message: 'Karşılaştırmak istediğin seçenekle başla. '
+                'Sonuç için en az 2 seçenek gerekir.',
+            actionLabel: 'Seçenek ekle',
+            onAction: () => _showAddOptionDialog(context, ref),
+          ),
+          const SizedBox(height: 96),
+        ],
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.all(AppTokens.s4),
       children: [
+        const _OptionsGuide(),
+        const SizedBox(height: AppTokens.s3),
         for (final option in decision.options)
           _OptionCard(decisionId: decisionId, option: option),
         const SizedBox(height: AppTokens.s2),
@@ -27,9 +51,7 @@ class OptionsTab extends ConsumerWidget {
             onPressed: () => _showAddOptionDialog(context, ref),
             icon: const Icon(Icons.add),
             label: Text(
-              decision.options.isEmpty
-                  ? 'İlk seçeneği ekle'
-                  : 'Seçenek ekle (${decision.options.length}/${Limits.maxOptions})',
+              'Seçenek ekle (${decision.options.length}/${Limits.maxOptions})',
             ),
           )
         else
@@ -78,6 +100,29 @@ class OptionsTab extends ConsumerWidget {
   }
 }
 
+/// Kompakt sekme rehberi — büyük hero değil.
+class _OptionsGuide extends StatelessWidget {
+  const _OptionsGuide();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Seçeneklerin', style: theme.textTheme.titleMedium),
+        const SizedBox(height: AppTokens.s1),
+        Text(
+          'Karşılaştırmak istediğin en az iki seçeneği ekle.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _OptionCard extends ConsumerWidget {
   const _OptionCard({required this.decisionId, required this.option});
   final String decisionId;
@@ -86,18 +131,51 @@ class _OptionCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(decisionEditorProvider(decisionId).notifier);
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final semantic = theme.extension<AppSemanticColors>() ??
+        (theme.brightness == Brightness.dark
+            ? AppSemanticColors.dark
+            : AppSemanticColors.light);
 
     return Card(
       margin: const EdgeInsets.only(bottom: AppTokens.s3),
       child: ExpansionTile(
-        title: Text(option.title),
+        // Yumuşak leading rozet — Home kart diliyle hizalı.
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: scheme.primary.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          ),
+          child:
+              Icon(Icons.alt_route_outlined, color: scheme.primary, size: 20),
+        ),
+        // Silme title satırında; ExpansionTile'ın kendi chevron'u korunur.
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                option.title,
+                style: theme.textTheme.titleMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Seçeneği sil',
+              visualDensity: VisualDensity.compact,
+              // Açık/kapalı fark etmeksizin nötr; ExpansionTile genişleyince
+              // primary'e dönmesin (yalnız chevron primary'e geçebilir).
+              color: scheme.onSurfaceVariant,
+              onPressed: () => notifier.removeOption(option.id),
+            ),
+          ],
+        ),
         subtitle: Text(
           '${option.pros.length} artı · ${option.cons.length} eksi',
-        ),
-        trailing: IconButton(
-          icon: const Icon(Icons.delete_outline),
-          tooltip: 'Seçeneği sil',
-          onPressed: () => notifier.removeOption(option.id),
         ),
         childrenPadding: const EdgeInsets.fromLTRB(
           AppTokens.s4,
@@ -109,7 +187,7 @@ class _OptionCard extends ConsumerWidget {
           _ProConList(
             label: 'Artılar',
             icon: Icons.add_circle_outline,
-            color: Colors.green,
+            color: semantic.success,
             items: option.pros,
             onAdd: (text) => notifier.addProCon(option.id, text, isPro: true),
             onRemove: (i) => notifier.removeProCon(option.id, i, isPro: true),
@@ -118,7 +196,7 @@ class _OptionCard extends ConsumerWidget {
           _ProConList(
             label: 'Eksiler',
             icon: Icons.remove_circle_outline,
-            color: Colors.red,
+            color: scheme.error,
             items: option.cons,
             onAdd: (text) => notifier.addProCon(option.id, text, isPro: false),
             onRemove: (i) => notifier.removeProCon(option.id, i, isPro: false),

@@ -8,6 +8,8 @@ import '../../../../core/constants/limits.dart';
 import '../../../../core/error/failure.dart';
 import '../../../../core/services/analytics/analytics_service.dart';
 import '../../../../core/theme/tokens.dart';
+import '../../../../core/widgets/app_hero_panel.dart';
+import '../../../../core/widgets/app_section_header.dart';
 import '../../../templates/presentation/providers/template_providers.dart';
 import '../../../templates/presentation/widgets/template_card.dart';
 import '../../../templates/presentation/widgets/template_preview_sheet.dart';
@@ -88,11 +90,13 @@ class _NewDecisionScreenState extends ConsumerState<NewDecisionScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'Neye karar vereceksin?',
-                style: Theme.of(context).textTheme.titleLarge,
+              const AppHeroPanel(
+                title: 'Neyi netleştirmek istiyorsun?',
+                supportText: 'Kararını kısa ve açık yaz. Sonraki adımda '
+                    'seçeneklerini birlikte karşılaştıracağız.',
+                icon: Icons.explore_outlined,
               ),
-              const SizedBox(height: AppTokens.s4),
+              const SizedBox(height: AppTokens.s6),
               TextField(
                 controller: _controller,
                 autofocus: true,
@@ -100,8 +104,8 @@ class _NewDecisionScreenState extends ConsumerState<NewDecisionScreen> {
                 textInputAction: TextInputAction.done,
                 onSubmitted: (_) => _submit(),
                 decoration: InputDecoration(
+                  labelText: 'Kararın',
                   hintText: 'Örn. iPhone mu Samsung mu?',
-                  border: const OutlineInputBorder(),
                   errorText: _errorText,
                 ),
               ),
@@ -118,13 +122,7 @@ class _NewDecisionScreenState extends ConsumerState<NewDecisionScreen> {
               ),
               const SizedBox(height: AppTokens.s6),
               // A1-b: dönen kullanıcı için şablon şeridi.
-              Text(
-                'Ya da bir şablonla başla',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
-              const SizedBox(height: AppTokens.s2),
+              const AppSectionHeader(title: 'Bir şablonla başla'),
               SizedBox(
                 height: 132,
                 child: ListView(
