@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/error/failure.dart';
 import '../../../../core/services/analytics/analytics_service.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../ai_analysis/presentation/widgets/analysis_card.dart';
@@ -114,9 +115,12 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
               decision: decision,
               recommendedOptionId: result.recommendedOptionId,
               onCommit: (optionId) async {
-                await ref
+                final failure = await ref
                     .read(decisionEditorProvider(decisionId).notifier)
                     .commitDecision(optionId);
+                // Yazım başarısızsa taahhüt YOK: takip sözünü kurma, hatayı
+                // sheet'e geri ver (sheet açık kalır, PromiseView'a geçmez).
+                if (failure != null) return failure;
                 // Sprint C.1: söz zaten verilmişse vade yeni taahhütten başlar.
                 // (İlk kez karar verende tercih yok → no-op; sözü sheet sorar.)
                 // BEKLENMEZ: takip motoru en iyi çabadır, yerel depolama yavaş
@@ -127,16 +131,21 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
                         decisionTitle: decision.title,
                       ),
                 );
+                return null;
               },
               onRevert: () async {
-                await ref
+                final failure = await ref
                     .read(decisionEditorProvider(decisionId).notifier)
                     .revertDecision();
+                // Geri alma yazımı başarısızsa taahhüt DURUYOR: sözü iptal etme,
+                // hatayı sheet'e geri ver (sheet kapanmaz).
+                if (failure != null) return failure;
                 // Sprint C.1: taahhüt kalktı → tutulacak söz kalmadı.
                 // Beklenmez (yukarıdaki gerekçe).
                 unawaited(
                   ref.read(followUpCoordinatorProvider).onReverted(decisionId),
                 );
+                return null;
               },
               // Sprint C.1: tercih CİHAZDA saklanır (Firestore'a yazılmaz) ve
               // söz verildiyse +7 gün YEREL bildirim planlanır.
@@ -306,8 +315,8 @@ class _CommitSection extends StatelessWidget {
 
   final Decision decision;
   final String recommendedOptionId;
-  final Future<void> Function(String optionId) onCommit;
-  final Future<void> Function() onRevert;
+  final Future<Failure?> Function(String optionId) onCommit;
+  final Future<Failure?> Function() onRevert;
   final Future<void> Function(bool optIn) onPromiseAnswer;
 
   @override
@@ -387,8 +396,8 @@ class _CommitSheet extends ConsumerStatefulWidget {
   final String initialId;
   final String recommendedOptionId;
   final bool canRevert;
-  final Future<void> Function(String optionId) onCommit;
-  final Future<void> Function() onRevert;
+  final Future<Failure?> Function(String optionId) onCommit;
+  final Future<Failure?> Function() onRevert;
   final Future<void> Function(bool optIn) onPromiseAnswer;
 
   @override
@@ -480,8 +489,15 @@ class _CommitSheetState extends ConsumerState<_CommitSheet> {
 
   Future<void> _commit() async {
     setState(() => _saving = true);
-    await widget.onCommit(_selected);
+    final failure = await widget.onCommit(_selected);
     if (!mounted) return;
+    if (failure != null) {
+      // Yazım başarısız: taahhüt yok. Sheet açık kalır, PromiseView'a
+      // geçilmez, buton yeniden denenebilir; hata kullanıcıya gösterilir.
+      setState(() => _saving = false);
+      _showFailure(failure);
+      return;
+    }
     // Sprint C: kapatmak yerine SÖZ ekranına geç — journey'nin sözleşmesi
     // taahhüt anında kurulur (Decision Journey §Aşama 3).
     setState(() {
@@ -492,8 +508,24 @@ class _CommitSheetState extends ConsumerState<_CommitSheet> {
 
   Future<void> _revert() async {
     setState(() => _saving = true);
-    await widget.onRevert();
-    if (mounted) Navigator.of(context).pop();
+    final failure = await widget.onRevert();
+    if (!mounted) return;
+    if (failure != null) {
+      // Geri alma başarısız: taahhüt duruyor. Sheet kapanmaz, tekrar
+      // denenebilir; hata kullanıcıya gösterilir.
+      setState(() => _saving = false);
+      _showFailure(failure);
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+
+  /// Tek seferde tek hata: yeni hatadan önce birikeni temizle. Ham exception
+  /// değil, kullanıcı dostu [Failure.userMessage] gösterilir.
+  void _showFailure(Failure failure) {
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(failure.userMessage)));
   }
 }
 
