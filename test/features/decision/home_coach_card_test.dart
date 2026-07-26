@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:karar_veriyorum/core/theme/app_theme.dart';
 import 'package:karar_veriyorum/features/decision/domain/entities/decision.dart';
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_providers.dart';
 import 'package:karar_veriyorum/features/decision/presentation/screens/home_screen.dart';
 import 'package:karar_veriyorum/features/journey/domain/follow_up_coordinator.dart';
 import 'package:karar_veriyorum/features/journey/presentation/providers/journey_providers.dart';
 
-/// SPRINT C-4 — Home koç kartı widget testleri.
-/// Gerçek zaman kullanılmaz: journeyClockProvider sabit saatle override.
+/// SPRINT C-5 — "Sıcak Premium Koç" Home prototipi widget testleri.
+/// Gerçek AppTheme uygulanır (AppSemanticColors extension gerekir).
+/// journeyClockProvider sabit saatle override; gerçek zaman kullanılmaz.
 void main() {
   const delay = FollowUpCoordinator.followUpDelay;
   final decidedAt = DateTime.utc(2026, 7, 1, 9);
@@ -41,6 +43,7 @@ void main() {
     required List<Decision> decisions,
     required DateTime now,
     Size size = const Size(400, 800),
+    ThemeData? theme,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -81,27 +84,32 @@ void main() {
           journeyClockProvider.overrideWithValue(() => now),
           decisionListProvider.overrideWith((ref) => Stream.value(decisions)),
         ],
-        child: MaterialApp.router(routerConfig: router),
+        child: MaterialApp.router(
+          theme: theme ?? AppTheme.light,
+          routerConfig: router,
+        ),
       ),
     );
     await tester.pump();
   }
 
-  testWidgets('1) due karar yoksa koç kartı görünmez', (tester) async {
-    // Karar var ama henüz 7 gün geçmemiş (dün verilmiş).
+  testWidgets('1) due yoksa koç hero yok, karşılama hero görünür',
+      (tester) async {
     await pumpHome(
       tester,
       decisions: [decided(id: 'd1', title: 'Telefon', decidedAt: decidedAt)],
       now: decidedAt.add(const Duration(days: 1)),
     );
 
-    expect(find.text('Bir kararını kontrol edelim'), findsNothing);
     expect(find.text('Koçundan'), findsNothing);
-    // Liste yine de görünür:
+    expect(find.text('Bir kararını kontrol edelim'), findsNothing);
+    // Karşılama hero'su + marka + karar kartı:
+    expect(find.text('Bugün neyi netleştirelim?'), findsOneWidget);
+    expect(find.text('Karar Koçum'), findsOneWidget);
     expect(find.text('Telefon'), findsOneWidget);
   });
 
-  testWidgets('2) tam 7 günlük due karar → kart görünür', (tester) async {
+  testWidgets('2) tam 7 günlük due → tek koç hero görünür', (tester) async {
     await pumpHome(
       tester,
       decisions: [decided(id: 'd1', title: 'Telefon', decidedAt: decidedAt)],
@@ -111,9 +119,12 @@ void main() {
     expect(find.text('Koçundan'), findsOneWidget);
     expect(find.text('Bir kararını kontrol edelim'), findsOneWidget);
     expect(find.text('Kontrol et'), findsOneWidget);
+    // İkinci dev hero yok: karşılama başlığı gösterilmez.
+    expect(find.text('Bugün neyi netleştirelim?'), findsNothing);
   });
 
-  testWidgets('3) kartta karar başlığı ve gün sayısı görünür', (tester) async {
+  testWidgets('3) koç hero karar başlığı ve gün sayısını taşır',
+      (tester) async {
     await pumpHome(
       tester,
       decisions: [decided(id: 'd1', title: 'Telefon', decidedAt: decidedAt)],
@@ -126,7 +137,7 @@ void main() {
     );
   });
 
-  testWidgets('4) birden fazla due → toplam sayı görünür', (tester) async {
+  testWidgets('4) birden fazla due → toplam sayı hero içinde', (tester) async {
     await pumpHome(
       tester,
       decisions: [
@@ -137,17 +148,16 @@ void main() {
       now: due7,
     );
 
-    expect(find.text('3 kararın kontrol bekliyor'), findsOneWidget);
+    expect(find.textContaining('3 kararın kontrol bekliyor'), findsOneWidget);
   });
 
-  testWidgets('5) "Kontrol et" doğru decision ID ile check-in rotasına gider',
+  testWidgets('5) "Kontrol et" en eski due kararın check-in rotasına gider',
       (tester) async {
     await pumpHome(
       tester,
       decisions: [
-        // d2 en eski → üstte gösterilmeli
         decided(id: 'd1', title: 'Telefon', decidedAt: due7),
-        decided(id: 'd2', title: 'Araba', decidedAt: decidedAt),
+        decided(id: 'd2', title: 'Araba', decidedAt: decidedAt), // en eski
       ],
       now: due7.add(const Duration(days: 30)),
     );
@@ -160,7 +170,7 @@ void main() {
     expect(find.text('CHECK-IN ROUTE'), findsOneWidget);
   });
 
-  testWidgets('6) check-in yapılmış karar kartta görünmez', (tester) async {
+  testWidgets('6) check-in yapılmış karar için koç hero yok', (tester) async {
     await pumpHome(
       tester,
       decisions: [
@@ -174,11 +184,14 @@ void main() {
       now: due7.add(const Duration(days: 5)),
     );
 
+    expect(find.text('Koçundan'), findsNothing);
     expect(find.text('Bir kararını kontrol edelim'), findsNothing);
-    expect(find.text('Telefon'), findsOneWidget); // liste kartı yine var
+    expect(find.text('Telefon'), findsOneWidget); // kart yine var
+    // Durum etiketi:
+    expect(find.text('Kontrol tamamlandı'), findsOneWidget);
   });
 
-  testWidgets('7) uzun karar başlığında overflow oluşmaz', (tester) async {
+  testWidgets('7) uzun karar başlığında overflow yok', (tester) async {
     final uzun = 'Çok uzun bir karar başlığı ' * 8;
     await pumpHome(
       tester,
@@ -187,11 +200,11 @@ void main() {
       size: const Size(320, 640), // küçük ekran
     );
 
-    expect(tester.takeException(), isNull); // layout overflow yok
+    expect(tester.takeException(), isNull);
     expect(find.text('Koçundan'), findsOneWidget);
   });
 
-  testWidgets('8) mevcut karar listesi ve Yeni Karar FAB korunur',
+  testWidgets('8) DecisionCard listesi ve Yeni Karar FAB korunur',
       (tester) async {
     await pumpHome(
       tester,
@@ -202,14 +215,40 @@ void main() {
       now: due7,
     );
 
-    // Liste kartları:
     expect(find.text('Telefon'), findsOneWidget);
     expect(find.text('Araba'), findsOneWidget);
-    // FAB:
+    expect(find.text('Kararların'), findsOneWidget); // section header
     expect(find.text('Yeni Karar'), findsOneWidget);
     await tester.tap(find.text('Yeni Karar'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(lastRoute, '/decision/new');
+  });
+
+  testWidgets('9) DecisionCard doğru edit rotasına gider', (tester) async {
+    await pumpHome(
+      tester,
+      decisions: [decided(id: 'd1', title: 'Telefon', decidedAt: decidedAt)],
+      now: decidedAt, // due değil → sade liste
+    );
+
+    await tester.tap(find.text('Telefon'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(lastRoute, '/decision/d1/edit');
+  });
+
+  testWidgets('10) dark tema Home render olur, overflow yok', (tester) async {
+    await pumpHome(
+      tester,
+      decisions: [decided(id: 'd1', title: 'Telefon', decidedAt: decidedAt)],
+      now: due7,
+      theme: AppTheme.dark,
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Koçundan'), findsOneWidget);
+    expect(find.text('Karar Koçum'), findsOneWidget);
   });
 }

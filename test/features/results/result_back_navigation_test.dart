@@ -317,7 +317,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('Kararlarım'), findsOneWidget); // Home
+    expect(find.text('Karar Koçum'), findsOneWidget); // Home (marka satırı)
     // Cevaplanmış kararın koç kartı artık görünmüyor:
     expect(find.text('Kontrol et'), findsNothing);
     expect(find.text('Bir kararını kontrol edelim'), findsNothing);
