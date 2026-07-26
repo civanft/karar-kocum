@@ -14,6 +14,7 @@ class AppEmptyHint extends StatelessWidget {
     required this.message,
     required this.actionLabel,
     required this.onAction,
+    this.actionIcon = Icons.add,
   });
 
   final IconData icon;
@@ -21,6 +22,10 @@ class AppEmptyHint extends StatelessWidget {
   final String message;
   final String actionLabel;
   final VoidCallback onAction;
+
+  /// CTA ikonu — bağlama uygun (ekleme için add, yönlendirme için ok).
+  /// Geriye uyumlu: verilmezse artı ikonu.
+  final IconData actionIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -63,7 +68,7 @@ class AppEmptyHint extends StatelessWidget {
           const SizedBox(height: AppTokens.s4),
           FilledButton.icon(
             onPressed: onAction,
-            icon: const Icon(Icons.add),
+            icon: Icon(actionIcon),
             label: Text(actionLabel),
           ),
         ],

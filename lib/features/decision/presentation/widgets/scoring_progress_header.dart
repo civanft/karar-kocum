@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/theme/app_palette.dart';
 import '../../../../core/theme/tokens.dart';
 import '../providers/scoring_progress.dart';
 
@@ -18,6 +19,10 @@ class ScoringProgressHeader extends ConsumerWidget {
     if (progress.total == 0) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
+    final semantic = theme.extension<AppSemanticColors>() ??
+        (theme.brightness == Brightness.dark
+            ? AppSemanticColors.dark
+            : AppSemanticColors.light);
     final complete = progress.filled == progress.total;
     final percent = (100 * progress.filled / progress.total).round();
 
@@ -32,26 +37,37 @@ class ScoringProgressHeader extends ConsumerWidget {
         duration: const Duration(milliseconds: 250),
         child: Row(
           key: ValueKey(complete),
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // 🎉 emoji yerine sakin, sıcak semantik başarı ikonu.
+            Icon(
+              complete
+                  ? Icons.check_circle_rounded
+                  : Icons.radio_button_unchecked,
+              size: 20,
+              color: complete ? semantic.success : theme.colorScheme.outline,
+            ),
+            const SizedBox(width: AppTokens.s2),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     complete
-                        ? 'Puanlama tamam 🎉 '
+                        ? 'Puanlama tamam '
                             '${progress.filled}/${progress.total}'
                         : 'Puanlama: ${progress.filled}/${progress.total} '
                             'tamamlandı (%$percent)',
                     style: theme.textTheme.labelLarge?.copyWith(
                       color: complete
-                          ? theme.colorScheme.primary
+                          ? semantic.success
                           : theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
                   const SizedBox(height: AppTokens.s2),
                   LinearProgressIndicator(
                     value: progress.filled / progress.total,
+                    color: complete ? semantic.success : null,
                     borderRadius: BorderRadius.circular(AppTokens.s1),
                   ),
                 ],

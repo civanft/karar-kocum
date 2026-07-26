@@ -64,4 +64,41 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Seçenek ekle'), findsOneWidget);
   });
+
+  testWidgets('varsayılan aksiyon ikonu Icons.add', (tester) async {
+    await pump(tester);
+    final btn = tester.widget<FilledButton>(find.byType(FilledButton));
+    // FilledButton.icon → içinde Icon(Icons.add) render eder.
+    expect(
+      find.descendant(
+        of: find.byWidget(btn),
+        matching: find.byIcon(Icons.add),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('özel actionIcon verilince o gösterilir', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light,
+        home: Scaffold(
+          body: AppEmptyHint(
+            icon: Icons.tune_outlined,
+            title: 'Puanlamaya hazırlan',
+            message: 'Önce seçenekleri ekle.',
+            actionLabel: 'Seçeneklere git',
+            actionIcon: Icons.arrow_forward_rounded,
+            onAction: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byIcon(Icons.arrow_forward_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.add), findsNothing);
+  });
 }

@@ -97,7 +97,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     // Tamam durumu + aktif buton:
-    expect(find.text('Puanlama tamam 🎉 4/4'), findsOneWidget);
+    expect(find.text('Puanlama tamam 4/4'), findsOneWidget);
     expect(find.text('Puanlama: 0/4 — 4 hücre kaldı'), findsNothing);
     final activeButton = tester.widget<FilledButton>(
       find.widgetWithText(FilledButton, 'Sonucu Gör'),
