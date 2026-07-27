@@ -6,13 +6,17 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/error/failure.dart';
 import '../../../../core/services/analytics/analytics_service.dart';
+import '../../../../core/theme/app_palette.dart';
 import '../../../../core/theme/tokens.dart';
+import '../../../../core/widgets/app_empty_hint.dart';
+import '../../../../core/widgets/app_section_header.dart';
 import '../../../ai_analysis/presentation/widgets/analysis_card.dart';
 import '../../../decision/domain/entities/decision.dart';
 import '../../../decision/presentation/providers/decision_editor.dart';
 import '../../../decision/presentation/providers/decision_providers.dart';
 import '../../../journey/presentation/providers/journey_providers.dart';
-import '../../../scoring/domain/entities/scoring_types.dart';
+import '../widgets/result_rank_tile.dart';
+import '../widgets/result_winner_panel.dart';
 
 /// Sonuç ekranı v1 — yerel ağırlıklı skor (US-C2).
 /// Sprint 3'te eklenecekler: AI yorumu, riskler, what-if slider'ları, paylaşım.
@@ -81,25 +85,30 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
         ),
         data: (decision) {
           if (!decision.isScoreMatrixComplete) {
-            // Derin bağlantıyla eksik karara gelinirse güvenli düşüş.
+            // Derin bağlantıyla eksik karara gelinirse güvenli düşüş —
+            // tasarım diliyle hizalı (AppEmptyHint). Metin/route/güvenli geri
+            // davranışı korunur.
             return Scaffold(
-              appBar: AppBar(title: const Text('Sonuç'), leading: _leading),
-              body: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppTokens.s6),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text('Sonuç için önce tüm puanlamayı tamamla.'),
-                      const SizedBox(height: AppTokens.s4),
-                      FilledButton(
-                        onPressed: () =>
-                            context.go('/decision/$decisionId/edit'),
-                        child: const Text('Puanlamaya Dön'),
-                      ),
-                    ],
-                  ),
+              appBar: AppBar(
+                title: Text(
+                  decision.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
+                leading: _leading,
+              ),
+              body: ListView(
+                padding: const EdgeInsets.all(AppTokens.s4),
+                children: [
+                  AppEmptyHint(
+                    icon: Icons.tune_outlined,
+                    title: 'Puanlama tamamlanmadı',
+                    message: 'Sonuç için önce tüm puanlamayı tamamla.',
+                    actionLabel: 'Puanlamaya Dön',
+                    actionIcon: Icons.arrow_back_rounded,
+                    onAction: () => context.go('/decision/$decisionId/edit'),
+                  ),
+                ],
               ),
             );
           }
@@ -107,10 +116,16 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
           final result = ref.read(computeResultProvider)(decision);
           final byId = {for (final o in decision.options) o.id: o};
           final winner = byId[result.recommendedOptionId]!;
-          final theme = Theme.of(context);
 
           return Scaffold(
-            appBar: AppBar(title: const Text('Sonuç'), leading: _leading),
+            appBar: AppBar(
+              title: Text(
+                decision.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              leading: _leading,
+            ),
             bottomNavigationBar: _CommitSection(
               decision: decision,
               recommendedOptionId: result.recommendedOptionId,
@@ -159,47 +174,28 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
             body: ListView(
               padding: const EdgeInsets.all(AppTokens.s4),
               children: [
-                // Önerilen seçenek kartı
-                Card(
-                  color: theme.colorScheme.primaryContainer,
-                  child: Padding(
-                    padding: const EdgeInsets.all(AppTokens.s4),
-                    child: Column(
-                      children: [
-                        Text(
-                          'Önerilen seçenek',
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: theme.colorScheme.onPrimaryContainer,
-                          ),
-                        ),
-                        const SizedBox(height: AppTokens.s1),
-                        Text(
-                          winner.title,
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.headlineSmall?.copyWith(
-                            color: theme.colorScheme.onPrimaryContainer,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: AppTokens.s2),
-                        _ConfidenceChip(result.confidence),
-                      ],
-                    ),
-                  ),
+                // 1) Kazanan paneli — sakin, güçlü koç sonucu.
+                ResultWinnerPanel(
+                  title: winner.title,
+                  confidence: result.confidence,
                 ),
-                const SizedBox(height: AppTokens.s4),
-                Text('Sıralama', style: theme.textTheme.titleMedium),
-                const SizedBox(height: AppTokens.s2),
+                const SizedBox(height: AppTokens.s5),
+                // 2) Puan dağılımı — tüm seçenekler şeffaflık için listede.
+                const AppSectionHeader(title: 'Puan dağılımı'),
+                const SizedBox(height: AppTokens.s3),
                 for (final (rank, score) in result.ranking.indexed)
-                  _ScoreBar(
+                  ResultRankTile(
                     rank: rank + 1,
                     title: byId[score.optionId]?.title ?? '—',
                     score: score.score,
                     isWinner: score.optionId == result.recommendedOptionId,
                     isChosen: score.optionId == decision.chosenOptionId,
                   ),
-                const SizedBox(height: AppTokens.s6),
-                // AI analiz bölümü (6D-1: mock kontrolcü; 6D-2: gerçek istemci)
+                const SizedBox(height: AppTokens.s5),
+                // 3) Sahiplik — AI'dan bağımsız, her kullanıcıya görünür.
+                const _OwnershipNote(),
+                const SizedBox(height: AppTokens.s5),
+                // 4) AI analiz bölümü (yerleşim korunur; iç tasarım değişmez).
                 AnalysisSection(decisionId: decisionId),
               ],
             ),
@@ -210,90 +206,36 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
   }
 }
 
-class _ConfidenceChip extends StatelessWidget {
-  const _ConfidenceChip(this.confidence);
-  final Confidence confidence;
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, color) = switch (confidence) {
-      Confidence.high => ('Yüksek güven', Colors.green),
-      Confidence.medium => ('Orta güven', Colors.orange),
-      Confidence.low => ('Düşük güven — fark çok az', Colors.red),
-    };
-    return Chip(
-      avatar: Icon(Icons.verified_outlined, size: 16, color: color),
-      label: Text(label),
-      visualDensity: VisualDensity.compact,
-    );
-  }
-}
-
-class _ScoreBar extends StatelessWidget {
-  const _ScoreBar({
-    required this.rank,
-    required this.title,
-    required this.score,
-    required this.isWinner,
-    this.isChosen = false,
-  });
-
-  final int rank;
-  final String title;
-  final double score;
-  final bool isWinner;
-
-  /// Kullanıcının "Kararımı Verdim" ile seçtiği seçenek (Sprint B vurgusu).
-  final bool isChosen;
+/// Karar sahipliği hatırlatıcısı (Görsel Dilim 3) — AI başarı durumundan
+/// bağımsız, her kullanıcıya görünür sakin bilgi yüzeyi.
+class _OwnershipNote extends StatelessWidget {
+  const _OwnershipNote();
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppTokens.s3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(AppTokens.s3),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Text('$rank.', style: theme.textTheme.labelLarge),
-              const SizedBox(width: AppTokens.s2),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    fontWeight: isWinner || isChosen
-                        ? FontWeight.bold
-                        : FontWeight.normal,
-                  ),
-                ),
-              ),
-              if (isChosen) ...[
-                Icon(
-                  Icons.check_circle,
-                  size: 18,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: AppTokens.s1),
-              ],
-              Text(
-                score.toStringAsFixed(0),
-                style: theme.textTheme.labelLarge,
-              ),
-            ],
+          Icon(
+            Icons.psychology_outlined,
+            size: 20,
+            color: scheme.onSurfaceVariant,
           ),
-          const SizedBox(height: AppTokens.s1),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(AppTokens.radiusSm),
-            child: LinearProgressIndicator(
-              value: score / 100,
-              minHeight: 8,
-              color: isWinner
-                  ? theme.colorScheme.primary
-                  : theme.colorScheme.secondaryContainer,
-              backgroundColor: theme.colorScheme.surfaceContainerHighest,
+          const SizedBox(width: AppTokens.s3),
+          Expanded(
+            child: Text(
+              'Bu bir öneri; son karar senin.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           ),
         ],
@@ -322,34 +264,49 @@ class _CommitSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(AppTokens.s4),
-        child: decision.isDecided
-            ? Row(
-                children: [
-                  Icon(Icons.check_circle, color: theme.colorScheme.primary),
-                  const SizedBox(width: AppTokens.s2),
-                  Expanded(
-                    child: Text(
-                      '${_chosenTitle()} seçildi',
-                      style: theme.textTheme.titleSmall,
+    final scheme = theme.colorScheme;
+    final semantic = theme.extension<AppSemanticColors>() ??
+        (theme.brightness == Brightness.dark
+            ? AppSemanticColors.dark
+            : AppSemanticColors.light);
+    // Sabit işlem yüzeyi: sıcak surface + ince üst ayırıcı + SafeArea
+    // (2A/2B alt-bar diliyle hizalı). Davranış değişmez.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        border: Border(top: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppTokens.s4),
+          child: decision.isDecided
+              ? Row(
+                  children: [
+                    Icon(Icons.check_circle, color: semantic.success),
+                    const SizedBox(width: AppTokens.s2),
+                    Expanded(
+                      child: Text(
+                        '${_chosenTitle()} seçildi',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall,
+                      ),
                     ),
-                  ),
-                  TextButton(
+                    TextButton(
+                      onPressed: () => _openSheet(context),
+                      child: const Text('Değiştir'),
+                    ),
+                  ],
+                )
+              : SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.how_to_reg),
+                    label: const Text('Kararımı Verdim'),
                     onPressed: () => _openSheet(context),
-                    child: const Text('Değiştir'),
                   ),
-                ],
-              )
-            : SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  icon: const Icon(Icons.how_to_reg),
-                  label: const Text('Kararımı Verdim'),
-                  onPressed: () => _openSheet(context),
                 ),
-              ),
+        ),
       ),
     );
   }
