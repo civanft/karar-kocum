@@ -12,6 +12,7 @@ void main() {
     WidgetTester tester, {
     required Confidence confidence,
     String title = 'iPhone 16',
+    bool isTie = false,
     ThemeData? theme,
     double textScale = 1.0,
     Size size = const Size(390, 844),
@@ -26,7 +27,11 @@ void main() {
           body: MediaQuery(
             data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
             child: SingleChildScrollView(
-              child: ResultWinnerPanel(title: title, confidence: confidence),
+              child: ResultWinnerPanel(
+                title: title,
+                confidence: confidence,
+                isTie: isTie,
+              ),
             ),
           ),
         ),
@@ -96,6 +101,42 @@ void main() {
     expect(find.byIcon(Icons.verified_outlined), findsOneWidget);
     expect(find.byIcon(Icons.balance_outlined), findsNothing);
     expect(find.byIcon(Icons.compare_arrows_outlined), findsNothing);
+  });
+
+  testWidgets(
+      'tie: "Başa baş sonuç" + "Karar sende" + "Eşit puan" (info, kırmızı '
+      'değil); kazanan dili yok', (tester) async {
+    // confidence verilse bile tie önceliklidir:
+    await pump(tester, confidence: Confidence.high, isTie: true);
+    expect(find.text('Başa baş sonuç'), findsOneWidget);
+    expect(find.text('Karar sende'), findsOneWidget);
+    expect(find.text('Eşit puan'), findsOneWidget);
+    expect(
+      find.textContaining('En yüksek puanı paylaşan seçenekler var'),
+      findsOneWidget,
+    );
+    // Kazanan/önerilen dili görünmez:
+    expect(find.text('Öne çıkan seçenek'), findsNothing);
+    expect(find.text('Yüksek güven'), findsNothing);
+    expect(find.text('iPhone 16'), findsNothing);
+
+    final color = iconColorOf(tester, Icons.balance_outlined);
+    expect(color, AppSemanticColors.light.info);
+    expect(color, isNot(AppTheme.light.colorScheme.error));
+  });
+
+  testWidgets('tie dark + uzun başlık + 320 + textScale 1.3 taşma yok',
+      (tester) async {
+    await pump(
+      tester,
+      confidence: Confidence.high,
+      isTie: true,
+      theme: AppTheme.dark,
+      size: const Size(320, 800),
+      textScale: 1.3,
+    );
+    expect(find.text('Karar sende'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('dark render crash yok', (tester) async {

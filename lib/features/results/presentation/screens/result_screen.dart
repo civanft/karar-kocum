@@ -15,6 +15,7 @@ import '../../../decision/domain/entities/decision.dart';
 import '../../../decision/presentation/providers/decision_editor.dart';
 import '../../../decision/presentation/providers/decision_providers.dart';
 import '../../../journey/presentation/providers/journey_providers.dart';
+import '../../../scoring/domain/entities/scoring_types.dart';
 import '../widgets/result_rank_tile.dart';
 import '../widgets/result_winner_panel.dart';
 
@@ -116,6 +117,10 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
           final result = ref.read(computeResultProvider)(decision);
           final byId = {for (final o in decision.options) o.id: o};
           final winner = byId[result.recommendedOptionId]!;
+          // Eşitlik YALNIZ sunum hesabı — domain/scoring değişmez.
+          final tiedLeaderIds = _tiedLeaderIds(result);
+          final isTie = tiedLeaderIds.isNotEmpty;
+          final ranks = _competitionRanks(result);
 
           return Scaffold(
             appBar: AppBar(
@@ -129,6 +134,7 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
             bottomNavigationBar: _CommitSection(
               decision: decision,
               recommendedOptionId: result.recommendedOptionId,
+              isTie: isTie,
               onCommit: (optionId) async {
                 final failure = await ref
                     .read(decisionEditorProvider(decisionId).notifier)
@@ -174,21 +180,26 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
             body: ListView(
               padding: const EdgeInsets.all(AppTokens.s4),
               children: [
-                // 1) Kazanan paneli — sakin, güçlü koç sonucu.
+                // 1) Kazanan paneli — sakin, güçlü koç sonucu (eşitlikte
+                // tarafsız "başa baş" görünümü).
                 ResultWinnerPanel(
                   title: winner.title,
                   confidence: result.confidence,
+                  isTie: isTie,
                 ),
                 const SizedBox(height: AppTokens.s5),
                 // 2) Puan dağılımı — tüm seçenekler şeffaflık için listede.
                 const AppSectionHeader(title: 'Puan dağılımı'),
                 const SizedBox(height: AppTokens.s3),
-                for (final (rank, score) in result.ranking.indexed)
+                for (final (i, score) in result.ranking.indexed)
                   ResultRankTile(
-                    rank: rank + 1,
+                    rank: ranks[i],
                     title: byId[score.optionId]?.title ?? '—',
                     score: score.score,
-                    isWinner: score.optionId == result.recommendedOptionId,
+                    // Eşitlikte hiçbir seçenek "önerilen" değildir.
+                    isWinner:
+                        !isTie && score.optionId == result.recommendedOptionId,
+                    isTiedLeader: tiedLeaderIds.contains(score.optionId),
                     isChosen: score.optionId == decision.chosenOptionId,
                   ),
                 const SizedBox(height: AppTokens.s5),
@@ -204,6 +215,36 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
       ),
     );
   }
+}
+
+/// Floating-point skor karşılaştırması için sabit epsilon (sunum).
+const double _tieEpsilon = 1e-6;
+
+/// En yüksek puanı [_tieEpsilon] içinde paylaşan seçeneklerin id kümesi.
+/// Yalnız ≥2 lider varsa doludur (tie); tek lider veya <2 seçenek → boş.
+/// Domain'e dokunmaz — yalnız [DecisionResult.ranking] üzerinden türetir.
+Set<String> _tiedLeaderIds(DecisionResult result) {
+  final ranking = result.ranking;
+  if (ranking.length < 2) return const {};
+  final top = ranking.first.score;
+  final tied = <String>{
+    for (final s in ranking)
+      if ((s.score - top).abs() <= _tieEpsilon) s.optionId,
+  };
+  return tied.length >= 2 ? tied : const {};
+}
+
+/// Competition ranking (1224 stili): [_tieEpsilon] içinde eşit skorlar aynı
+/// sıra numarasını alır, sonraki farklı skor konumdan devam eder (1,1,3).
+List<int> _competitionRanks(DecisionResult result) {
+  final ranking = result.ranking;
+  final ranks = List<int>.filled(ranking.length, 1);
+  for (var i = 1; i < ranking.length; i++) {
+    final samePrev =
+        (ranking[i].score - ranking[i - 1].score).abs() <= _tieEpsilon;
+    ranks[i] = samePrev ? ranks[i - 1] : i + 1;
+  }
+  return ranks;
 }
 
 /// Karar sahipliği hatırlatıcısı (Görsel Dilim 3) — AI başarı durumundan
@@ -250,6 +291,7 @@ class _CommitSection extends StatelessWidget {
   const _CommitSection({
     required this.decision,
     required this.recommendedOptionId,
+    required this.isTie,
     required this.onCommit,
     required this.onRevert,
     required this.onPromiseAnswer,
@@ -257,6 +299,9 @@ class _CommitSection extends StatelessWidget {
 
   final Decision decision;
   final String recommendedOptionId;
+
+  /// Eşitlik: varsayılan seçim ve "önerilen ⭐" bastırılır (tarafsızlık).
+  final bool isTie;
   final Future<Failure?> Function(String optionId) onCommit;
   final Future<Failure?> Function() onRevert;
   final Future<void> Function(bool optIn) onPromiseAnswer;
@@ -319,8 +364,10 @@ class _CommitSection extends StatelessWidget {
   }
 
   Future<void> _openSheet(BuildContext context) {
-    // Önseçim: mevcut seçim, yoksa önerilen seçenek.
-    final initial = decision.chosenOptionId ?? recommendedOptionId;
+    // Önseçim: mevcut seçim; yoksa eşitlik-dışında önerilen, eşitlikte YOK
+    // (kullanıcı bilinçli seçsin — tarafsızlık).
+    final initial =
+        decision.chosenOptionId ?? (isTie ? null : recommendedOptionId);
     return showModalBottomSheet<void>(
       context: context,
       useSafeArea: true,
@@ -329,6 +376,7 @@ class _CommitSection extends StatelessWidget {
         options: decision.options,
         initialId: initial,
         recommendedOptionId: recommendedOptionId,
+        isTie: isTie,
         canRevert: decision.isDecided,
         onPromiseAnswer: onPromiseAnswer,
         onCommit: onCommit,
@@ -343,6 +391,7 @@ class _CommitSheet extends ConsumerStatefulWidget {
     required this.options,
     required this.initialId,
     required this.recommendedOptionId,
+    required this.isTie,
     required this.canRevert,
     required this.onPromiseAnswer,
     required this.onCommit,
@@ -350,8 +399,11 @@ class _CommitSheet extends ConsumerStatefulWidget {
   });
 
   final List<Option> options;
-  final String initialId;
+
+  /// Önseçili seçenek id'si; eşitlik + açık durumda null (seçim yok).
+  final String? initialId;
   final String recommendedOptionId;
+  final bool isTie;
   final bool canRevert;
   final Future<Failure?> Function(String optionId) onCommit;
   final Future<Failure?> Function() onRevert;
@@ -362,7 +414,7 @@ class _CommitSheet extends ConsumerStatefulWidget {
 }
 
 class _CommitSheetState extends ConsumerState<_CommitSheet> {
-  late String _selected = widget.initialId;
+  late String? _selected = widget.initialId;
   bool _saving = false;
 
   /// Sprint C: taahhüt başarılı olunca sheet SÖZ fazına geçer.
@@ -414,7 +466,9 @@ class _CommitSheetState extends ConsumerState<_CommitSheet> {
                     ),
                     const SizedBox(width: AppTokens.s3),
                     Expanded(child: Text(option.title)),
-                    if (option.id == widget.recommendedOptionId)
+                    // Eşitlikte tarafsızlık: hiçbir seçenek "önerilen" değil.
+                    if (!widget.isTie &&
+                        option.id == widget.recommendedOptionId)
                       Text(
                         'önerilen ⭐',
                         style: theme.textTheme.labelSmall,
@@ -425,7 +479,8 @@ class _CommitSheetState extends ConsumerState<_CommitSheet> {
             ),
           const SizedBox(height: AppTokens.s2),
           FilledButton(
-            onPressed: _saving ? null : _commit,
+            // Eşitlikte kullanıcı bir seçenek seçene dek pasif.
+            onPressed: (_saving || _selected == null) ? null : _commit,
             child: _saving
                 ? const SizedBox(
                     width: 20,
@@ -445,8 +500,10 @@ class _CommitSheetState extends ConsumerState<_CommitSheet> {
   }
 
   Future<void> _commit() async {
+    final selected = _selected;
+    if (selected == null) return; // buton pasif olmalıydı; güvenlik.
     setState(() => _saving = true);
-    final failure = await widget.onCommit(_selected);
+    final failure = await widget.onCommit(selected);
     if (!mounted) return;
     if (failure != null) {
       // Yazım başarısız: taahhüt yok. Sheet açık kalır, PromiseView'a

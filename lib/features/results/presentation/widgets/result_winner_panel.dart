@@ -15,10 +15,16 @@ class ResultWinnerPanel extends StatelessWidget {
     super.key,
     required this.title,
     required this.confidence,
+    this.isTie = false,
   });
 
   final String title;
   final Confidence confidence;
+
+  /// En yüksek puanı paylaşan ≥2 seçenek olduğunda true (yalnız sunum
+  /// hesabı). true iken hiçbir seçenek kazanan/önerilen gösterilmez;
+  /// tarafsız "başa baş" görünümü kullanılır. Geriye uyumlu (varsayılan false).
+  final bool isTie;
 
   @override
   Widget build(BuildContext context) {
@@ -31,33 +37,44 @@ class ResultWinnerPanel extends StatelessWidget {
             ? AppSemanticColors.dark
             : AppSemanticColors.light);
 
+    // Eşitlikte tarafsız görünüm; aksi halde güven seviyesine göre.
     // low → info/nötr; ASLA error/kırmızı (kullanıcıya "algoritma güvenilmez"
-    // hissi vermemek için). Her seviyede renk + ikon + açık metin birlikte.
+    // hissi vermemek için). Her durumda renk + ikon + açık metin birlikte.
+    final String contextLabel = isTie ? 'Başa baş sonuç' : 'Öne çıkan seçenek';
+    final String headline = isTie ? 'Karar sende' : title;
     final (
       Color badgeColor,
       IconData badgeIcon,
       String badgeLabel,
       String support
-    ) = switch (confidence) {
-      Confidence.high => (
-          semantic.success,
-          Icons.verified_outlined,
-          'Yüksek güven',
-          'Puanlamana göre bu seçenek belirgin biçimde öne çıkıyor.',
-        ),
-      Confidence.medium => (
-          semantic.warning,
-          Icons.balance_outlined,
-          'Orta güven',
-          'Puanlamana göre bu seçenek öne çıkıyor.',
-        ),
-      Confidence.low => (
-          semantic.info,
-          Icons.compare_arrows_outlined,
-          'Yakın sonuç',
-          'Sonuçlar birbirine yakın; kendi önceliklerini de düşün.',
-        ),
-    };
+    ) = isTie
+        ? (
+            semantic.info,
+            Icons.balance_outlined,
+            'Eşit puan',
+            'En yüksek puanı paylaşan seçenekler var. '
+                'Son seçimi kendi önceliklerine göre yap.',
+          )
+        : switch (confidence) {
+            Confidence.high => (
+                semantic.success,
+                Icons.verified_outlined,
+                'Yüksek güven',
+                'Puanlamana göre bu seçenek belirgin biçimde öne çıkıyor.',
+              ),
+            Confidence.medium => (
+                semantic.warning,
+                Icons.balance_outlined,
+                'Orta güven',
+                'Puanlamana göre bu seçenek öne çıkıyor.',
+              ),
+            Confidence.low => (
+                semantic.info,
+                Icons.compare_arrows_outlined,
+                'Yakın sonuç',
+                'Sonuçlar birbirine yakın; kendi önceliklerini de düşün.',
+              ),
+          };
 
     return Container(
       width: double.infinity,
@@ -93,14 +110,14 @@ class ResultWinnerPanel extends StatelessWidget {
           ),
           const SizedBox(height: AppTokens.s3),
           Text(
-            'Öne çıkan seçenek',
+            contextLabel,
             style: theme.textTheme.labelMedium?.copyWith(
               color: scheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: AppTokens.s1),
           Text(
-            title,
+            headline,
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.headlineSmall?.copyWith(

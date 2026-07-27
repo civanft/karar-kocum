@@ -51,8 +51,11 @@ void main() {
         result.when(ok: (d) => d, err: (_) => fail('karar oluşmadı'));
     final editor = container.read(decisionEditorProvider(decision.id).notifier);
     await container.read(decisionEditorProvider(decision.id).future);
-    for (final o in decision.options) {
-      editor.setScore(o.id, decision.criteria.first.id, 7);
+    // Belirgin kazanan (NON-TIE): bu testler önerilen-önseçili normal commit
+    // akışını doğrular; eşitlik ayrı bir test dosyasında kapsanır.
+    const scores = [9, 5];
+    for (final (i, o) in decision.options.indexed) {
+      editor.setScore(o.id, decision.criteria.first.id, scores[i]);
     }
     // DİKKAT: burada `await Future.delayed(...)` KULLANILMAZ — testWidgets
     // FakeAsync zone'unda çalışır, Future.delayed bir TIMER'dır ve sahte

@@ -16,6 +16,7 @@ class ResultRankTile extends StatelessWidget {
     required this.score,
     required this.isWinner,
     this.isChosen = false,
+    this.isTiedLeader = false,
   });
 
   final int rank;
@@ -27,6 +28,11 @@ class ResultRankTile extends StatelessWidget {
 
   /// Kullanıcının "Kararımı Verdim" ile seçtiği seçenek.
   final bool isChosen;
+
+  /// En yüksek puanı paylaşan seçeneklerden biri (eşitlik). Bu durumda
+  /// [isWinner] false verilmeli — "Önerilen"/primary vurgu gösterilmez.
+  /// Geriye uyumlu (varsayılan false).
+  final bool isTiedLeader;
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +46,7 @@ class ResultRankTile extends StatelessWidget {
     final scoreText = score.toStringAsFixed(0);
     final statusParts = <String>[
       if (isWinner) 'önerilen',
+      if (isTiedLeader) 'eşit lider',
       if (isChosen) 'seçildi',
     ];
     final semanticsLabel = 'Sıra $rank, $title, $scoreText bölü 100 puan'
@@ -64,7 +71,7 @@ class ResultRankTile extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodyLarge?.copyWith(
-                        fontWeight: isWinner || isChosen
+                        fontWeight: isWinner || isChosen || isTiedLeader
                             ? FontWeight.bold
                             : FontWeight.normal,
                       ),
@@ -74,7 +81,7 @@ class ResultRankTile extends StatelessWidget {
                   Text('$scoreText/100', style: theme.textTheme.labelLarge),
                 ],
               ),
-              if (isWinner || isChosen) ...[
+              if (isWinner || isTiedLeader || isChosen) ...[
                 const SizedBox(height: AppTokens.s1),
                 Wrap(
                   spacing: AppTokens.s2,
@@ -85,6 +92,12 @@ class ResultRankTile extends StatelessWidget {
                         label: 'Önerilen',
                         color: scheme.primary,
                         icon: Icons.star_outline_rounded,
+                      ),
+                    if (isTiedLeader)
+                      _StatusTag(
+                        label: 'Eşit puan',
+                        color: semantic.info,
+                        icon: Icons.balance_outlined,
                       ),
                     if (isChosen)
                       _StatusTag(

@@ -12,6 +12,7 @@ void main() {
     double score = 78,
     bool isWinner = false,
     bool isChosen = false,
+    bool isTiedLeader = false,
     ThemeData? theme,
     double textScale = 1.0,
     Size size = const Size(390, 844),
@@ -33,6 +34,7 @@ void main() {
                 score: score,
                 isWinner: isWinner,
                 isChosen: isChosen,
+                isTiedLeader: isTiedLeader,
               ),
             ),
           ),
@@ -81,6 +83,41 @@ void main() {
     expect(
       find.bySemanticsLabel(
         RegExp('Sıra 1.*iPhone 16.*78 bölü 100 puan.*önerilen'),
+      ),
+      findsOneWidget,
+    );
+    handle.dispose();
+  });
+
+  testWidgets('tied leader: "Eşit puan" + balance ikon; "Önerilen" yok',
+      (tester) async {
+    await pump(tester, isTiedLeader: true);
+    expect(find.text('Eşit puan'), findsOneWidget);
+    expect(find.byIcon(Icons.balance_outlined), findsOneWidget);
+    expect(find.text('Önerilen'), findsNothing);
+    expect(find.byIcon(Icons.star_outline_rounded), findsNothing);
+  });
+
+  testWidgets('tied leader + chosen: her iki etiket görünür', (tester) async {
+    await pump(tester, isTiedLeader: true, isChosen: true);
+    expect(find.text('Eşit puan'), findsOneWidget);
+    expect(find.text('Seçildi'), findsOneWidget);
+    expect(find.text('Önerilen'), findsNothing);
+  });
+
+  testWidgets('tied leader Semantics label "eşit lider" içerir',
+      (tester) async {
+    final handle = tester.ensureSemantics();
+    await pump(
+      tester,
+      rank: 1,
+      title: 'Deniz tatili',
+      score: 56,
+      isTiedLeader: true,
+    );
+    expect(
+      find.bySemanticsLabel(
+        RegExp('Sıra 1.*Deniz tatili.*56 bölü 100 puan.*eşit lider'),
       ),
       findsOneWidget,
     );
