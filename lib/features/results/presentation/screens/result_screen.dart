@@ -372,6 +372,9 @@ class _CommitSection extends StatelessWidget {
       context: context,
       useSafeArea: true,
       showDragHandle: true,
+      // İçeriğe göre boyutlan (varsayılan ~%56 sınırı yerine): kısa listede
+      // tüm kartlar + CTA tam görünür; uzun listede maxHeight'e kadar kaydırır.
+      isScrollControlled: true,
       builder: (sheetCtx) => _CommitSheet(
         options: decision.options,
         initialId: initial,
@@ -436,65 +439,98 @@ class _CommitSheetState extends ConsumerState<_CommitSheet> {
         onAnswer: widget.onPromiseAnswer,
       );
     }
-    return Padding(
-      padding: EdgeInsets.only(
-        left: AppTokens.s4,
-        right: AppTokens.s4,
-        bottom: MediaQuery.viewInsetsOf(context).bottom + AppTokens.s4,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Hangisini seçtin?', style: theme.textTheme.titleLarge),
-          const SizedBox(height: AppTokens.s2),
-          for (final option in widget.options)
-            InkWell(
-              onTap:
-                  _saving ? null : () => setState(() => _selected = option.id),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: AppTokens.s2),
-                child: Row(
+    final scheme = theme.colorScheme;
+    // Ekranın tamamını kontrolsüz kaplamasın: makul max yükseklik + kaydırma.
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.75;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: AppTokens.s4,
+          right: AppTokens.s4,
+          top: AppTokens.s2,
+          bottom: MediaQuery.viewInsetsOf(context).bottom + AppTokens.s4,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Başlık bloğu — sıcak bağlam.
+            Row(
+              children: [
+                Icon(Icons.flag_outlined, size: 18, color: scheme.primary),
+                const SizedBox(width: AppTokens.s2),
+                Text(
+                  'Son adım',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppTokens.s1),
+            Text('Hangisini seçtin?', style: theme.textTheme.titleLarge),
+            const SizedBox(height: AppTokens.s1),
+            Text(
+              widget.isTie
+                  ? 'Seçenekler başa baş. '
+                      'Son seçimi kendi önceliklerine göre yap.'
+                  : 'Öneriyi değiştirebilirsin; son karar sana ait.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: AppTokens.s4),
+            // Seçenek kartları — çok seçenek/büyük yazıda kaydırılabilir.
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Icon(
-                      option.id == _selected
-                          ? Icons.radio_button_checked
-                          : Icons.radio_button_unchecked,
-                      color: option.id == _selected
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: AppTokens.s3),
-                    Expanded(child: Text(option.title)),
-                    // Eşitlikte tarafsızlık: hiçbir seçenek "önerilen" değil.
-                    if (!widget.isTie &&
-                        option.id == widget.recommendedOptionId)
-                      Text(
-                        'önerilen ⭐',
-                        style: theme.textTheme.labelSmall,
+                    for (final option in widget.options)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: AppTokens.s2),
+                        child: _OptionSelectCard(
+                          title: option.title,
+                          selected: option.id == _selected,
+                          // Eşitlikte tarafsızlık: hiçbir seçenek "önerilen".
+                          recommended: !widget.isTie &&
+                              option.id == widget.recommendedOptionId,
+                          onTap: _saving
+                              ? null
+                              : () => setState(() => _selected = option.id),
+                        ),
                       ),
                   ],
                 ),
               ),
             ),
-          const SizedBox(height: AppTokens.s2),
-          FilledButton(
-            // Eşitlikte kullanıcı bir seçenek seçene dek pasif.
-            onPressed: (_saving || _selected == null) ? null : _commit,
-            child: _saving
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Bu kararı veriyorum'),
-          ),
-          if (widget.canRevert)
-            TextButton(
-              onPressed: _saving ? null : _revert,
-              child: const Text('Kararı geri al'),
+            const SizedBox(height: AppTokens.s3),
+            FilledButton(
+              // Eşitlikte kullanıcı bir seçenek seçene dek pasif.
+              onPressed: (_saving || _selected == null) ? null : _commit,
+              child: _saving
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Bu kararı veriyorum'),
             ),
-        ],
+            if (widget.canRevert)
+              TextButton.icon(
+                onPressed: _saving ? null : _revert,
+                // Sakin nötr — ana CTA ile rekabet etmez (sert kırmızı yok).
+                style: TextButton.styleFrom(
+                  foregroundColor: scheme.onSurfaceVariant,
+                ),
+                icon: const Icon(Icons.undo_rounded, size: 18),
+                label: const Text('Kararı geri al'),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -578,21 +614,36 @@ class _PromiseViewState extends State<_PromiseView> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final semantic = theme.extension<AppSemanticColors>() ??
+        (theme.brightness == Brightness.dark
+            ? AppSemanticColors.dark
+            : AppSemanticColors.light);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        AppTokens.s6,
-        AppTokens.s4,
-        AppTokens.s6,
-        AppTokens.s6,
+      padding: EdgeInsets.only(
+        left: AppTokens.s6,
+        right: AppTokens.s6,
+        top: AppTokens.s4,
+        bottom: MediaQuery.viewInsetsOf(context).bottom + AppTokens.s6,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(Icons.check_circle, size: 48, color: theme.colorScheme.primary),
+          // Kutlama değil sakin mühür: outline success onay.
+          Center(
+            child: Icon(
+              Icons.check_circle_outline,
+              size: 48,
+              color: semantic.success,
+            ),
+          ),
           const SizedBox(height: AppTokens.s3),
           Text(
             'Kararın kaydedildi.',
-            style: theme.textTheme.titleLarge,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: AppTokens.s1),
@@ -600,9 +651,11 @@ class _PromiseViewState extends State<_PromiseView> {
             widget.chosenTitle,
             style: theme.textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.bold,
-              color: theme.colorScheme.primary,
+              color: scheme.onSurface,
             ),
             textAlign: TextAlign.center,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: AppTokens.s6),
           Text(
@@ -610,14 +663,121 @@ class _PromiseViewState extends State<_PromiseView> {
             style: theme.textTheme.bodyLarge,
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: AppTokens.s4),
-          FilledButton(
-            onPressed: _busy ? null : () => _answer(optIn: true),
-            child: const Text('Evet, sor'),
+          const SizedBox(height: AppTokens.s1),
+          Text(
+            'İstersen kararını birlikte takip ederiz.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
           ),
+          const SizedBox(height: AppTokens.s4),
+          FilledButton.icon(
+            onPressed: _busy ? null : () => _answer(optIn: true),
+            icon: const Icon(Icons.notifications_active_outlined, size: 20),
+            label: const Text('Evet, sor'),
+          ),
+          const SizedBox(height: AppTokens.s1),
           TextButton(
             onPressed: _busy ? null : () => _answer(optIn: false),
             child: const Text('Şimdi değil'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Commit sheet seçim kartı — tam dokunulabilir, border'lı sıcak yüzey.
+/// Radyo ikonları (checked/unchecked) korunur; seçili primary tonlu.
+class _OptionSelectCard extends StatelessWidget {
+  const _OptionSelectCard({
+    required this.title,
+    required this.selected,
+    required this.recommended,
+    required this.onTap,
+  });
+
+  final String title;
+  final bool selected;
+  final bool recommended;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      child: Container(
+        padding: const EdgeInsets.all(AppTokens.s3),
+        decoration: BoxDecoration(
+          color: selected
+              ? scheme.primary.withValues(alpha: 0.08)
+              : scheme.surfaceContainer,
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          border: Border.all(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              color: selected ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: AppTokens.s3),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyLarge,
+              ),
+            ),
+            if (recommended) ...[
+              const SizedBox(width: AppTokens.s2),
+              const _RecommendedBadge(),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// "Önerilen" rozeti — ikon + metin (emoji yıldız değil).
+class _RecommendedBadge extends StatelessWidget {
+  const _RecommendedBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppTokens.s2,
+        vertical: 2,
+      ),
+      decoration: BoxDecoration(
+        color: scheme.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppTokens.radiusSm),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.star_outline_rounded, size: 14, color: scheme.primary),
+          const SizedBox(width: AppTokens.s1),
+          Text(
+            'Önerilen',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.primary,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
