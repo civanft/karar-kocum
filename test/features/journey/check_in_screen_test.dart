@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:karar_veriyorum/core/theme/app_theme.dart';
 import 'package:karar_veriyorum/features/decision/data/repositories/in_memory_decision_repository.dart';
 import 'package:karar_veriyorum/features/decision/domain/entities/decision.dart';
 import 'package:karar_veriyorum/features/decision/domain/repositories/decision_repository.dart';
@@ -26,8 +27,12 @@ void main() {
     bool decided = true,
     DecisionCheckIn? alreadyAnswered,
     DecisionRepository? repo,
+    bool useInvalidId = false,
+    ThemeData? theme,
+    double textScale = 1.0,
+    Size size = const Size(1000, 2000),
   }) async {
-    tester.view.physicalSize = const Size(1000, 2000);
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
@@ -61,7 +66,8 @@ void main() {
       await editor.submitCheckIn(alreadyAnswered);
     }
 
-    lastRoute = '/decision/${decision.id}/check-in';
+    final screenId = useInvalidId ? 'boyle-bir-karar-yok' : decision.id;
+    lastRoute = '/decision/$screenId/check-in';
     final router = GoRouter(
       initialLocation: lastRoute,
       routes: [
@@ -88,7 +94,15 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: MaterialApp.router(routerConfig: router),
+        child: MaterialApp.router(
+          theme: theme ?? AppTheme.light,
+          routerConfig: router,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
+        ),
       ),
     );
     await tester.pump();
@@ -244,6 +258,159 @@ void main() {
       container.read(decisionEditorProvider(id)).requireValue.hasCheckedIn,
       isFalse,
     );
+  });
+
+  // ---- Görsel Dilim 4B — sıcak koç dili ----
+
+  group('Görsel Dilim 4B', () {
+    testWidgets('koç paneli + destek metinleri; emoji YOK, ikonlar VAR',
+        (tester) async {
+      await pumpCheckIn(tester);
+
+      // Koç bölümü + kilitli metinler:
+      expect(find.text('Koçundan'), findsOneWidget);
+      expect(find.text('Nasıl gidiyor?'), findsOneWidget);
+      expect(
+        find.textContaining('Samsung kararının üzerinden'),
+        findsOneWidget,
+      );
+      // Kart destek metinleri:
+      expect(find.text('Kararımdan memnunum.'), findsOneWidget);
+      expect(find.text('Biraz daha zamana ihtiyacım var.'), findsOneWidget);
+      expect(find.text('Farklı bir seçim yapmak isterdim.'), findsOneWidget);
+      // Emoji tamamen kalktı:
+      expect(find.textContaining('😌'), findsNothing);
+      expect(find.textContaining('😐'), findsNothing);
+      expect(find.textContaining('😣'), findsNothing);
+      // Semantik ikonlar:
+      expect(find.byIcon(Icons.sentiment_satisfied_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.sentiment_neutral_outlined), findsOneWidget);
+      expect(
+        find.byIcon(Icons.sentiment_dissatisfied_outlined),
+        findsOneWidget,
+      );
+      // Güven notu sıcak yüzeyde:
+      expect(
+        find.textContaining('Cevabın yalnız sana ait'),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.lock_outline_rounded), findsOneWidget);
+    });
+
+    testWidgets('kart yüzeyi tam dokunulabilir: destek metnine dokun → enum',
+        (tester) async {
+      final id = await pumpCheckIn(tester);
+
+      // Label'a değil DESTEK metnine dokun (kartın tamamı dokunulabilir):
+      await tester.tap(find.text('Biraz daha zamana ihtiyacım var.'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        container.read(decisionEditorProvider(id)).requireValue.checkInStatus,
+        DecisionCheckIn.neutral,
+      );
+    });
+
+    testWidgets('her kartın dokunma hedefi ≥48dp', (tester) async {
+      await pumpCheckIn(tester);
+      for (final label in const ['Memnunum', 'Kararsızım', 'Pişmanım']) {
+        final card = find
+            .ancestor(of: find.text(label), matching: find.byType(InkWell))
+            .first;
+        expect(
+          tester.getSize(card).height,
+          greaterThanOrEqualTo(48),
+          reason: '$label kartı 48dp altında',
+        );
+      }
+    });
+
+    testWidgets('Semantics: button niteliği + anlaşılır label', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pumpCheckIn(tester);
+      expect(
+        find.bySemanticsLabel(RegExp('Memnunum. Kararımdan memnunum.')),
+        findsOneWidget,
+      );
+      expect(
+        find.bySemanticsLabel(RegExp('Pişmanım. Farklı bir seçim')),
+        findsOneWidget,
+      );
+      handle.dispose();
+    });
+
+    testWidgets('AlreadyDone: AppEmptyHint + Tamam → Home', (tester) async {
+      await pumpCheckIn(tester, alreadyAnswered: DecisionCheckIn.happy);
+
+      expect(find.text('Bu kararın kontrolünü zaten yaptın.'), findsOneWidget);
+      expect(
+        find.text('Bu karar için kontrol yanıtın kaydedildi.'),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.home_outlined), findsOneWidget);
+
+      await tester.tap(find.text('Tamam'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(lastRoute, '/home');
+      expect(find.text('HOME'), findsOneWidget);
+    });
+
+    testWidgets('not-decided: AppEmptyHint + Tamam → Home', (tester) async {
+      await pumpCheckIn(tester, decided: false);
+
+      expect(find.text('Bu karar henüz verilmiş değil.'), findsOneWidget);
+      expect(
+        find.text('Kontrol yapabilmek için önce kararını vermelisin.'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Tamam'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(lastRoute, '/home');
+    });
+
+    testWidgets('geçersiz ID: ham exception görünmez, güvenli metin + Home CTA',
+        (tester) async {
+      await pumpCheckIn(tester, useInvalidId: true);
+      // Provider error state'e düşene dek sınırlı pump:
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Bu karar açılamadı'), findsOneWidget);
+      expect(
+        find.text('Karar silinmiş veya artık erişilebilir olmayabilir.'),
+        findsOneWidget,
+      );
+      // Ham exception ayrıntısı YOK:
+      expect(find.textContaining('StateError'), findsNothing);
+      expect(find.textContaining('Yüklenemedi'), findsNothing);
+      expect(find.textContaining('bulunamadı'), findsNothing);
+
+      await tester.tap(find.text('Ana sayfaya dön'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(lastRoute, '/home');
+    });
+
+    testWidgets('dark render crash yok', (tester) async {
+      await pumpCheckIn(tester, theme: AppTheme.dark);
+      expect(find.text('Nasıl gidiyor?'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('320dp + textScale 1.3: taşma yok, kaydırılabilir',
+        (tester) async {
+      await pumpCheckIn(
+        tester,
+        size: const Size(320, 700),
+        textScale: 1.3,
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.byType(Scrollable), findsWidgets);
+      expect(find.text('Nasıl gidiyor?'), findsOneWidget);
+    });
   });
 }
 
