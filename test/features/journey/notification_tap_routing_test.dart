@@ -36,8 +36,7 @@ void main() {
     expect(container.read(pendingCheckInProvider), 'd42');
   });
 
-  test('yönlendirme yapılınca istek tüketilir (iki kez tetiklenmez)',
-      () async {
+  test('yönlendirme yapılınca istek tüketilir (iki kez tetiklenmez)', () async {
     await container.read(journeyBootstrapProvider)();
     scheduler.simulateTap('d42');
 
