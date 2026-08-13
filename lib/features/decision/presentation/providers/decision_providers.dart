@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/config/firebase_bootstrap.dart';
 import '../../../../core/services/id_generator.dart';
 import '../../../auth/presentation/providers/auth_providers.dart';
+import '../../../journey/data/follow_up_aware_decision_repository.dart';
+import '../../../journey/presentation/providers/journey_providers.dart';
 import '../../data/repositories/firestore_decision_repository.dart';
 import '../../data/repositories/in_memory_decision_repository.dart';
 import '../../domain/entities/decision.dart';
@@ -27,15 +29,23 @@ final decisionRepositoryProvider = Provider<DecisionRepository>((ref) {
   // select: yalnız uid DEĞİŞİNCE yeniden kur — AsyncLoading→AsyncData
   // geçişi repo'yu boşuna yeniden yaratıp in-memory veriyi düşürmesin.
   final uid = ref.watch(authStateProvider.select((s) => s.valueOrNull?.uid));
+  final DecisionRepository base;
   if (firebaseReady && uid != null) {
-    return FirestoreDecisionRepository(
+    base = FirestoreDecisionRepository(
       ref.watch(firestoreInstanceProvider),
       uid: uid,
     );
+  } else {
+    final repo = InMemoryDecisionRepository();
+    ref.onDispose(repo.dispose);
+    base = repo;
   }
-  final repo = InMemoryDecisionRepository();
-  ref.onDispose(repo.dispose);
-  return repo;
+  // Sprint C.1: silinen kararın takip bildirimi deponun kendi davranışı
+  // olarak iptal edilir — hiçbir silme yolu kancayı atlayamaz.
+  return FollowUpAwareDecisionRepository(
+    base,
+    ref.watch(followUpCoordinatorProvider),
+  );
 });
 
 final idGeneratorProvider = Provider<IdGenerator>((_) => IdGenerator());

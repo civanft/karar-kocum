@@ -69,6 +69,19 @@ service cloud.firestore {
           // Functions katmanında zod ile; rules üst-seviye şekli korur.
         }
 
+        // SPRINT C.2 — kontrol cevabı karar başına TEK kayıttır.
+        // checkInStatus yalnız daha önce YOKKEN yazılabilir; bir kez
+        // yazıldıktan sonra değiştirilemez/silinemez. Bu alana hiç
+        // dokunmayan güncellemeler (başlık, puan, taahhüt...) serbest.
+        function checkInWriteOnce() {
+          let touched = request.resource.data.diff(resource.data)
+                          .affectedKeys().hasAny(['checkInStatus']);
+          return !touched
+            || (!('checkInStatus' in resource.data)
+                && request.resource.data.checkInStatus
+                     in ['happy', 'neutral', 'regret']);
+        }
+
         // latestAnalysisId ve 'analyzed' statüsü yalnız Functions yazar.
         function serverFieldsUntouched() {
           return !request.resource.data.diff(resource.data)
@@ -84,7 +97,8 @@ service cloud.firestore {
           && request.resource.data.status != 'analyzed'
           && decisionCount(uid) < maxDecisions();
         allow update: if isOwner(uid) && decisionValid()
-          && serverFieldsUntouched();
+          && serverFieldsUntouched()
+          && checkInWriteOnce();
 
         // AI analizleri: fiziksel olarak ayrık yazma yolu (AD-9, audit K-2).
         match /aiAnalyses/{analysisId} {

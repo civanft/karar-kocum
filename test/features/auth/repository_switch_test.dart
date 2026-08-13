@@ -8,6 +8,7 @@ import 'package:karar_veriyorum/features/auth/presentation/providers/auth_provid
 import 'package:karar_veriyorum/features/decision/data/repositories/firestore_decision_repository.dart';
 import 'package:karar_veriyorum/features/decision/data/repositories/in_memory_decision_repository.dart';
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_providers.dart';
+import 'package:karar_veriyorum/features/journey/data/follow_up_aware_decision_repository.dart';
 
 /// Sabit kullanıcı yayımlayan sahte auth deposu.
 /// (Public: credits_test.dart de kullanır.)
@@ -40,7 +41,11 @@ void main() {
     addTearDown(container.dispose);
 
     expect(
-      container.read(decisionRepositoryProvider),
+      // Sprint C.1: depo takip-bildirimi sarmalayıcısıyla sarılır; buradaki
+      // soru hâlâ "hangi arka uç seçildi" — o yüzden .inner'a bakıyoruz.
+      (container.read(decisionRepositoryProvider)
+              as FollowUpAwareDecisionRepository)
+          .inner,
       isA<InMemoryDecisionRepository>(),
     );
     expect(container.read(currentUidProvider), 'local-user');
@@ -62,7 +67,11 @@ void main() {
     await container.read(authStateProvider.future);
 
     expect(
-      container.read(decisionRepositoryProvider),
+      // Sprint C.1: depo takip-bildirimi sarmalayıcısıyla sarılır; buradaki
+      // soru hâlâ "hangi arka uç seçildi" — o yüzden .inner'a bakıyoruz.
+      (container.read(decisionRepositoryProvider)
+              as FollowUpAwareDecisionRepository)
+          .inner,
       isA<FirestoreDecisionRepository>(),
     );
     expect(container.read(currentUidProvider), 'anon-1');
@@ -79,7 +88,11 @@ void main() {
     await container.read(authStateProvider.future);
 
     expect(
-      container.read(decisionRepositoryProvider),
+      // Sprint C.1: depo takip-bildirimi sarmalayıcısıyla sarılır; buradaki
+      // soru hâlâ "hangi arka uç seçildi" — o yüzden .inner'a bakıyoruz.
+      (container.read(decisionRepositoryProvider)
+              as FollowUpAwareDecisionRepository)
+          .inner,
       isA<InMemoryDecisionRepository>(),
     );
   });

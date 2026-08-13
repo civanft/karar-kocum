@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import 'features/ai_analysis/presentation/screens/ai_gallery_screen.dart';
 import 'features/decision/presentation/screens/decision_edit_screen.dart';
 import 'features/decision/presentation/screens/home_screen.dart';
 import 'features/decision/presentation/screens/new_decision_screen.dart';
+import 'features/journey/presentation/screens/check_in_screen.dart';
 import 'features/results/presentation/screens/result_screen.dart';
 import 'features/templates/presentation/screens/template_gallery_screen.dart';
 
@@ -34,18 +34,23 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/decision/:id/result',
+        builder: (_, state) => ResultScreen(
+          decisionId: state.pathParameters['id']!,
+          // Check-in akışından gelindiyse geri, Home'a döner (stack altında
+          // Home olmayabilir). Normal akışta parametre yok → varsayılan false.
+          returnHomeOnBack: state.uri.queryParameters['source'] == 'check-in',
+        ),
+      ),
+      // Sprint C.2 — bildirimden gelinen 1 hafta kontrolü.
+      GoRoute(
+        path: '/decision/:id/check-in',
         builder: (_, state) =>
-            ResultScreen(decisionId: state.pathParameters['id']!),
+            CheckInScreen(decisionId: state.pathParameters['id']!),
       ),
       // Sprint 3
       GoRoute(
         path: '/decision/:id/analyze',
         builder: (_, state) => const _PlaceholderScreen('AI Analiz — Sprint 3'),
-      ),
-      // DEV galerisi — UI'dan link yok; 6E temizliğinde kaldırılacak.
-      GoRoute(
-        path: '/dev/ai-gallery',
-        builder: (_, __) => const AiGalleryScreen(),
       ),
       // Sprint 5-6
       GoRoute(

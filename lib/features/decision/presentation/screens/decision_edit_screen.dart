@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/error/failure.dart';
+import '../../../../core/theme/app_palette.dart';
 import '../../../../core/theme/tokens.dart';
 import '../providers/decision_editor.dart';
 import '../providers/scoring_progress.dart';
@@ -28,77 +29,101 @@ class DecisionEditScreen extends ConsumerWidget {
         appBar: AppBar(),
         body: Center(child: Text('Karar yüklenemedi: $e')),
       ),
-      data: (decision) => DefaultTabController(
-        length: 3,
-        child: Scaffold(
-          appBar: AppBar(
-            title: Text(
-              decision.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            actions: [
-              IconButton(
-                icon: Icon(
-                  decision.isFavorite ? Icons.star : Icons.star_border,
-                  color: decision.isFavorite ? Colors.amber : null,
-                ),
-                tooltip: 'Favori',
-                onPressed: () => ref
-                    .read(decisionEditorProvider(decisionId).notifier)
-                    .toggleFavorite(),
+      data: (decision) {
+        final semantic = _semanticOf(context);
+        return DefaultTabController(
+          length: 3,
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text(
+                decision.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-            ],
-            bottom: TabBar(
-              tabs: [
-                const Tab(text: 'Seçenekler'),
-                const Tab(text: 'Kriterler'),
-                Tab(child: _ScoresTabLabel(decisionId: decisionId)),
-              ],
-            ),
-          ),
-          body: TabBarView(
-            children: [
-              OptionsTab(decisionId: decisionId),
-              CriteriaTab(decisionId: decisionId),
-              ScoresTab(decisionId: decisionId),
-            ],
-          ),
-          bottomNavigationBar: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(AppTokens.s4),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (blockers.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: AppTokens.s2),
-                      child: Text(
-                        _blockerMessage(ref, decisionId, blockers.first),
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            ),
-                      ),
-                    ),
-                  FilledButton.icon(
-                    onPressed: blockers.isEmpty
-                        ? () => context.push('/decision/$decisionId/result')
-                        : null,
-                    icon: const Icon(Icons.insights),
-                    label: const Text('Sonucu Gör'),
+              actions: [
+                IconButton(
+                  icon: Icon(
+                    decision.isFavorite ? Icons.star : Icons.star_border,
+                    color: decision.isFavorite ? semantic.warning : null,
                   ),
+                  tooltip: 'Favori',
+                  onPressed: () => ref
+                      .read(decisionEditorProvider(decisionId).notifier)
+                      .toggleFavorite(),
+                ),
+              ],
+              bottom: TabBar(
+                tabs: [
+                  const Tab(text: 'Seçenekler'),
+                  const Tab(text: 'Kriterler'),
+                  Tab(child: _ScoresTabLabel(decisionId: decisionId)),
                 ],
               ),
             ),
+            body: TabBarView(
+              children: [
+                OptionsTab(decisionId: decisionId),
+                CriteriaTab(decisionId: decisionId),
+                ScoresTab(decisionId: decisionId),
+              ],
+            ),
+            // Sabit işlem yüzeyi: sıcak surface + ince üst ayırıcı + SafeArea.
+            bottomNavigationBar: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                border: Border(
+                  top: BorderSide(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                ),
+              ),
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppTokens.s4),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (blockers.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: AppTokens.s2),
+                          child: Text(
+                            _blockerMessage(ref, decisionId, blockers.first),
+                            textAlign: TextAlign.center,
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
+                          ),
+                        ),
+                      FilledButton.icon(
+                        onPressed: blockers.isEmpty
+                            ? () => context.push('/decision/$decisionId/result')
+                            : null,
+                        icon: const Icon(Icons.insights),
+                        label: const Text('Sonucu Gör'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
+}
+
+/// Tema hep sağlar; kurulmamış bağlamda moda uygun güvenli varsayılan.
+AppSemanticColors _semanticOf(BuildContext context) {
+  final theme = Theme.of(context);
+  return theme.extension<AppSemanticColors>() ??
+      (theme.brightness == Brightness.dark
+          ? AppSemanticColors.dark
+          : AppSemanticColors.light);
 }
 
 /// PR-A3: puanlama engeli NİCELİKSEL mesaja zenginleşir; validator

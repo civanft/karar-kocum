@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:karar_veriyorum/core/theme/app_theme.dart';
 import 'package:karar_veriyorum/features/decision/data/repositories/in_memory_decision_repository.dart';
 import 'package:karar_veriyorum/features/decision/domain/entities/decision.dart';
 import 'package:karar_veriyorum/features/decision/domain/repositories/decision_repository.dart';
@@ -21,9 +22,11 @@ class _ThrowingRepository extends InMemoryDecisionRepository {
 void main() {
   Future<void> pumpScreen(
     WidgetTester tester,
-    DecisionRepository repo,
-  ) async {
-    tester.view.physicalSize = const Size(1000, 2000);
+    DecisionRepository repo, {
+    double textScale = 1.0,
+    Size size = const Size(1000, 2000),
+  }) async {
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
@@ -47,7 +50,15 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: MaterialApp.router(routerConfig: router),
+        child: MaterialApp.router(
+          theme: AppTheme.light,
+          routerConfig: router,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
+        ),
       ),
     );
     await tester.pump();
@@ -96,5 +107,31 @@ void main() {
     final persisted = await repo.getById(id);
     expect(persisted, isNotNull);
     expect(persisted!.title, 'Normal karar');
+  });
+
+  testWidgets('hero + şablon başlığı görünür (Görsel Dilim 2A)',
+      (tester) async {
+    final repo = InMemoryDecisionRepository();
+    addTearDown(repo.dispose);
+    await pumpScreen(tester, repo);
+
+    expect(find.text('Neyi netleştirmek istiyorsun?'), findsOneWidget);
+    expect(find.text('Bir şablonla başla'), findsOneWidget);
+    // Form alanı ve CTA korundu:
+    expect(find.byType(TextField), findsWidgets);
+    expect(find.text('Devam Et'), findsOneWidget);
+  });
+
+  testWidgets('dar ekran + textScale 1.3 taşma yok', (tester) async {
+    final repo = InMemoryDecisionRepository();
+    addTearDown(repo.dispose);
+    await pumpScreen(
+      tester,
+      repo,
+      textScale: 1.3,
+      size: const Size(360, 800),
+    );
+    expect(tester.takeException(), isNull);
+    expect(find.text('Devam Et'), findsOneWidget);
   });
 }

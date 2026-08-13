@@ -43,6 +43,10 @@ dependencies:
   # Abonelik
   purchases_flutter: ^8.1.0 # RevenueCat
 
+  # Yerel bildirim (Sprint C.1 — takip sözü; Firebase/FCM KULLANILMAZ)
+  flutter_local_notifications: ^17.2.3
+  timezone: ^0.9.4
+
   # Yerel depolama / yardımcılar
   shared_preferences: ^2.2.3
   flutter_secure_storage: ^9.2.2

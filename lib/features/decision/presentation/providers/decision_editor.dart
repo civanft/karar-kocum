@@ -187,6 +187,9 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
       // boşalıp applyPatch fırlatır (iyimser güncelleme geri alınır).
       decisionStatus: newer.decisionStatus ?? older.decisionStatus,
       chosenOptionId: newer.chosenOptionId ?? older.chosenOptionId,
+      // Sprint C.2: aynı gerekçe — kontrol cevabı bekleyen debounce
+      // yazımıyla birleşince DÜŞMEMELİ.
+      checkInStatus: newer.checkInStatus ?? older.checkInStatus,
     );
   }
 
@@ -385,6 +388,19 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
         decisionStatus: DecisionCommitStatus.decided,
         chosenOptionId: optionId,
       ),
+    );
+  }
+
+  // ---- Sprint C.2: 1 hafta kontrolü ----
+
+  /// Kontrol cevabını yazar. Karar başına TEK kayıt: karar verilmemişse
+  /// ya da zaten cevaplanmışsa sessizce geçer (rules de ayrıca zorlar).
+  Future<Failure?> submitCheckIn(DecisionCheckIn status) {
+    final current = state.valueOrNull;
+    if (current == null || !current.canCheckIn) return Future.value();
+    return _mutate(
+      (d) => d.copyWith(checkInStatus: status, checkedInAt: DateTime.now()),
+      (_) => DecisionPatch(checkInStatus: status),
     );
   }
 

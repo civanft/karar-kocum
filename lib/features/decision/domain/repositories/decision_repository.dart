@@ -14,6 +14,7 @@ class DecisionPatch {
     this.status,
     this.decisionStatus,
     this.chosenOptionId,
+    this.checkInStatus,
   });
 
   final String? title;
@@ -29,6 +30,11 @@ class DecisionPatch {
   final DecisionCommitStatus? decisionStatus;
   final String? chosenOptionId;
 
+  /// Sprint C.2 — 1 hafta kontrol cevabı. Dolu ise checkedInAt'i data
+  /// katmanı serverTimestamp ile yazar (Y-4: cihaz saati değil).
+  /// null = dokunma. Bir kez yazılır, güncellenmez.
+  final DecisionCheckIn? checkInStatus;
+
   bool get isEmpty =>
       title == null &&
       options == null &&
@@ -36,10 +42,17 @@ class DecisionPatch {
       scores == null &&
       isFavorite == null &&
       status == null &&
-      decisionStatus == null;
+      decisionStatus == null &&
+      checkInStatus == null;
 
   /// Patch'i bir karara uygular (in-memory repo ve testler için).
   Decision applyTo(Decision decision) {
+    if (checkInStatus != null) {
+      return decision.copyWith(
+        checkInStatus: checkInStatus,
+        checkedInAt: DateTime.now(),
+      );
+    }
     if (decisionStatus == DecisionCommitStatus.decided) {
       return decision.copyWith(
         decisionStatus: DecisionCommitStatus.decided,
