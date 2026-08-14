@@ -14,10 +14,68 @@ service cloud.firestore {
     // MAX_DECISIONS_PER_USER ile SENKRON tutulmalı (rules TS import edemez).
     function maxDecisions() { return 50; }
 
-    // Kullanıcının mevcut karar sayacı (user belgesi/alanı yoksa 0).
+    // ---- Merkezi yol yardımcıları ----
+    function userPath(uid) {
+      return /databases/$(db)/documents/users/$(uid);
+    }
+    function decisionPath(uid, decisionId) {
+      return /databases/$(db)/documents/users/$(uid)/decisions/$(decisionId);
+    }
+
+    // Kullanıcının BATCH ÖNCESİ karar sayacı (belge/alan yoksa 0).
     function decisionCount(uid) {
-      let path = /databases/$(db)/documents/users/$(uid);
-      return exists(path) ? get(path).data.get('decisionCount', 0) : 0;
+      return exists(userPath(uid)) ? get(userPath(uid)).data.get('decisionCount', 0) : 0;
+    }
+
+    // ---- SECURITY: sayaç ↔ atomik karar yazımı bağı ----
+    //
+    // decisionCount TEK BAŞINA ilerletilemez: yalnız AYNI batch'te gerçek
+    // bir karar create/delete edilir ve decisionCountMutationId o kararın
+    // id'sini taşırsa geçerlidir. Aksi hâlde tekrarlı azaltımla 50 karar
+    // sınırı aşılabiliyordu.
+    function counterKeysTouched() {
+      return request.resource.data.diff(resource.data)
+               .affectedKeys().hasAny(['decisionCount', 'decisionCountMutationId']);
+    }
+
+    // Sayaç +1: karar batch ÖNCESİ yok, SONRASI var.
+    function atomicCountUp(uid) {
+      let mid = request.resource.data.get('decisionCountMutationId', '');
+      let before = resource.data.get('decisionCount', 0);
+      return mid is string && mid != ''
+        && !exists(decisionPath(uid, mid))
+        && existsAfter(decisionPath(uid, mid))
+        && request.resource.data.decisionCount == before + 1
+        && before < maxDecisions();
+    }
+
+    // Sayaç -1: karar batch ÖNCESİ var, SONRASI yok.
+    function atomicCountDown(uid) {
+      let mid = request.resource.data.get('decisionCountMutationId', '');
+      let before = resource.data.get('decisionCount', 0);
+      return mid is string && mid != ''
+        && exists(decisionPath(uid, mid))
+        && !existsAfter(decisionPath(uid, mid))
+        && request.resource.data.decisionCount == before - 1
+        && request.resource.data.decisionCount >= 0;
+    }
+
+    // İlk user belgesi + ilk karar aynı batch'te (sayaç 0 → 1).
+    function atomicCountOnUserCreate(uid) {
+      let mid = request.resource.data.get('decisionCountMutationId', '');
+      return mid is string && mid != ''
+        && !exists(decisionPath(uid, mid))
+        && existsAfter(decisionPath(uid, mid))
+        && request.resource.data.decisionCount == 1;
+    }
+
+    // Karar tarafı (çift yönlü bağ): user sayacının PROJECTED durumu
+    // bu karar için doğru yönde ilerlemiş olmalı.
+    function counterBoundToDecision(uid, decisionId, delta) {
+      let before = decisionCount(uid);
+      let after = getAfter(userPath(uid)).data;
+      return after.get('decisionCount', 0) == before + delta
+        && after.get('decisionCountMutationId', '') == decisionId;
     }
 
     match /users/{uid} {
@@ -33,21 +91,21 @@ service cloud.firestore {
                'plan', 'planExpiresAt', 'quota',
                'freeAnalysisCredits', 'rewardCredits'
              ])
-        && (!request.resource.data.diff(resource.data)
-                .affectedKeys().hasAny(['decisionCount'])
+        // Sayaç/marker alanlarına dokunuluyorsa GERÇEK atomik mutasyon şart.
+        && (!counterKeysTouched()
             || (request.resource.data.decisionCount is int
-                && request.resource.data.decisionCount >= 0
-                && request.resource.data.decisionCount <=
-                     resource.data.get('decisionCount', 0) + 1
-                && request.resource.data.decisionCount >=
-                     resource.data.get('decisionCount', 0) - 1));
+                && (atomicCountUp(uid) || atomicCountDown(uid))));
 
       // İlk kayıt: istemci profil oluşturabilir ama kredi alanlarını
       // GÖNDEREMEZ — başlangıç değerlerini sunucu (lazy-init) uygular.
       allow create: if isOwner(uid)
         && request.resource.data.plan == 'free'
         && !('freeAnalysisCredits' in request.resource.data)
-        && !('rewardCredits' in request.resource.data);
+        && !('rewardCredits' in request.resource.data)
+        // Sayaç alanları ilk yazımda da yalnız atomik karar create'iyle:
+        && (!('decisionCount' in request.resource.data)
+              && !('decisionCountMutationId' in request.resource.data)
+            || atomicCountOnUserCreate(uid));
 
       allow delete: if false; // silme yalnız deleteAccount fonksiyonu üzerinden
 
@@ -90,12 +148,17 @@ service cloud.firestore {
                 || resource.data.status == 'analyzed');
         }
 
-        allow read, delete: if isOwner(uid);
+        allow read: if isOwner(uid);
+        // SECURITY: silme, user sayacının -1 ilerlemesiyle BAĞLIDIR.
+        allow delete: if isOwner(uid)
+          && counterBoundToDecision(uid, decisionId, -1);
         // Hotfix madde 5: kullanıcı başına en fazla maxDecisions() karar.
+        // SECURITY: create, user sayacının +1 ilerlemesiyle BAĞLIDIR.
         allow create: if isOwner(uid) && decisionValid()
           && !('latestAnalysisId' in request.resource.data)
           && request.resource.data.status != 'analyzed'
-          && decisionCount(uid) < maxDecisions();
+          && decisionCount(uid) < maxDecisions()
+          && counterBoundToDecision(uid, decisionId, 1);
         allow update: if isOwner(uid) && decisionValid()
           && serverFieldsUntouched()
           && checkInWriteOnce();

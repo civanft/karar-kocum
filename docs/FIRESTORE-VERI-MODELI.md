@@ -39,12 +39,16 @@ Gömülü `aiAnalysis` alanı audit K-2'nin sunucu ayağının kaynağıydı: is
 | `quota` | map | **yalnız Functions** | `{month: "2026-07", used: 3}` — lazy reset |
 | `consent` | map | istemci | `{analytics: bool, updatedAt: Timestamp}` |
 | `createdAt` / `lastActiveAt` | Timestamp | istemci | `serverTimestamp()` ile |
+| `decisionCount` | int | istemci (yalnız atomik) | Karar cap'i (50) sayacı — bkz. 1.3 |
+| `decisionCountMutationId` | string? | istemci (yalnız atomik) | Son sayaç mutasyonunun `decisionId`'si. `decisionCount` değişimini AYNI batch'teki gerçek karar create/delete'ine bağlar (rules doğrular); bağımsız değiştirilemez. Eski belgelerde YOK olabilir (opsiyonel, migration gerekmez). Ürün verisi değildir, kullanıcıya gösterilmez. |
 
 ### 1.2 İndeks
 Yok — belgeye her zaman doğrudan `uid` ile erişilir. Tek-alan otomatik indeksler yeterli.
 
 ### 1.3 Güvenlik kuralları (özet — tam hali firestore.rules'ta)
 Okuma: yalnız sahibi. Update: sahibi, **ancak** `plan`/`planExpiresAt`/`quota` alanlarına dokunamaz (diff kontrolü). Create: `plan == 'free'` zorunlu. Delete: kapalı (yalnız `deleteAccount` fonksiyonu).
+
+**Sayaç bütünlüğü (security hotfix):** `decisionCount` ve `decisionCountMutationId` tek başına yazılamaz. `+1` yalnız aynı batch'te `users/{uid}/decisions/{decisionId}` **oluşuyorsa**, `-1` yalnız **siliniyorsa** ve marker o `decisionId`'yi taşıyorsa geçerlidir (`exists`/`existsAfter`). Karar create/delete kuralları da user sayacının projected (`getAfter`) durumunu doğrular — bağ çift yönlüdür. Böylece sayacı bağımsız azaltıp 50 karar sınırını aşmak imkânsızdır.
 
 ### 1.4 Boyut tahmini
 Tipik **~0,6 KB**, tavan ~2 KB. 100K kullanıcı ≈ 60-200 MB — ihmal edilebilir.

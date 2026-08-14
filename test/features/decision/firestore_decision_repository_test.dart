@@ -137,6 +137,68 @@ void main() {
     });
   });
 
+  // ---- SECURITY HOTFIX: sayaç ↔ atomik karar yazımı bağı ----
+  //
+  // decisionCountMutationId, sayaç mutasyonunu AYNI batch'teki gerçek
+  // karar create/delete'ine bağlayan eşleme alanıdır (rules doğrular).
+  group('decisionCount atomikliği (marker alanı)', () {
+    test('create batch: sayaç +1 VE marker karar id\'sini taşır', () async {
+      await repo.upsert(decision(id: 'd1'));
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['decisionCount'], 1);
+      expect(user.data()!['decisionCountMutationId'], 'd1');
+    });
+
+    test('ikinci create: marker en son karar id\'sine ilerler', () async {
+      await repo.upsert(decision(id: 'd1'));
+      await repo.upsert(decision(id: 'd2'));
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['decisionCount'], 2);
+      expect(user.data()!['decisionCountMutationId'], 'd2');
+    });
+
+    test('delete batch: sayaç -1 VE marker silinen karar id\'sini taşır',
+        () async {
+      await repo.upsert(decision(id: 'd1'));
+      await repo.upsert(decision(id: 'd2'));
+      await repo.delete('d1');
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['decisionCount'], 1);
+      expect(user.data()!['decisionCountMutationId'], 'd1');
+    });
+
+    test('ilk user create: plan free + sayaç 1 + marker doğru', () async {
+      await repo.upsert(decision(id: 'd1'));
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['plan'], 'free');
+      expect(user.data()!['decisionCount'], 1);
+      expect(user.data()!['decisionCountMutationId'], 'd1');
+    });
+
+    test('mevcut premium user: plan korunur, sayaç artar, marker yazılır',
+        () async {
+      await firestore
+          .collection('users')
+          .doc(uid)
+          .set({'plan': 'premium', 'decisionCount': 5});
+
+      await repo.upsert(decision(id: 'dx'));
+
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['plan'], 'premium');
+      expect(user.data()!['decisionCount'], 6);
+      expect(user.data()!['decisionCountMutationId'], 'dx');
+    });
+
+    test('olmayan karar silinince sayaç ve marker DEĞİŞMEZ (no-op)', () async {
+      await repo.upsert(decision(id: 'd1'));
+      await repo.delete('yok-boyle-karar');
+      final user = await firestore.collection('users').doc(uid).get();
+      expect(user.data()!['decisionCount'], 1);
+      expect(user.data()!['decisionCountMutationId'], 'd1'); // ilerlemedi
+    });
+  });
+
   group('applyPatch (K-2 alan bazlı yazım)', () {
     test('yalnız patch\'teki alanlar değişir, diğerleri korunur', () async {
       await repo.upsert(decision());
