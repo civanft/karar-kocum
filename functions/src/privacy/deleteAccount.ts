@@ -7,6 +7,7 @@ import type { RequestContext } from "../core/types.js";
 import { buildContext } from "../middleware/context.js";
 import {
   deleteAccountCascade,
+  deletionDiagnosticOf,
   type AccountDeletionPorts,
 } from "./delete_account_service.js";
 import { firestoreAccountDeletionPorts } from "./firestore_account_deletion_ports.js";
@@ -53,12 +54,10 @@ export async function handleDeleteAccount(
     return result;
   } catch (error) {
     const logCtx = ctx ?? contextlessLogContext();
-    const cause = (error as { cause?: unknown }).cause;
-    if (cause !== undefined) {
-      // Yalnız SUNUCU log'una; istemciye giden mesaj toHttpsError'da genel.
-      log("error", "account_deletion_cause", logCtx, {
-        reason: cause instanceof Error ? cause.message : String(cause),
-      });
+    const diagnostic = deletionDiagnosticOf(error);
+    if (diagnostic !== undefined) {
+      // YALNIZ sabit alanlar: ham mesaj/stack/yol/uid loglanmaz (PR-R1C).
+      log("error", "account_deletion_failed", logCtx, { ...diagnostic });
     }
     throw toHttpsError(error, logCtx);
   }

@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AppError } from "../src/core/errors";
 import {
   deleteAccountCascade,
+  deletionDiagnosticOf,
   type AccountDeletionPorts,
 } from "../src/privacy/delete_account_service";
 
@@ -141,8 +142,10 @@ describe("deleteAccountCascade", () => {
     expect(err.message).not.toContain(UID);
   });
 
-  it("16) hata nedeni cause olarak KORUNUR (üretimde teşhis için)", async () => {
-    const cause = new Error("firestore quota");
+  it("16) hata nedeni GÜVENLİ teşhis olarak taşınır (ham cause DEĞİL)", async () => {
+    const cause = Object.assign(new Error("firestore quota users/gizli-uid"), {
+      code: "resource-exhausted",
+    });
     const { ports } = makePorts({
       recursiveDeleteUser: vi.fn(async () => {
         throw cause;
@@ -153,9 +156,14 @@ describe("deleteAccountCascade", () => {
       (e) => e,
     )) as AppError;
 
-    // İstemciye giden mesaj güvenli kalır; neden yalnız cause'ta durur.
+    // İstemciye giden mesaj güvenli; ham hata hiçbir yere iliştirilmez.
     expect(err.message).not.toContain("quota");
-    expect((err as Error).cause).toBe(cause);
+    expect((err as Error).cause).toBeUndefined();
+    expect(deletionDiagnosticOf(err)).toEqual({
+      failureStage: "firestore",
+      causeType: "Error",
+      causeCode: "resource-exhausted",
+    });
   });
 
   it("başarılı akış { deleted: true } döner", async () => {

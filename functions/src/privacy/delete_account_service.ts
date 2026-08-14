@@ -37,17 +37,72 @@ function isUserNotFound(error: unknown): boolean {
   );
 }
 
+/** Hatanın hangi adımda oluştuğu — sabit küme, PII taşımaz. */
+export type AccountDeletionFailureStage = "firestore" | "auth";
+
 /**
- * Gerçek nedeni istemciye SIZDIRMADAN saklar.
- *
- * NEDEN: mesajın kendisi güvenli ve genel olmak zorunda; ama neden hiç
- * saklanmazsa üretimde başarısız bir silme "Veriler silinemedi" dışında
- * hiçbir iz bırakmaz ve teşhis edilemez. Neden yalnız sunucu log'una
- * (handler'da) yazılır.
+ * Üretimde teşhis için taşınan TEK bilgi. Hepsi sabit/denetlenmiş
+ * değerlerdir; ham mesaj, stack, belge yolu veya uid ASLA girmez.
  */
-function withCause(error: AppError, cause: unknown): AppError {
-  (error as Error).cause = cause;
+export interface AccountDeletionDiagnostic {
+  failureStage: AccountDeletionFailureStage;
+  causeType: string;
+  causeCode: string;
+}
+
+/**
+ * İzinli kod biçimi. '/' ve ':' bilinçli olarak DIŞARIDA: belge yolu ya da
+ * "uid:reward" gibi bir anahtar yanlışlıkla kod alanına düşerse geçemesin.
+ */
+const SAFE_TOKEN = /^[A-Za-z0-9_.-]{1,64}$/;
+
+function safeToken(value: unknown): string {
+  if (typeof value !== "string" && typeof value !== "number") return "unknown";
+  const text = String(value);
+  return SAFE_TOKEN.test(text) ? text : "unknown";
+}
+
+/**
+ * Ham hatayı güvenli teşhis alanlarına indirger.
+ *
+ * NEDEN: Firestore Admin hatalarının message/stack'i belge YOLUNU taşır ve
+ * yol uid içerir. Log hijyeni ham uid'i yasaklar (§9.2); bu yüzden hatadan
+ * yalnız sınıf adı ve kod alanı — o da biçim denetiminden geçerek — alınır.
+ */
+export function describeCause(
+  failureStage: AccountDeletionFailureStage,
+  cause: unknown,
+): AccountDeletionDiagnostic {
+  const code = (cause as { code?: unknown } | null | undefined)?.code;
+  return {
+    failureStage,
+    causeType: safeToken(
+      (cause as { constructor?: { name?: unknown } } | null | undefined)
+        ?.constructor?.name,
+    ),
+    causeCode: safeToken(code),
+  };
+}
+
+/** Teşhis, Symbol ile iliştirilir: JSON'a serileşmez, kazara sızmaz. */
+const DIAGNOSTIC = Symbol("accountDeletionDiagnostic");
+
+function withDiagnostic(
+  error: AppError,
+  diagnostic: AccountDeletionDiagnostic,
+): AppError {
+  (error as unknown as Record<symbol, unknown>)[DIAGNOSTIC] = diagnostic;
   return error;
+}
+
+/** Handler bunu okuyup loglar; başka hiçbir yerde hata detayı yoktur. */
+export function deletionDiagnosticOf(
+  error: unknown,
+): AccountDeletionDiagnostic | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  return (error as Record<symbol, AccountDeletionDiagnostic | undefined>)[
+    DIAGNOSTIC
+  ];
 }
 
 export async function deleteAccountCascade(
@@ -63,9 +118,9 @@ export async function deleteAccountCascade(
     }
   } catch (cause) {
     // Auth'a GEÇİLMEZ: veri dururken hesabı silmek yetim veri bırakır.
-    throw withCause(
+    throw withDiagnostic(
       new AppError("internal", "Veriler silinemedi, tekrar dene."),
-      cause,
+      describeCause("firestore", cause),
     );
   }
 
@@ -74,9 +129,9 @@ export async function deleteAccountCascade(
     await ports.deleteAuthUser(uid);
   } catch (error) {
     if (!isUserNotFound(error)) {
-      throw withCause(
+      throw withDiagnostic(
         new AppError("internal", "Hesap silinemedi, tekrar dene."),
-        error,
+        describeCause("auth", error),
       );
     }
     // Zaten yok → idempotent başarı.
