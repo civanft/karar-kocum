@@ -49,7 +49,31 @@ flutter test --coverage                                    # tüm testler yeşil
 bash scripts/check_coverage.sh 80                          # kapsam ≥ %80
 ```
 
+Functions tarafı (Node 20; emulator gerektirenler için Java 21):
+
+```sh
+npm --prefix functions run lint
+npm --prefix functions run build
+npm --prefix functions test              # birim testler
+npm --prefix functions run test:rules    # Firestore Rules (emulator)
+npm --prefix functions run test:privacy  # hesap silme kaskadı (Firestore+Auth emulator)
+```
+
+Emulator testleri yalnız `demo-karar` projesine bağlanır; emulator host
+değişkenleri yoksa fail-fast eder (canlı projeye asla dokunmaz).
+
 Katman kuralı: `presentation → domain ← data`; domain saf Dart (flutter import edemez); `core/`, `features/`'ı import edemez.
+
+## Hesap ve veri silme (mağaza zorunluluğu)
+
+Ayarlar → **Hesap ve Veriler** → "Hesabımı ve Verilerimi Sil" akışı, `deleteAccount`
+callable'ını çağırır: `users/{uid}` ağacı recursive, `rateLimits/{uid}` ve
+`rateLimits/{uid}:reward` ayrıca silinir, en son Auth hesabı silinir. `ops/*`
+global sayaçları korunur. Cihazdaki takip tercihleri ve planlı bildirimler
+temizlenir, ardından yeni ve boş bir misafir oturumu açılır.
+
+Deploy sırası ZORUNLU: önce `firebase deploy --only functions:deleteAccount`,
+sonra istemci sürümü. Ayrıntı: [docs/FIRESTORE-VERI-MODELI.md](docs/FIRESTORE-VERI-MODELI.md) §8.
 
 ## Sprint durumu
 

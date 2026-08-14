@@ -27,6 +27,12 @@ class PrefsFollowUpPreferences implements FollowUpPreferences {
     }
     await prefs.setStringList(_key, current);
   }
+
+  @override
+  Future<void> clearAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_key);
+  }
 }
 
 /// Testler ve yerel mod için bellek içi uygulama.
@@ -41,4 +47,7 @@ class InMemoryFollowUpPreferences implements FollowUpPreferences {
   Future<void> setOptedIn(String decisionId, {required bool value}) async {
     value ? _optedIn.add(decisionId) : _optedIn.remove(decisionId);
   }
+
+  @override
+  Future<void> clearAll() async => _optedIn.clear();
 }

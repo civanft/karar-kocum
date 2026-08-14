@@ -7,6 +7,7 @@ import 'features/decision/presentation/screens/home_screen.dart';
 import 'features/decision/presentation/screens/new_decision_screen.dart';
 import 'features/journey/presentation/screens/check_in_screen.dart';
 import 'features/results/presentation/screens/result_screen.dart';
+import 'features/settings/presentation/screens/settings_screen.dart';
 import 'features/templates/presentation/screens/template_gallery_screen.dart';
 
 /// Rota haritası — TEKNIK-MIMARI.md §6.2
@@ -57,10 +58,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/paywall',
         builder: (_, __) => const _PlaceholderScreen('Premium — Sprint 5'),
       ),
-      GoRoute(
-        path: '/settings',
-        builder: (_, __) => const _PlaceholderScreen('Ayarlar — Sprint 6'),
-      ),
+      // PR-R1 — mağaza zorunluluğu: uygulama içi hesap/veri silme.
+      GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
     ],
   );
 });

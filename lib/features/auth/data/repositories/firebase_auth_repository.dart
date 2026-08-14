@@ -92,7 +92,14 @@ class FirebaseAuthRepository implements AuthRepository {
 
   @override
   Future<void> signOut() async {
-    await _google.signOut();
+    // Google oturumu kapanmasa BİLE Firebase oturumu kapanmalı: hesap
+    // silme akışında bu, silinmiş hesabın oturumunun cihazda açık
+    // kalmasını önler (PR-R1B).
+    try {
+      await _google.signOut();
+    } catch (_) {
+      // Yalnız Google tarafı; Firebase oturumu aşağıda kapatılır.
+    }
     await _auth.signOut();
   }
 }

@@ -200,3 +200,50 @@ Olay ~0,5-1 KB; premium kullanıcı yılda ~13 olay (12 yenileme + 1) ≈ 10 KB/
 - **K-2 sunucu ayağı bu modelle kapanır:** istemci ve Functions'ın yazdığı belgeler fiziksel ayrık (decisions ↔ aiAnalyses/subscriptions); tek kesişim `latestAnalysisId`+`status` — ikisi de rules diff'iyle istemciye kapalı.
 - **Toplam kullanıcı maliyeti tahmini (aylık, aktif kullanıcı):** ~2 karar × (1 yazım debounce'lu oturum ~15 yazım + 30 okuma) → ≪ 0,001 $/kullanıcı-ay. Firestore bu üründe maliyet kalemi değil; LLM maliyeti belirleyici (mimari R2).
 - **Göç stratejisi:** mevcut in-memory JSON şeması bu modelle alan-uyumlu (bkz. JSON round-trip testi); tek kırıcı fark Timestamp converter — Sprint 2 PR'ında model güncellemesiyle birlikte gelir.
+
+---
+
+## 8. Hesap ve veri silme (PR-R1)
+
+Mağaza zorunluluğu (App Store 5.1.1(v) / Play Data Deletion): uygulama içinden
+hesabın ve tüm verilerinin kalıcı silinmesi. Tek giriş noktası
+`deleteAccount` callable'ıdır (Gen2, `enforceAppCheck` + `consumeAppCheckToken`).
+
+**Kimlik:** UID YALNIZ `request.auth.uid`'den okunur. İstemci boş payload
+gönderir; başka bir kullanıcının yolu istemciden etkilenemez.
+
+**Silme kapsamı ve SIRA (sıra güvenlik gereğidir):**
+
+| # | Hedef | Yöntem | Not |
+|---|-------|--------|-----|
+| 1 | `users/{uid}` ağacı | `getFirestore().recursiveDelete(userRef)` | `decisions` → `aiAnalyses`, `rewardTickets`, `subscriptions` alt koleksiyonları KAPSAM İÇİ; ayrı çağrı gerekmez |
+| 2 | `rateLimits/{uid}` | tek belge silme | `analyzeDecision` limiti; `users` ağacının DIŞINDA |
+| 3 | `rateLimits/{uid}:reward` | tek belge silme | `createRewardTicket` limiti; AYRI belge — 2. adım bunu kapsamaz |
+| 4 | Firebase Auth kullanıcısı | `getAuth().deleteUser(uid)` | EN SON |
+
+**Neden Auth en son:** Auth önce silinseydi kullanıcının token'ı anında
+geçersizleşir, Firestore adımı yarıda kalırsa veri yetim kalırdı. Firestore
+adımlarından biri hata verirse Auth'a HİÇ geçilmez.
+
+**Korunanlar:**
+- `ops/*` global sayaçları (günlük harcama/token/analiz limitleri) — kullanıcıya
+  ait değildir, silinmez; silinseydi global kota tavanı sıfırlanırdı.
+- Başka hiçbir kullanıcının yolu oluşturulmaz.
+
+**İdempotency:** olmayan belge/kullanıcı no-op'tur; `auth/user-not-found`
+başarı sayılır. İstemci timeout'undan sonra tekrar denemek güvenlidir.
+
+**Rules DEĞİŞMEDİ:** kaskad Admin SDK ile çalışır ve Rules'u bypass eder;
+`firestore.rules` ve `firestore.indexes.json` bu iş kapsamında güncellenmedi.
+
+**Cihaz tarafı:** `journey.followUpOptedIn` (SharedPreferences) silinir ve
+planlı tüm yerel takip bildirimleri iptal edilir. Ardından oturum kapatılır ve
+YENİ, BOŞ bir anonim oturum açılır — kullanıcı silinmiş hesapta mahsur kalmaz.
+
+**Deploy sırası (zorunlu):**
+
+1. `firebase deploy --only functions:deleteAccount --project <proje>`
+2. Fonksiyon canlıya çıktıktan SONRA istemci sürümü yayınlanır.
+
+Ters sırada yayınlanırsa istemcideki silme düğmesi `not-found` alır ve mağaza
+incelemesi çalışmayan bir silme akışı görür.

@@ -12,7 +12,8 @@
     "test:coverage": "vitest run --coverage",
     "test:rules": "cd .. && npx --yes firebase-tools emulators:exec --only firestore --project demo-karar \"cd functions && npx vitest run --config vitest.rules.config.ts\"",
     "serve": "npm run build && firebase emulators:start --only functions,firestore,auth",
-    "deploy": "firebase deploy --only functions"
+    "deploy": "firebase deploy --only functions",
+    "test:privacy": "cd .. && npx --yes firebase-tools emulators:exec --only firestore,auth --project demo-karar \"cd functions && npx vitest run --config vitest.privacy.config.ts\""
   },
   "dependencies": {
     "firebase-admin": "^12.3.0",

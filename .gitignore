@@ -57,3 +57,5 @@ Thumbs.db
 .atom/
 .claude/launch.json
 scripts/smoke/node_modules/
+# vitest çalışma süresi önbelleği (üretilmiş çıktı)
+.vite/

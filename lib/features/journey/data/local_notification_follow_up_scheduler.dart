@@ -120,12 +120,20 @@ class LocalNotificationFollowUpScheduler implements FollowUpScheduler {
   @override
   Future<void> cancel(String decisionId) =>
       _plugin.cancel(notificationIdFor(decisionId));
+
+  /// Hesap silmede kullanılır: kanal bu uygulamaya ait olduğundan
+  /// cancelAll yalnız bizim planladıklarımızı düşürür.
+  @override
+  Future<void> cancelAll() => _plugin.cancelAll();
 }
 
 /// Testler ve bildirim izni olmayan ortamlar için kayıt tutan sahte.
 class RecordingFollowUpScheduler implements FollowUpScheduler {
   final scheduled = <String, DateTime>{};
   final cancelled = <String>[];
+
+  /// cancelAll() çağrıldı mı (PR-R1 hesap silme testleri).
+  bool cancelledAll = false;
 
   /// initialize() ile bağlanan dokunma kancası — testler bunu çağırarak
   /// gerçek bir bildirim dokunuşunu taklit eder.
@@ -154,5 +162,12 @@ class RecordingFollowUpScheduler implements FollowUpScheduler {
   Future<void> cancel(String decisionId) async {
     scheduled.remove(decisionId);
     cancelled.add(decisionId);
+  }
+
+  @override
+  Future<void> cancelAll() async {
+    cancelledAll = true;
+    cancelled.addAll(scheduled.keys);
+    scheduled.clear();
   }
 }

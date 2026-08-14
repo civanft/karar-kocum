@@ -13,13 +13,14 @@ describe("deploy yüzeyi (PR #6E-3A)", () => {
     "analyzeDecision",
     "createRewardTicket",
     "admobRewardCallback",
+    "deleteAccount",
   ];
 
   it.each(DEPLOYED)("%s export edilmiş ve çağrılabilir", (name) => {
     expect(typeof (api as Record<string, unknown>)[name]).toBe("function");
   });
 
-  it("yalnız 3 fonksiyon deploy edilir (stub'lar hariç)", () => {
+  it("yalnız 4 fonksiyon deploy edilir (stub'lar hariç)", () => {
     const exported = Object.keys(api).filter(
       (k) => typeof (api as Record<string, unknown>)[k] === "function",
     );
@@ -27,7 +28,7 @@ describe("deploy yüzeyi (PR #6E-3A)", () => {
   });
 
   it("stub'lar index'te YOK (Sprint 5/6'ya kadar deploy edilmez)", () => {
-    for (const stub of ["revenuecatWebhook", "deleteAccount", "exportData"]) {
+    for (const stub of ["revenuecatWebhook", "exportData"]) {
       expect((api as Record<string, unknown>)[stub]).toBeUndefined();
     }
   });
