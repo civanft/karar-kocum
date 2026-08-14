@@ -21,4 +21,8 @@ abstract interface class FollowUpScheduler {
 
   /// Bu karara ait planlı bildirimi iptal eder. Plan yoksa sessizce geçer.
   Future<void> cancel(String decisionId);
+
+  /// Bu uygulamanın planladığı TÜM bildirimleri iptal eder (PR-R1 hesap
+  /// silme). Silinen hesabın kararları için bildirim düşmemeli.
+  Future<void> cancelAll();
 }

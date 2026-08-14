@@ -47,6 +47,8 @@ class HomeScreen extends ConsumerWidget {
 }
 
 /// Üstte kalıcı marka satırı — sahte avatar/profil YOK.
+/// Sağ uçta Ayarlar girişi: Home'un boş ve dolu hâllerinin ORTAK parçası
+/// olduğu için ikon her iki durumda da tek tanımdan gelir (PR-R1).
 class _BrandLine extends StatelessWidget {
   const _BrandLine();
 
@@ -57,11 +59,18 @@ class _BrandLine extends StatelessWidget {
       children: [
         Icon(Icons.psychology_outlined, color: theme.colorScheme.primary),
         const SizedBox(width: AppTokens.s2),
-        Text(
-          'Karar Koçum',
-          style: theme.textTheme.titleLarge?.copyWith(
-            color: theme.colorScheme.primary,
+        Expanded(
+          child: Text(
+            'Karar Koçum',
+            style: theme.textTheme.titleLarge?.copyWith(
+              color: theme.colorScheme.primary,
+            ),
           ),
+        ),
+        IconButton(
+          onPressed: () => context.push('/settings'),
+          icon: const Icon(Icons.settings_outlined),
+          tooltip: 'Ayarlar',
         ),
       ],
     );

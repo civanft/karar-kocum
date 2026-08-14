@@ -51,6 +51,17 @@ bash scripts/check_coverage.sh 80                          # kapsam ≥ %80
 
 Katman kuralı: `presentation → domain ← data`; domain saf Dart (flutter import edemez); `core/`, `features/`'ı import edemez.
 
+## Hesap ve veri silme (mağaza zorunluluğu)
+
+Ayarlar → **Hesap ve Veriler** → "Hesabımı ve Verilerimi Sil" akışı, `deleteAccount`
+callable'ını çağırır: `users/{uid}` ağacı recursive, `rateLimits/{uid}` ve
+`rateLimits/{uid}:reward` ayrıca silinir, en son Auth hesabı silinir. `ops/*`
+global sayaçları korunur. Cihazdaki takip tercihleri ve planlı bildirimler
+temizlenir, ardından yeni ve boş bir misafir oturumu açılır.
+
+Deploy sırası ZORUNLU: önce `firebase deploy --only functions:deleteAccount`,
+sonra istemci sürümü. Ayrıntı: [docs/FIRESTORE-VERI-MODELI.md](docs/FIRESTORE-VERI-MODELI.md) §8.
+
 ## Sprint durumu
 
 - [x] Sprint 0 — PRD, mimari, iskelet, skor motoru (testli)

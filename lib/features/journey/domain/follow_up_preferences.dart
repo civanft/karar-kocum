@@ -12,4 +12,8 @@ abstract interface class FollowUpPreferences {
 
   /// Sözü kaydet/kaldır.
   Future<void> setOptedIn(String decisionId, {required bool value});
+
+  /// Cihazdaki TÜM takip sözlerini siler (PR-R1 hesap silme).
+  /// Yalnız bu tercihi hedefler; başka yerel ayarlara dokunmaz.
+  Future<void> clearAll();
 }
