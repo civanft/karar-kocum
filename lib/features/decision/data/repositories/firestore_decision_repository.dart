@@ -83,6 +83,9 @@ class FirestoreDecisionRepository implements DecisionRepository {
       {
         if (includePlan) 'plan': 'free',
         'decisionCount': FieldValue.increment(1),
+        // SECURITY: sayaç mutasyonunu bu batch'teki gerçek karar
+        // create'ine bağlayan eşleme alanı — rules doğrular.
+        'decisionCountMutationId': decision.id,
       },
       SetOptions(merge: true),
     );
@@ -116,7 +119,11 @@ class FirestoreDecisionRepository implements DecisionRepository {
           ..delete(docRef)
           ..set(
             _userDoc,
-            {'decisionCount': FieldValue.increment(-1)},
+            {
+              'decisionCount': FieldValue.increment(-1),
+              // SECURITY: azaltımı bu batch'teki gerçek silmeye bağlar.
+              'decisionCountMutationId': id,
+            },
             SetOptions(merge: true),
           ))
         .commit();
