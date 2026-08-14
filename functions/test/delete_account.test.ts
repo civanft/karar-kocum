@@ -141,6 +141,23 @@ describe("deleteAccountCascade", () => {
     expect(err.message).not.toContain(UID);
   });
 
+  it("16) hata nedeni cause olarak KORUNUR (üretimde teşhis için)", async () => {
+    const cause = new Error("firestore quota");
+    const { ports } = makePorts({
+      recursiveDeleteUser: vi.fn(async () => {
+        throw cause;
+      }),
+    });
+
+    const err = (await deleteAccountCascade(UID, ports).catch(
+      (e) => e,
+    )) as AppError;
+
+    // İstemciye giden mesaj güvenli kalır; neden yalnız cause'ta durur.
+    expect(err.message).not.toContain("quota");
+    expect((err as Error).cause).toBe(cause);
+  });
+
   it("başarılı akış { deleted: true } döner", async () => {
     const { ports } = makePorts();
     await expect(deleteAccountCascade(UID, ports)).resolves.toEqual({

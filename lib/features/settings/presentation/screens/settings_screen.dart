@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/theme/tokens.dart';
 import '../../../../core/widgets/app_section_header.dart';
+import '../../domain/account_deletion.dart';
 import '../providers/settings_providers.dart';
 
 /// Ayarlar — yalnız "Hesap ve Veriler" (PR-R1, mağaza zorunluluğu).
@@ -50,21 +51,18 @@ class SettingsScreen extends ConsumerWidget {
     final router = GoRouter.of(context);
 
     // Spinner'ı kapatmayı garanti eden tek yer: controller finally bloğu.
-    final failure = await ref
+    final report = await ref
         .read(deleteAccountControllerProvider.notifier)
         .deleteAccount();
 
     if (!context.mounted) return;
 
+    final failure = report.failure;
     if (failure == null) {
+      // Her iki başarı durumunda da eski hesabın ekranından çıkılır.
       router.go('/home');
       messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Hesabın ve tüm verilerin silindi. '
-            'Yeni ve boş bir misafir oturumu başlattık.',
-          ),
-        ),
+        SnackBar(content: Text(_successMessage(report.outcome!))),
       );
       return;
     }
@@ -82,6 +80,17 @@ class SettingsScreen extends ConsumerWidget {
       ),
     );
   }
+
+  /// Kurulmamış bir oturumu "başlattık" diye duyurmamak için iki metin.
+  static String _successMessage(AccountDeletionOutcome outcome) =>
+      switch (outcome) {
+        AccountDeletionOutcome.deletedAndReady =>
+          'Hesabın ve tüm verilerin silindi. '
+              'Yeni ve boş bir misafir oturumu başlattık.',
+        AccountDeletionOutcome.deletedNeedsRestart =>
+          'Hesabın ve verilerin silindi. Yeni oturum başlatılamadı; '
+              'uygulamayı yeniden aç.',
+      };
 }
 
 /// Yıkıcı aksiyon satırı — ListTile en az 48dp dokunma alanı verir.

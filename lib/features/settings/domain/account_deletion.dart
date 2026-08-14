@@ -24,6 +24,20 @@ class AccountDeletionFailure implements Exception {
   String toString() => 'AccountDeletionFailure($kind): $message';
 }
 
+/// Silme BAŞARILI olduktan sonraki oturum durumu.
+///
+/// İkisi de "hesap silindi" demektir; fark, kullanıcının uygulamayı
+/// kullanmaya hemen devam edip edemeyeceğidir. Bu ayrım UI'da mesaj
+/// farkına dönüşür — kurulmamış bir oturum "başlattık" diye duyurulmaz.
+enum AccountDeletionOutcome {
+  /// Yeni ve boş misafir oturumu açıldı; kullanıcı devam edebilir.
+  deletedAndReady,
+
+  /// Veri silindi ama yeni oturum açılamadı (ağ vb.). Uygulama yeniden
+  /// açıldığında bootstrap oturumu kurar.
+  deletedNeedsRestart,
+}
+
 /// Sunucudaki hesap+veri kaskadını tetikleyen port.
 abstract interface class AccountDeletionClient {
   /// Başarısızlıkta [AccountDeletionFailure] fırlatır.

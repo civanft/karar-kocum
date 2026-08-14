@@ -259,6 +259,32 @@ void main() {
     expect(lastRoute, isNot('/home'));
   });
 
+  testWidgets('8b) yeni oturum açılamazsa yeniden başlatma mesajı gösterilir',
+      (tester) async {
+    session.signInThrows = true;
+    await pumpApp(tester);
+    await openDialog(tester);
+    await tester.tap(find.text('Kalıcı Olarak Sil'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400)); // dialog kapanışı
+    client.complete();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      find.text(
+        'Hesabın ve verilerin silindi. Yeni oturum başlatılamadı; '
+        'uygulamayı yeniden aç.',
+      ),
+      findsOneWidget,
+    );
+    // Kurulmamış bir oturum "başlattık" diye duyurulmamalı.
+    expect(find.textContaining('misafir oturumu başlattık'), findsNothing);
+    // Genel "silinemedi" hatası da gösterilmemeli — silme GERÇEKLEŞTİ.
+    expect(find.textContaining('silinemedi'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
   testWidgets('11) 320dp genişlikte taşma yok', (tester) async {
     await pumpApp(tester, size: const Size(320, 640));
     expect(tester.takeException(), isNull);
@@ -311,10 +337,14 @@ class _FakeCleaner implements LocalUserDataCleaner {
 
 class _FakeSession implements AccountSession {
   final calls = <String>[];
+  bool signInThrows = false;
 
   @override
   Future<void> signOut() async => calls.add('signOut');
 
   @override
-  Future<void> signInAnonymously() async => calls.add('signInAnonymously');
+  Future<void> signInAnonymously() async {
+    calls.add('signInAnonymously');
+    if (signInThrows) throw StateError('ağ yok');
+  }
 }

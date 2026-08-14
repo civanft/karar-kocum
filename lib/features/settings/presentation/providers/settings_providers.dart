@@ -36,33 +36,54 @@ final deleteAccountProvider = Provider<DeleteAccount>(
   ),
 );
 
+/// Silme işleminin nihai raporu.
+///
+/// Hata ve "silindi ama oturum kurulamadı" AYRI durumlardır: ikincisi
+/// başarıdır, yalnız kullanıcıya farklı mesaj gösterilir.
+class DeleteAccountReport {
+  const DeleteAccountReport.success(this.outcome) : failure = null;
+  const DeleteAccountReport.failed(this.failure) : outcome = null;
+
+  final AccountDeletionOutcome? outcome;
+  final AccountDeletionFailure? failure;
+
+  bool get succeeded => failure == null;
+}
+
 /// Silme denetleyicisi. State = "silme sürüyor mu".
 ///
-/// Guard BURADA: ekran butonu devre dışı bıraksa bile ikinci bir tetik
-/// (ör. hızlı çift dokunuş) sunucuya ikinci istek göndermemeli.
+/// Çift tetik AYNI Future'ı paylaşır: ikinci dokunuş ne yeni sunucu
+/// isteği üretir ne de sahte bir başarı döndürür — birincinin gerçek
+/// sonucunu bekler. Erken "null" dönmek, çağıranın bunu başarı sanıp
+/// Home'a yönlendirmesine yol açardı.
 class DeleteAccountController extends Notifier<bool> {
+  Future<DeleteAccountReport>? _inFlight;
+
   @override
   bool build() => false;
 
-  /// Başarıda null, başarısızlıkta gösterilecek hatayı döner.
-  /// Hata FIRLATMAZ: çağıran ekran her durumda spinner'ı kapatabilsin.
-  Future<AccountDeletionFailure?> deleteAccount() async {
-    if (state) return null; // zaten sürüyor
+  Future<DeleteAccountReport> deleteAccount() => _inFlight ??= _run();
+
+  Future<DeleteAccountReport> _run() async {
     state = true;
     try {
-      await ref.read(deleteAccountProvider)();
+      final outcome = await ref.read(deleteAccountProvider)();
+      // Oturum kurulamamış olsa da eski hesabın verisi DÜŞÜRÜLÜR.
       _refreshSessionScopedCaches();
-      return null;
+      return DeleteAccountReport.success(outcome);
     } on AccountDeletionFailure catch (failure) {
-      return failure;
+      return DeleteAccountReport.failed(failure);
     } catch (_) {
       // Beklenmedik istisna da ürün diline çevrilir; ham detay sızmaz.
-      return const AccountDeletionFailure(
-        kind: AccountDeletionFailureKind.retryable,
-        message: 'Hesap silinemedi, birazdan tekrar dene.',
+      return const DeleteAccountReport.failed(
+        AccountDeletionFailure(
+          kind: AccountDeletionFailureKind.retryable,
+          message: 'Hesap silinemedi, birazdan tekrar dene.',
+        ),
       );
     } finally {
       state = false;
+      _inFlight = null;
     }
   }
 

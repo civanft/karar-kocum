@@ -1,48 +1,69 @@
-/** KVKK / Store P0 hesap silme kaskadı (PR-R1). */
-import { getAuth } from "firebase-admin/auth";
-import { getFirestore } from "firebase-admin/firestore";
-import { onCall } from "firebase-functions/v2/https";
+/** KVKK / Store P0 hesap silme kaskadı (PR-R1, sertleştirme PR-R1B). */
+import { onCall, type CallableRequest } from "firebase-functions/v2/https";
 
 import { toHttpsError } from "../core/errors.js";
 import { log } from "../core/logger.js";
+import type { RequestContext } from "../core/types.js";
 import { buildContext } from "../middleware/context.js";
 import {
   deleteAccountCascade,
   type AccountDeletionPorts,
 } from "./delete_account_service.js";
+import { firestoreAccountDeletionPorts } from "./firestore_account_deletion_ports.js";
 
-/** Üretim portları — Admin SDK Rules'u bypass eder (kaskad için gerekli). */
-const productionPorts: AccountDeletionPorts = {
-  recursiveDeleteUser: async (uid) => {
-    // BulkWriter tabanlı; alt koleksiyonları kendi gezer ve SINIRLI retry
-    // uygular (sonsuz döngü yok).
-    await getFirestore().recursiveDelete(getFirestore().doc(`users/${uid}`));
-  },
-  deleteDocument: async (path) => {
-    await getFirestore().doc(path).delete(); // yoksa no-op
-  },
-  deleteAuthUser: async (uid) => {
-    await getAuth().deleteUser(uid);
-  },
-};
+export const deleteAccountOptions = {
+  enforceAppCheck: true,
+  consumeAppCheckToken: true,
+  memory: "512MiB",
+  timeoutSeconds: 300,
+  maxInstances: 3,
+} as const;
 
-export const deleteAccount = onCall(
-  {
-    enforceAppCheck: true,
-    consumeAppCheckToken: true,
-    memory: "512MiB",
-    timeoutSeconds: 300,
-    maxInstances: 3,
-  },
-  async (request) => {
-    // UID YALNIZ doğrulanmış oturumdan; request.data hiç okunmaz.
-    const ctx = buildContext("deleteAccount", request);
-    try {
-      const result = await deleteAccountCascade(ctx.uid, productionPorts);
-      log("info", "account_deleted", ctx, { deleted: true });
-      return result;
-    } catch (error) {
-      throw toHttpsError(error, ctx);
+/**
+ * Oturum kurulmadan hata oluşursa loglama için kullanılan bağlam.
+ *
+ * NEDEN: buildContext auth yoksa AppError fırlatır. Bu çağrı try'ın DIŞINDA
+ * kalsaydı hata toHttpsError'dan geçmez, Firebase onu anonim `internal`e
+ * çevirirdi — istemci "geçici hata, tekrar dene" sanır ve sonsuza dek
+ * yeniden denerdi. Oysa doğru cevap `unauthenticated`tir.
+ */
+function contextlessLogContext(): RequestContext {
+  return {
+    fn: "deleteAccount",
+    jobId: "no-auth",
+    uid: "", // kimlik yok — hash'lenecek bir şey de yok
+    uidHash: "anonymous",
+    startedAtMs: Date.now(),
+  };
+}
+
+/**
+ * Callable gövdesi — portlar enjekte edilebilir olduğu için test edilebilir.
+ * UID YALNIZ doğrulanmış oturumdan gelir; `request.data` HİÇ okunmaz.
+ */
+export async function handleDeleteAccount(
+  request: CallableRequest,
+  ports: AccountDeletionPorts,
+): Promise<{ deleted: true }> {
+  let ctx: RequestContext | undefined;
+  try {
+    ctx = buildContext("deleteAccount", request);
+    const result = await deleteAccountCascade(ctx.uid, ports);
+    log("info", "account_deleted", ctx, { deleted: true });
+    return result;
+  } catch (error) {
+    const logCtx = ctx ?? contextlessLogContext();
+    const cause = (error as { cause?: unknown }).cause;
+    if (cause !== undefined) {
+      // Yalnız SUNUCU log'una; istemciye giden mesaj toHttpsError'da genel.
+      log("error", "account_deletion_cause", logCtx, {
+        reason: cause instanceof Error ? cause.message : String(cause),
+      });
     }
-  },
+    throw toHttpsError(error, logCtx);
+  }
+}
+
+export const deleteAccount = onCall(deleteAccountOptions, (request) =>
+  handleDeleteAccount(request, firestoreAccountDeletionPorts),
 );

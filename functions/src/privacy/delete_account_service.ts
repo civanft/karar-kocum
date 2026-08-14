@@ -37,6 +37,19 @@ function isUserNotFound(error: unknown): boolean {
   );
 }
 
+/**
+ * Gerçek nedeni istemciye SIZDIRMADAN saklar.
+ *
+ * NEDEN: mesajın kendisi güvenli ve genel olmak zorunda; ama neden hiç
+ * saklanmazsa üretimde başarısız bir silme "Veriler silinemedi" dışında
+ * hiçbir iz bırakmaz ve teşhis edilemez. Neden yalnız sunucu log'una
+ * (handler'da) yazılır.
+ */
+function withCause(error: AppError, cause: unknown): AppError {
+  (error as Error).cause = cause;
+  return error;
+}
+
 export async function deleteAccountCascade(
   uid: string,
   ports: AccountDeletionPorts,
@@ -48,9 +61,12 @@ export async function deleteAccountCascade(
     for (const path of topLevelPaths(uid)) {
       await ports.deleteDocument(path);
     }
-  } catch {
+  } catch (cause) {
     // Auth'a GEÇİLMEZ: veri dururken hesabı silmek yetim veri bırakır.
-    throw new AppError("internal", "Veriler silinemedi, tekrar dene.");
+    throw withCause(
+      new AppError("internal", "Veriler silinemedi, tekrar dene."),
+      cause,
+    );
   }
 
   // [3] Auth kullanıcısı en son.
@@ -58,7 +74,10 @@ export async function deleteAccountCascade(
     await ports.deleteAuthUser(uid);
   } catch (error) {
     if (!isUserNotFound(error)) {
-      throw new AppError("internal", "Hesap silinemedi, tekrar dene.");
+      throw withCause(
+        new AppError("internal", "Hesap silinemedi, tekrar dene."),
+        error,
+      );
     }
     // Zaten yok → idempotent başarı.
   }
