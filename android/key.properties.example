@@ -1,0 +1,19 @@
+# Release imza yapılandırması ŞABLONU (PR: release/android-signing).
+#
+# Bu dosyayı `key.properties` adıyla kopyalayıp KENDİ değerlerinizle doldurun.
+# `key.properties` git tarafından yok sayılır (android/.gitignore) ve ASLA
+# commit edilmez. Keystore dosyasını da repository DIŞINDA tutun.
+#
+#   cp android/key.properties.example android/key.properties
+#   chmod 600 android/key.properties
+#
+# storeFile : keystore dosyasının MUTLAK yolu (repo dışında olmalı)
+# keyAlias  : keytool -genkeypair sırasında verilen alias
+#
+# UYARI: upload anahtarı kaybolursa uygulama Play'de güncellenemez.
+# Parolaları bir parola yöneticisinde saklayın.
+
+storeFile=/ABSOLUTE/PATH/TO/karar-veriyorum-upload.jks
+storePassword=CHANGEME
+keyAlias=upload
+keyPassword=CHANGEME
