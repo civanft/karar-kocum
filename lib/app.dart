@@ -36,7 +36,7 @@ class _KararVeriyorumAppState extends ConsumerState<KararVeriyorumApp> {
     });
 
     return MaterialApp.router(
-      title: 'Karar Veriyorum',
+      title: 'Karar Koçum',
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.system, // + kullanıcı tercihi (settings) Faz 2
