@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive launcher icon zemini. Onaylı marka master'ının zemin
+         rengiyle aynı; başka hiçbir tema token'ı burada tanımlı değil. -->
+    <color name="ic_launcher_background">#1B2A6B</color>
+</resources>
