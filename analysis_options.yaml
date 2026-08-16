@@ -5,6 +5,9 @@ analyzer:
     - "**/*.g.dart"
     - "**/*.freezed.dart"
     - "lib/firebase_options*.dart"
+    # iOS/Android build çıktıları: SPM checkout'ları vendor Dart kaynağı
+    # taşır (build/ios/SourcePackages/...). Bunlar bizim kodumuz değil.
+    - "build/**"
   language:
     strict-casts: true
     strict-inference: true
