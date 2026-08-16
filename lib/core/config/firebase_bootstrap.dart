@@ -53,16 +53,16 @@ abstract final class FirebaseBootstrap {
   }
 
   /// App Check aktivasyonu — analyzeDecision consumeAppCheckToken ister.
-  /// Sağlayıcılar: iOS App Attest / Android Play Integrity; debug build'de
-  /// debug provider (Console'da debug token kaydı gerekir).
+  /// Sağlayıcılar: iOS App Attest (DeviceCheck yedekli) / Android Play
+  /// Integrity; debug build'de debug provider (Console'da debug token
+  /// kaydı gerekir).
   /// Aktivasyon başarısızlığı çökme değildir — istek reddi olarak yansır.
   static Future<void> _activateAppCheck() async {
     try {
       await FirebaseAppCheck.instance.activate(
         androidProvider:
             kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
-        appleProvider:
-            kDebugMode ? AppleProvider.debug : AppleProvider.appAttest,
+        appleProvider: appleAppCheckProviderFor(isDebug: kDebugMode),
       );
     } catch (error) {
       debugPrint('FirebaseBootstrap: App Check aktive edilemedi. $error');
@@ -78,3 +78,19 @@ abstract final class FirebaseBootstrap {
     }
   }
 }
+
+/// Apple tarafı App Check sağlayıcısını seçer (saf fonksiyon → test edilebilir).
+///
+///  - Debug build : Firebase debug provider (token Console'a elle kaydedilir)
+///  - iOS 14+     : App Attest
+///  - iOS 13      : DeviceCheck (App Attest yok)
+///
+/// NEDEN SAF `appAttest` DEĞİL: App Attest yalnız iOS 14+'da vardır, bu
+/// projenin minimum sürümü ise 13.0. Saf `appAttest` seçilirse iOS 13
+/// cihazlarda sağlayıcı kurulamaz ve App Check zorunlu callable'lar
+/// (analyzeDecision, deleteAccount, createRewardTicket) 403 döner.
+/// `appAttestWithDeviceCheckFallback` platform sürümüne göre doğru olanı
+/// seçer; kod tarafında sürüm kontrolü gerekmez.
+AppleProvider appleAppCheckProviderFor({required bool isDebug}) => isDebug
+    ? AppleProvider.debug
+    : AppleProvider.appAttestWithDeviceCheckFallback;

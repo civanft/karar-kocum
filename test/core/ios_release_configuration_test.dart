@@ -102,6 +102,89 @@ void main() {
     });
   });
 
+  group('App Attest entitlement', () {
+    late String pbxproj;
+
+    setUpAll(() {
+      pbxproj = File('ios/Runner.xcodeproj/project.pbxproj').readAsStringSync();
+    });
+
+    test('Runner.entitlements dosyası mevcut', () {
+      expect(
+        File('ios/Runner/Runner.entitlements').existsSync(),
+        isTrue,
+        reason: 'App Attest entitlement dosyası yok',
+      );
+    });
+
+    test('App Attest anahtarı ve production değeri tanımlı', () {
+      final xml = File('ios/Runner/Runner.entitlements').readAsStringSync();
+      expect(
+        xml,
+        contains('com.apple.developer.devicecheck.appattest-environment'),
+        reason: 'App Attest entitlement anahtarı eksik',
+      );
+      // Firebase App Check sandbox token KABUL ETMEZ → değer production olmalı.
+      final keyAt =
+          xml.indexOf('com.apple.developer.devicecheck.appattest-environment');
+      final after = xml.substring(keyAt);
+      expect(
+        after,
+        contains('<string>production</string>'),
+        reason: 'App Attest ortamı production olmalı',
+      );
+      expect(
+        after.substring(0, after.indexOf('</dict>')),
+        isNot(contains('<string>development</string>')),
+        reason: 'development ortamı Firebase tarafından reddedilir',
+      );
+    });
+
+    test('Runner\'ın üç configuration\'ı entitlements kullanır', () {
+      final runnerConfigs = _targetConfigurations(pbxproj, 'Runner');
+      expect(runnerConfigs.keys, containsAll(['Debug', 'Profile', 'Release']));
+      for (final entry in runnerConfigs.entries) {
+        expect(
+          entry.value,
+          contains('CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;'),
+          reason: '${entry.key} configuration entitlements bağlamıyor',
+        );
+      }
+    });
+
+    test('CODE_SIGN_ENTITLEMENTS tam 3 kez tanımlı', () {
+      final count = RegExp('CODE_SIGN_ENTITLEMENTS').allMatches(pbxproj).length;
+      expect(count, 3, reason: 'yalnız Runner\'ın 3 config\'i bağlamalı');
+    });
+
+    test('RunnerTests entitlement BAĞLAMAZ', () {
+      for (final body in _targetConfigurations(pbxproj, 'RunnerTests').values) {
+        expect(body, isNot(contains('CODE_SIGN_ENTITLEMENTS')));
+      }
+    });
+
+    test('entitlements dosyası Xcode projesine kayıtlı', () {
+      expect(
+        pbxproj,
+        contains('Runner.entitlements'),
+        reason: 'PBXFileReference yok; Xcode dosyayı göstermez',
+      );
+    });
+
+    test('bundle ID ve Team ID değişmemiş', () {
+      expect(
+        RegExp('PRODUCT_BUNDLE_IDENTIFIER = com.kararveriyorum.kararVeriyorum;')
+            .allMatches(pbxproj)
+            .length,
+        3,
+      );
+      expect(
+        RegExp('DEVELOPMENT_TEAM = SXD4YLW556;').allMatches(pbxproj).length,
+        6,
+      );
+    });
+  });
+
   group('analyzer yapılandırması', () {
     test('build/** analyzer exclude listesinde', () {
       final yaml = File('analysis_options.yaml').readAsStringSync();
@@ -155,3 +238,26 @@ String _crashlyticsShellScript(String pbxproj) {
 
 String _unescape(String raw) =>
     raw.replaceAll(r'\n', '\n').replaceAll(r'\"', '"').replaceAll(r'\\', r'\');
+
+/// Verilen native target'ın configuration adı → gövde eşlemesi.
+Map<String, String> _targetConfigurations(String pbxproj, String target) {
+  final configs = <String, String>{};
+  final bodies = <String, String>{};
+  for (final m in RegExp(
+    r'([0-9A-F]{24}) /\* (\w+) \*/ = \{\s*isa = XCBuildConfiguration;([\s\S]*?)\n\t\t\};',
+  ).allMatches(pbxproj)) {
+    bodies[m.group(1)!] = m.group(3)!;
+    configs[m.group(1)!] = m.group(2)!;
+  }
+  final listMatch = RegExp(
+    'Build configuration list for PBXNativeTarget "$target" '
+    r'\*/ = \{\s*isa = XCConfigurationList;\s*buildConfigurations = \(([\s\S]*?)\);',
+  ).firstMatch(pbxproj);
+  expect(listMatch, isNotNull, reason: '$target configuration listesi yok');
+  final result = <String, String>{};
+  for (final m in RegExp(r'([0-9A-F]{24}) /\* (\w+) \*/')
+      .allMatches(listMatch!.group(1)!)) {
+    result[m.group(2)!] = bodies[m.group(1)!] ?? '';
+  }
+  return result;
+}
