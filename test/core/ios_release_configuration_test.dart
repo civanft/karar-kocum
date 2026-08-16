@@ -185,6 +185,42 @@ void main() {
     });
   });
 
+  group('iOS deployment target', () {
+    test('uygulama ve CocoaPods minimum iOS 14 kullanır', () {
+      final podfile = File('ios/Podfile').readAsStringSync();
+      final pbxproj =
+          File('ios/Runner.xcodeproj/project.pbxproj').readAsStringSync();
+
+      expect(
+        podfile,
+        contains("platform :ios, '14.0'"),
+        reason: 'App Attest için minimum platform iOS 14 olmalı',
+      );
+      expect(
+        RegExp('IPHONEOS_DEPLOYMENT_TARGET = 14.0;').allMatches(pbxproj).length,
+        3,
+        reason: 'Xcode proje yapılandırmalarının üçü de iOS 14 olmalı',
+      );
+      expect(
+        podfile,
+        contains(
+          "config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'",
+        ),
+        reason: 'Pod hedefleri eski iOS sürümüne geri düşmemeli',
+      );
+    });
+
+    test('iOS 14 altı deployment target kalmaz', () {
+      final files = [
+        File('ios/Podfile').readAsStringSync(),
+        File('ios/Runner.xcodeproj/project.pbxproj').readAsStringSync(),
+      ].join('\n');
+
+      expect(files, isNot(contains("platform :ios, '13.0'")));
+      expect(files, isNot(contains('IPHONEOS_DEPLOYMENT_TARGET = 13.0;')));
+    });
+  });
+
   group('analyzer yapılandırması', () {
     test('build/** analyzer exclude listesinde', () {
       final yaml = File('analysis_options.yaml').readAsStringSync();
