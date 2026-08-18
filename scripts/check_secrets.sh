@@ -9,7 +9,9 @@ fi
 mode="${1:-history}"
 case "$mode" in
   history)
-    gitleaks git . --no-banner --redact=100
+    # Yalnız HEAD değil; ileride yanlışlıkla push edilebilecek tüm yerel
+    # branch ve tag geçmişini tarar.
+    gitleaks git . --log-opts="--all --full-history" --no-banner --redact=100
     ;;
   staged)
     gitleaks git . --staged --no-banner --redact=100
