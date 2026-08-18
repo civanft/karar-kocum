@@ -17,8 +17,10 @@ migrate_working_dir/
 # --- Firebase ---
 # firebase_options.dart COMMIT EDİLİR (istemci kimlikleri gizli değildir);
 # repo'daki placeholder, 'flutterfire configure' ile üzerine yazılır.
-android/app/google-services.json
-ios/Runner/GoogleService-Info.plist
+# Platform configleri public istemci kimlikleri taşır; repoda tek kaynak olarak
+# lib/firebase_options.dart tutulur. Başka klasöre kopyaları da izlenmez.
+**/google-services.json
+**/GoogleService-Info.plist
 # .firebaserc commit edilir (yalnız proje takma adları)
 firebase-debug.log
 .firebase/
@@ -35,7 +37,24 @@ functions/*.log
 key.properties
 *.p8
 *.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.crt
+*.der
+*.pkcs8
 *.mobileprovision
+*.provisionprofile
+*serviceAccount*.json
+*service-account*.json
+*service_account*.json
+*-firebase-adminsdk-*.json
+application_default_credentials.json
+credentials.json
+.runtimeconfig.json
+.npmrc
+.netrc
 .env
 .env.*
 
