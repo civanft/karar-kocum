@@ -12,6 +12,21 @@ import { AppError } from "../core/errors.js";
 import { hashUid, log } from "../core/logger.js";
 import type { RequestContext } from "../core/types.js";
 
+/**
+ * Auth bağlamı kurulmadan hata oluştuğunda güvenli hata eşleme/loglama bağlamı.
+ * Ham UID yoktur; sabit değerler PII sızıntısını ve AppError'ın `internal`
+ * olarak maskelenmesini önler.
+ */
+export function contextlessLogContext(fn: string): RequestContext {
+  return {
+    fn,
+    jobId: "no-auth",
+    uid: "",
+    uidHash: "anonymous",
+    startedAtMs: Date.now(),
+  };
+}
+
 export function buildContext(
   fn: string,
   request: CallableRequest,

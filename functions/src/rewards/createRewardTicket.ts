@@ -6,7 +6,11 @@ import { onCall } from "firebase-functions/v2/https";
 
 import { toHttpsError } from "../core/errors.js";
 import { log } from "../core/logger.js";
-import { buildContext } from "../middleware/context.js";
+import type { RequestContext } from "../core/types.js";
+import {
+  buildContext,
+  contextlessLogContext,
+} from "../middleware/context.js";
 import {
   FirestoreRateLimitStore,
   RateLimiter,
@@ -29,8 +33,9 @@ export const createRewardTicket = onCall(
     maxInstances: 10,
   },
   async (request) => {
-    const ctx = buildContext("createRewardTicket", request);
+    let ctx: RequestContext | undefined;
     try {
+      ctx = buildContext("createRewardTicket", request);
       // Analiz limitiyle çakışmasın diye ayrı anahtar alanı:
       await limiter().check(`${ctx.uid}:reward`);
       const ticket = await createTicket(new FirestoreTicketStore(), ctx.uid);
@@ -39,7 +44,8 @@ export const createRewardTicket = onCall(
       });
       return ticket;
     } catch (error) {
-      throw toHttpsError(error, ctx);
+      const logCtx = ctx ?? contextlessLogContext("createRewardTicket");
+      throw toHttpsError(error, logCtx);
     }
   },
 );
