@@ -1,0 +1,6 @@
+# Firebase mobil istemci anahtarları public tanımlayıcıdır ve Firebase API
+# allowlist'iyle kısıtlıdır. Yalnız doğrulanmış tarihsel fingerprint'ler ignore
+# edilir; yeni bir anahtar veya yeni konum tekrar güvenlik incelemesine düşer.
+a17e4836a2431788a3e3f625f2592bef2011024f:lib/firebase_options.dart:gcp-api-key:53
+a17e4836a2431788a3e3f625f2592bef2011024f:lib/firebase_options.dart:gcp-api-key:61
+a79c5c3590f84e62f5bd0930e3231d2f9f7e6b94:scripts/smoke/live_smoke_test.mjs:gcp-api-key:13

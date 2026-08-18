@@ -43,9 +43,33 @@ export class AppError extends Error {
   }
 }
 
+const SAFE_DIAGNOSTIC_TOKEN = /^[A-Za-z0-9_.-]{1,64}$/;
+
+function safeDiagnosticToken(value: unknown): string {
+  return typeof value === "string" && SAFE_DIAGNOSTIC_TOKEN.test(value)
+    ? value
+    : "unknown";
+}
+
+function unexpectedErrorDiagnostic(error: unknown): {
+  errorCode: string;
+  errorType: string;
+} {
+  const candidate =
+    typeof error === "object" && error !== null && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+  return {
+    errorCode: safeDiagnosticToken(candidate),
+    errorType: safeDiagnosticToken(
+      error instanceof Error ? error.name : typeof error,
+    ),
+  };
+}
+
 /**
  * Handler'ların tek çıkış kapısı: AppError → HttpsError; bilinmeyen hata →
- * log'a tam, istemciye anonim 'internal'. Her hata metrik olarak sayılır.
+ * log'a güvenli teşhis, istemciye anonim 'internal'. Her hata metrik sayılır.
  */
 export function toHttpsError(error: unknown, ctx: RequestContext): HttpsError {
   if (error instanceof HttpsError) return error; // zaten dönüştürülmüş
@@ -61,11 +85,10 @@ export function toHttpsError(error: unknown, ctx: RequestContext): HttpsError {
     });
   }
 
-  // Bilinmeyen: içerik loglanır (PII'siz alanlarla), istemciye sızdırılmaz.
+  // Bilinmeyen: ham message/stack/yol/UID loglanmaz; yalnız biçim denetimli
+  // teşhis alanları kalır. İstemciye de anonim hata döner.
   log("error", "request_failed_unexpected", ctx, {
-    errorCode: "internal",
-    errorMessage: error instanceof Error ? error.message : String(error),
-    stack: error instanceof Error ? error.stack : undefined,
+    ...unexpectedErrorDiagnostic(error),
   });
   return new HttpsError("internal", "Beklenmeyen bir hata oluştu.", {
     appCode: "internal",

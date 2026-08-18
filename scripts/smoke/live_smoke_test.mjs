@@ -8,13 +8,9 @@ import { getAuth, signInAnonymously, deleteUser } from "firebase/auth";
 import {
   getFirestore, doc, setDoc, getDoc, updateDoc, deleteDoc,
 } from "firebase/firestore";
+import { readSmokeFirebaseConfig } from "./firebase_config.mjs";
 
-const config = {
-  apiKey: "AIzaSyDYxrFodErdp-C8v2e99ObvPCgzI_i4xjM",
-  appId: "1:740423241326:android:9faaa1a25d96871d04a07f",
-  messagingSenderId: "740423241326",
-  projectId: "karar-veriyorum-dev",
-};
+const config = readSmokeFirebaseConfig();
 
 const results = [];
 function record(step, ok, detail = "") {

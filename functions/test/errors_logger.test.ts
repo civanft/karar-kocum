@@ -1,5 +1,6 @@
 import { HttpsError } from "firebase-functions/v2/https";
-import { describe, expect, it } from "vitest";
+import { logger } from "firebase-functions/v2";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppError, toHttpsError } from "../src/core/errors";
 import { hashUid, sanitizeFields } from "../src/core/logger";
@@ -12,6 +13,10 @@ const ctx: RequestContext = {
   uidHash: hashUid("user-123"),
   startedAtMs: Date.now(),
 };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("toHttpsError", () => {
   it("AppError kodları doğru HttpsError kodlarına eşlenir", () => {
@@ -47,6 +52,33 @@ describe("toHttpsError", () => {
     expect(e.code).toBe("internal");
     expect(e.message).not.toContain("sk-abc123");
     expect(e.message).toBe("Beklenmeyen bir hata oluştu.");
+  });
+
+  it("bilinmeyen hata: ham mesaj ve stack sunucu loguna SIZMAZ", () => {
+    const sentinel = "private-user-id-at-users-secret-path";
+    const written: unknown[] = [];
+    vi.spyOn(logger, "error").mockImplementation((...args: unknown[]) => {
+      written.push(args);
+    });
+
+    const cause = Object.assign(
+      new Error(`Firestore failed at users/${sentinel}/decisions/private`),
+      { code: "permission-denied" },
+    );
+    toHttpsError(cause, ctx);
+
+    const serialized = JSON.stringify(written);
+    expect(serialized).not.toContain(sentinel);
+    expect(serialized).not.toContain("Firestore failed");
+    expect(serialized).not.toContain("stack");
+    expect(written).toHaveLength(1);
+    expect(written[0]).toEqual([
+      "request_failed_unexpected",
+      expect.objectContaining({
+        errorCode: "permission-denied",
+        errorType: "Error",
+      }),
+    ]);
   });
 
   it("zaten HttpsError ise dokunulmaz", () => {
