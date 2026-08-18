@@ -8,7 +8,11 @@ import { onCall } from "firebase-functions/v2/https";
 import { AppError, toHttpsError } from "../core/errors.js";
 import { log } from "../core/logger.js";
 import { openaiApiKey } from "../core/secrets.js";
-import { buildContext } from "../middleware/context.js";
+import type { RequestContext } from "../core/types.js";
+import {
+  buildContext,
+  contextlessLogContext,
+} from "../middleware/context.js";
 import {
   FirestoreRateLimitStore,
   RateLimiter,
@@ -38,8 +42,9 @@ export const analyzeDecision = onCall(
     maxInstances: 10, // global maliyet freni (6B)
   },
   async (request) => {
-    const ctx = buildContext("analyzeDecision", request);
+    let ctx: RequestContext | undefined;
     try {
+      ctx = buildContext("analyzeDecision", request);
       const service = new AnalyzeService(
         new FirestoreAnalysisPorts(ctx.uid),
         new OpenAIGateway(createOpenAIClient(openaiApiKey.value())),
@@ -50,10 +55,11 @@ export const analyzeDecision = onCall(
       );
       return await service.run(ctx, request.data);
     } catch (error) {
+      const logCtx = ctx ?? contextlessLogContext("analyzeDecision");
       if (error instanceof AppError) {
-        log("warn", "analysis_failed", ctx, { errorCode: error.code });
+        log("warn", "analysis_failed", logCtx, { errorCode: error.code });
       }
-      throw toHttpsError(error, ctx);
+      throw toHttpsError(error, logCtx);
     }
   },
 );

@@ -4,7 +4,10 @@ import { onCall, type CallableRequest } from "firebase-functions/v2/https";
 import { toHttpsError } from "../core/errors.js";
 import { log } from "../core/logger.js";
 import type { RequestContext } from "../core/types.js";
-import { buildContext } from "../middleware/context.js";
+import {
+  buildContext,
+  contextlessLogContext,
+} from "../middleware/context.js";
 import {
   deleteAccountCascade,
   deletionDiagnosticOf,
@@ -21,24 +24,6 @@ export const deleteAccountOptions = {
 } as const;
 
 /**
- * Oturum kurulmadan hata oluşursa loglama için kullanılan bağlam.
- *
- * NEDEN: buildContext auth yoksa AppError fırlatır. Bu çağrı try'ın DIŞINDA
- * kalsaydı hata toHttpsError'dan geçmez, Firebase onu anonim `internal`e
- * çevirirdi — istemci "geçici hata, tekrar dene" sanır ve sonsuza dek
- * yeniden denerdi. Oysa doğru cevap `unauthenticated`tir.
- */
-function contextlessLogContext(): RequestContext {
-  return {
-    fn: "deleteAccount",
-    jobId: "no-auth",
-    uid: "", // kimlik yok — hash'lenecek bir şey de yok
-    uidHash: "anonymous",
-    startedAtMs: Date.now(),
-  };
-}
-
-/**
  * Callable gövdesi — portlar enjekte edilebilir olduğu için test edilebilir.
  * UID YALNIZ doğrulanmış oturumdan gelir; `request.data` HİÇ okunmaz.
  */
@@ -53,7 +38,7 @@ export async function handleDeleteAccount(
     log("info", "account_deleted", ctx, { deleted: true });
     return result;
   } catch (error) {
-    const logCtx = ctx ?? contextlessLogContext();
+    const logCtx = ctx ?? contextlessLogContext("deleteAccount");
     const diagnostic = deletionDiagnosticOf(error);
     if (diagnostic !== undefined) {
       // YALNIZ sabit alanlar: ham mesaj/stack/yol/uid loglanmaz (PR-R1C).
