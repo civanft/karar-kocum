@@ -9,7 +9,6 @@ import { defineSecret } from "firebase-functions/params";
 
 export const openaiApiKey = defineSecret("OPENAI_API_KEY");
 
-/** RevenueCat webhook imza doğrulaması (Sprint 5'te kullanılacak). */
-export const revenuecatWebhookSecret = defineSecret(
-  "REVENUECAT_WEBHOOK_SECRET",
-);
+// NOT: RevenueCat webhook sırrı burada TANIMLANMAZ. defineSecret yalnız
+// gerçekten bağlanacağı fonksiyonla birlikte eklenir (Sprint 5); kullanılmayan
+// bir bağ, deploy yüzeyinde gereksiz secret erişimi ister.

@@ -62,6 +62,15 @@ npm --prefix functions run test:privacy  # hesap silme kaskadı (Firestore+Auth 
 Emulator testleri yalnız `demo-karar` projesine bağlanır; emulator host
 değişkenleri yoksa fail-fast eder (canlı projeye asla dokunmaz).
 
+### Canlı smoke testi
+
+Canlı Firebase projesine karşı çalışır; API anahtarı **yalnız ortamdan** okunur,
+repoda varsayılan değer yoktur. Değişken yoksa hiçbir ağ isteği yapılmadan durur.
+
+```sh
+FIREBASE_WEB_API_KEY=<istemci-anahtarınız> node scripts/smoke/live_smoke_test.mjs
+```
+
 Katman kuralı: `presentation → domain ← data`; domain saf Dart (flutter import edemez); `core/`, `features/`'ı import edemez.
 
 ## Hesap ve veri silme (mağaza zorunluluğu)

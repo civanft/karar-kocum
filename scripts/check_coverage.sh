@@ -38,6 +38,7 @@ echo "Kapsam: ${COVERAGE}%  (${HIT_LINES}/${TOTAL_LINES} satır)  — eşik: ${T
 
 # En düşük kapsamlı 5 dosyayı göster (iyileştirme rehberi)
 echo "--- En düşük kapsamlı dosyalar ---"
+# sed tüm girdiyi tüketir; head + pipefail SIGPIPE üretebilir.
 awk '
   /^SF:/ {
     file = substr($0, 4)
@@ -47,7 +48,7 @@ awk '
   /^LH:/ {
     if (!skip && lf > 0) printf "%6.1f%%  %s\n", (substr($0, 4)/lf)*100, file
   }
-' "$LCOV_FILE" | sort -n | head -5
+' "$LCOV_FILE" | sort -n | sed -n '1,5p'
 
 PASS=$(awk -v c="$COVERAGE" -v t="$THRESHOLD" 'BEGIN { print (c >= t) ? 1 : 0 }')
 if [ "$PASS" -eq 1 ]; then

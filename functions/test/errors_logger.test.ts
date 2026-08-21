@@ -81,6 +81,56 @@ describe("toHttpsError", () => {
     ]);
   });
 
+  it("güvensiz errorCode 'unknown'a düşer, teşhis alanları sızdırmaz", () => {
+    const written: unknown[][] = [];
+    vi.spyOn(logger, "error").mockImplementation((...args: unknown[]) => {
+      written.push(args);
+    });
+
+    // Kod alanına yol / nesne / aşırı uzun değer düşerse ASLA geçmemeli.
+    const unsafeCodes: unknown[] = [
+      "users/gizli-uid/decisions/private", // '/' izinli değil
+      { nested: "obj" }, // string değil
+      "x".repeat(65), // 64 karakterden uzun
+      undefined, // kod alanı yok
+    ];
+
+    for (const code of unsafeCodes) {
+      toHttpsError(Object.assign(new Error("upstream detay"), { code }), ctx);
+    }
+
+    expect(written).toHaveLength(unsafeCodes.length);
+    for (const [event, payload] of written) {
+      expect(event).toBe("request_failed_unexpected");
+      expect(payload).toMatchObject({ errorCode: "unknown" });
+    }
+    const serialized = JSON.stringify(written);
+    expect(serialized).not.toContain("gizli-uid");
+    expect(serialized).not.toContain("upstream detay");
+  });
+
+  it("güvenli errorCode korunur ve uidHash log'da kalır", () => {
+    const written: Record<string, unknown>[] = [];
+    vi.spyOn(logger, "error").mockImplementation(
+      (_event: unknown, payload?: unknown) => {
+        written.push(payload as Record<string, unknown>);
+      },
+    );
+
+    toHttpsError(
+      Object.assign(new Error("upstream"), { code: "deadline-exceeded" }),
+      ctx,
+    );
+
+    expect(written[0]).toMatchObject({
+      errorCode: "deadline-exceeded",
+      errorType: "Error",
+    });
+    // Güvenli tanımlayıcı korunur, ham uid ASLA görünmez.
+    expect(written[0]).toHaveProperty("uidHash");
+    expect(JSON.stringify(written[0])).not.toContain(ctx.uid);
+  });
+
   it("zaten HttpsError ise dokunulmaz", () => {
     const original = new HttpsError("not-found", "yok");
     expect(toHttpsError(original, ctx)).toBe(original);
