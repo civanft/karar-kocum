@@ -5,6 +5,8 @@
  */
 import { onCall } from "firebase-functions/v2/https";
 
+import { functionRegion } from "../core/deployment.js";
+
 import { AppError, toHttpsError } from "../core/errors.js";
 import { log } from "../core/logger.js";
 import { openaiApiKey } from "../core/secrets.js";
@@ -33,6 +35,7 @@ import {
 
 export const analyzeDecision = onCall(
   {
+    region: functionRegion,
     enforceAppCheck: true,
     consumeAppCheckToken: true,
     secrets: [openaiApiKey],

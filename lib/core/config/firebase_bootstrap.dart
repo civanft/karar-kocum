@@ -4,7 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../firebase_options.dart';
+import 'firebase_environment.dart';
 
 /// Açılışta FirebaseBootstrap sonucu ile override edilir (main.dart).
 /// Varsayılan localMode: testler ve önizleme Firebase'siz çalışır.
@@ -29,10 +29,12 @@ abstract final class FirebaseBootstrap {
   static Future<FirebaseStatus> tryInitialize() async {
     final FirebaseOptions options;
     try {
+      // Ortam seçimi merkezidir (release → production, debug/profile → dev).
       // flutterfire'ın ürettiği dosya, kayıtlı olmayan platformda
       // (ör. web önizlemesi) UnsupportedError fırlatır — çökme değil,
       // yerel mod nedeni.
-      options = DefaultFirebaseOptions.currentPlatform;
+      options = FirebaseEnvironment.resolve(isReleaseMode: kReleaseMode)
+          .currentPlatformOptions();
     } on UnsupportedError catch (e) {
       debugPrint('FirebaseBootstrap: platform yapılandırması yok — '
           'yerel mod. $e');

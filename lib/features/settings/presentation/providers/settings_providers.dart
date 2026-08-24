@@ -1,6 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/config/firebase_environment.dart';
+
 import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../decision/presentation/providers/decision_providers.dart';
 import '../../../journey/presentation/providers/journey_providers.dart';
@@ -14,7 +16,9 @@ import '../../domain/delete_account.dart';
 
 /// Silme portları — testlerde sahtelerle override edilir.
 final accountDeletionClientProvider = Provider<AccountDeletionClient>(
-  (_) => FirebaseAccountDeletionClient(FirebaseFunctions.instance),
+  (ref) => FirebaseAccountDeletionClient(
+    FirebaseFunctions.instanceFor(region: ref.watch(functionsRegionProvider)),
+  ),
 );
 
 final localUserDataCleanerProvider = Provider<LocalUserDataCleaner>(

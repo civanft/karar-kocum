@@ -4,6 +4,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/config/firebase_bootstrap.dart';
+import '../../../../core/config/firebase_environment.dart';
 import '../../../../core/services/analytics/analytics_service.dart';
 import '../../data/firebase_ai_analysis_client.dart';
 import '../../data/mock_ai_analysis_client.dart';
@@ -47,7 +48,11 @@ class AnalysisQuotaExceeded extends AnalysisState {
 final aiAnalysisClientProvider = Provider<AiAnalysisClient>((ref) {
   final ready = ref.watch(firebaseStatusProvider) == FirebaseStatus.ready;
   return ready
-      ? FirebaseAiAnalysisClient(FirebaseFunctions.instance)
+      ? FirebaseAiAnalysisClient(
+          FirebaseFunctions.instanceFor(
+            region: ref.watch(functionsRegionProvider),
+          ),
+        )
       : MockAiAnalysisClient();
 });
 

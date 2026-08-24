@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "757453999446",
+    "project_id": "karar-kocum-production",
+    "storage_bucket": "karar-kocum-production.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:757453999446:android:cb0041bc217b88f1f61af7",
+        "android_client_info": {
+          "package_name": "com.kararveriyorum.karar_veriyorum"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDXeXW-TMQv5k46UGe_EL0A1232L2sjOmY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

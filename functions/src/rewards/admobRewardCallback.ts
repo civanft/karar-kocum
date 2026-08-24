@@ -7,6 +7,8 @@
  *     olmasın; duplicate 200 dönmek İDEMPOTENCY gereğidir)
  */
 import { onRequest } from "firebase-functions/v2/https";
+
+import { functionRegion } from "../core/deployment.js";
 import { logger } from "firebase-functions/v2";
 
 import { grantFromCallback, FirestoreTicketStore } from "./reward_service.js";
@@ -15,7 +17,12 @@ import { createGstaticKeyProvider, SsvVerifier } from "./ssv_verifier.js";
 const verifier = new SsvVerifier(createGstaticKeyProvider());
 
 export const admobRewardCallback = onRequest(
-  { memory: "256MiB", timeoutSeconds: 30, maxInstances: 10 },
+  {
+    region: functionRegion,
+    memory: "256MiB",
+    timeoutSeconds: 30,
+    maxInstances: 10,
+  },
   async (request, response) => {
     const rawQuery = request.url.split("?")[1] ?? "";
 

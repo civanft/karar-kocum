@@ -4,6 +4,8 @@
  */
 import { onCall } from "firebase-functions/v2/https";
 
+import { functionRegion } from "../core/deployment.js";
+
 import { toHttpsError } from "../core/errors.js";
 import { log } from "../core/logger.js";
 import type { RequestContext } from "../core/types.js";
@@ -26,6 +28,7 @@ const limiter = () =>
 
 export const createRewardTicket = onCall(
   {
+    region: functionRegion,
     enforceAppCheck: true,
     consumeAppCheckToken: true,
     memory: "256MiB",
