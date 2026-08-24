@@ -4,3 +4,10 @@
 a17e4836a2431788a3e3f625f2592bef2011024f:lib/firebase_options.dart:gcp-api-key:53
 a17e4836a2431788a3e3f625f2592bef2011024f:lib/firebase_options.dart:gcp-api-key:61
 a79c5c3590f84e62f5bd0930e3231d2f9f7e6b94:scripts/smoke/live_smoke_test.mjs:gcp-api-key:13
+# PR-PROD-2 — production Firebase istemci yapılandırmaları. Dev karşılıkları
+# (lib/firebase_options.dart) ile aynı sınıftır: mobil istemci anahtarı public
+# tanımlayıcıdır, yayınlanan her binary'de bulunur ve Firebase API allowlist'i
+# ile kısıtlanır. Sunucu sırları (OPENAI_API_KEY) Secret Manager'da kalır.
+42e25e9c686c61754ec874d29d47cfa49f7a043d:android/app/src/release/google-services.json:gcp-api-key:18
+42e25e9c686c61754ec874d29d47cfa49f7a043d:lib/firebase_options_prod.dart:gcp-api-key:53
+42e25e9c686c61754ec874d29d47cfa49f7a043d:lib/firebase_options_prod.dart:gcp-api-key:61

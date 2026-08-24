@@ -21,6 +21,12 @@ migrate_working_dir/
 # lib/firebase_options.dart tutulur. Başka klasöre kopyaları da izlenmez.
 **/google-services.json
 **/GoogleService-Info.plist
+# İSTİSNA: production istemci yapılandırmaları izlenir. Bunlar public
+# kimliklerdir (yayınlanan her binary'de bulunur) ve release build'in
+# hangi projeye bağlandığı Git'ten görülebilmelidir. Genel kural
+# gevşetilmez — yalnız bu iki KESİN yol istisnadır.
+!android/app/src/release/google-services.json
+!ios/Runner/Firebase/Production/GoogleService-Info.plist
 # .firebaserc commit edilir (yalnız proje takma adları)
 firebase-debug.log
 .firebase/
