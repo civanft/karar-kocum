@@ -20,8 +20,8 @@ describe("OpenAI maliyet (gpt-4.1-mini)", () => {
     ).toBeGreaterThan(0.001);
   });
 
-  it("günlük tavan varsayılanı $0,15 (cost hotfix)", () => {
-    expect(DAILY_SPEND_LIMIT_USD).toBe(0.15);
+  it("günlük tavan varsayılanı $0,08 (PR-COST-1 üretim tabanı)", () => {
+    expect(DAILY_SPEND_LIMIT_USD).toBe(0.08);
   });
 });
 

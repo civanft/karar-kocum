@@ -9,6 +9,8 @@ const ENV_KEYS = [
   "USER_ANALYZE_PER_MINUTE",
   "USER_ANALYZE_PER_HOUR",
   "USER_ANALYZE_PER_DAY",
+  "AI_DAILY_SPEND_LIMIT_USD",
+  "DAILY_TOKEN_LIMIT",
 ] as const;
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -44,5 +46,27 @@ describe("PER_USER_ANALYZE_LIMITS", () => {
     expect(config.PER_USER_ANALYZE_LIMITS.perMinute).toBe(20);
     expect(config.PER_USER_ANALYZE_LIMITS.perHour).toBe(200);
     expect(config.PER_USER_ANALYZE_LIMITS.perDay).toBe(1000);
+  });
+});
+
+/** PR-COST-1 — GLOBAL günlük maliyet devre kesicisinin üretim tabanı.
+ *
+ *  Aynı save/restore sözleşmesini kullanır (ENV_KEYS genişletildi), bu yüzden
+ *  senaryolar sıra bağımsızdır ve env sızıntısı olmaz. */
+describe("günlük maliyet tavanı", () => {
+  it("env yokken üretim tabanı 0.08 USD / 50.000 token", async () => {
+    delete process.env.AI_DAILY_SPEND_LIMIT_USD;
+    delete process.env.DAILY_TOKEN_LIMIT;
+    const config = await import("../src/config");
+    expect(config.DAILY_SPEND_LIMIT_USD).toBe(0.08);
+    expect(config.DAILY_TOKEN_LIMIT).toBe(50_000);
+  });
+
+  it("env override'ları hâlâ çalışır", async () => {
+    process.env.AI_DAILY_SPEND_LIMIT_USD = "0.12";
+    process.env.DAILY_TOKEN_LIMIT = "90000";
+    const config = await import("../src/config");
+    expect(config.DAILY_SPEND_LIMIT_USD).toBe(0.12);
+    expect(config.DAILY_TOKEN_LIMIT).toBe(90_000);
   });
 });
