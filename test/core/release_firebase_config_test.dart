@@ -23,17 +23,20 @@ void main() {
       );
     });
 
-    test('varsayılan (debug/dev) config dev projesinde KALIR', () {
-      expect(
-        _projectId(_readJson('android/app/google-services.json')),
-        _devProject,
-      );
-    });
-
-    test('release ve varsayılan config farklı projelere bakar', () {
+    // NOT: varsayılan (debug/dev) platform config'i .gitignore'dadır ve CI
+    // checkout'unda BULUNMAZ. Dev sözleşmesi bu yüzden izlenen dosyalar
+    // üzerinden doğrulanır (firebase.json + firebase_options.dart); yerel
+    // makinede dosya varsa ek olarak o da denetlenir.
+    test('varsayılan config dev projesinde KALIR (dosya varsa)', () {
+      final file = File('android/app/google-services.json');
+      if (!file.existsSync()) {
+        markTestSkipped('dev config izlenmiyor (CI checkout)');
+        return;
+      }
+      expect(_projectId(_readJson(file.path)), _devProject);
       expect(
         _projectId(_readJson('android/app/src/release/google-services.json')),
-        isNot(_projectId(_readJson('android/app/google-services.json'))),
+        isNot(_projectId(_readJson(file.path))),
       );
     });
   });
@@ -50,7 +53,11 @@ void main() {
       );
     });
 
-    test('varsayılan (debug/dev) plist dev projesinde KALIR', () {
+    test('varsayılan plist dev projesinde KALIR (dosya varsa)', () {
+      if (!File(devPlist).existsSync()) {
+        markTestSkipped('dev plist izlenmiyor (CI checkout)');
+        return;
+      }
       expect(_plistValue(devPlist, 'PROJECT_ID'), _devProject);
     });
 
@@ -67,6 +74,30 @@ void main() {
         contains(r'--build-configuration=${CONFIGURATION}'),
         reason: 'build configuration geçilmezse yanlış proje seçilir',
       );
+    });
+  });
+
+  group('izlenen dev sözleşmesi', () {
+    test('lib/firebase_options.dart hâlâ dev projesine bakar', () {
+      final source = File('lib/firebase_options.dart').readAsStringSync();
+      final ids = RegExp("projectId: '([^']*)'")
+          .allMatches(source)
+          .map((m) => m.group(1))
+          .toSet();
+      expect(
+        ids,
+        {_devProject},
+        reason: 'debug/profile build production\'a kaymış',
+      );
+    });
+
+    test('production seçenekleri AYRI dosyada durur', () {
+      final source = File('lib/firebase_options_prod.dart').readAsStringSync();
+      final ids = RegExp("projectId: '([^']*)'")
+          .allMatches(source)
+          .map((m) => m.group(1))
+          .toSet();
+      expect(ids, {_prodProject});
     });
   });
 
