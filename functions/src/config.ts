@@ -24,8 +24,8 @@ function envStr(name: string, fallback: string): string {
   return raw && raw.length > 0 ? raw : fallback;
 }
 
-// ---- Gemini modeli ve çağrı korumaları ----
-/** Düşük maliyetli model (flash-lite'a env ile düşülebilir). */
+// ---- OpenAI modeli ve çağrı korumaları ----
+/** Düşük maliyetli OpenAI modeli (env ile daha ucuzuna düşülebilir). */
 export const OPENAI_MODEL = envStr("OPENAI_MODEL", "gpt-4.1-mini");
 export const MAX_OUTPUT_TOKENS = envInt("MAX_OUTPUT_TOKENS", 800);
 /** Derlenmiş kullanıcı mesajı için sabit üst sınır (karakter). Y-3 alan
@@ -53,12 +53,19 @@ export const DAILY_GLOBAL_ANALYSIS_LIMIT = envInt(
   "DAILY_ANALYSIS_LIMIT",
   20,
 );
-/** GLOBAL günlük maliyet devre kesici (USD). 0.35 → 0.15. */
-export const DAILY_SPEND_LIMIT_USD = envFloat("AI_DAILY_SPEND_LIMIT_USD", 0.15);
-/** GLOBAL günlük token tüketim tavanı (giriş+çıkış). $0,15/gün USD
- *  kesiciyle tutarlı üçüncü emniyet: ~375K token ≈ $0,15 @ flash karma
- *  fiyat. Aşılırsa analiz 'daily-limit' ile durur. */
-export const DAILY_TOKEN_LIMIT = envInt("DAILY_TOKEN_LIMIT", 375_000);
+/** GLOBAL günlük maliyet devre kesici (USD) — üretim tabanı 0.08.
+ *  Token tavanının en kötü durum karşılığıdır: 50.000 x 1.60 / 1.000.000. */
+export const DAILY_SPEND_LIMIT_USD = envFloat("AI_DAILY_SPEND_LIMIT_USD", 0.08);
+/** GLOBAL günlük token tüketim tavanı (giriş + çıkış birleşik).
+ *
+ *  Model gpt-4.1-mini. Çıkış tokeni girişten pahalı olduğu için 50.000
+ *  birleşik token, tamamı çıkış sayılarak fiyatlanır — ihtiyatlı üst sınır:
+ *    50.000 x 1.60 USD / 1.000.000 = 0.08 USD/gün
+ *  Aşılırsa analiz 'daily-limit' ile durur.
+ *
+ *  UYARI: bu yalnız uygulama içi korumadır, nihai bulut faturası garantisi
+ *  DEĞİLDİR. Sağlayıcı tarafında ayrıca hard spend limit gereklidir. */
+export const DAILY_TOKEN_LIMIT = envInt("DAILY_TOKEN_LIMIT", 50_000);
 /** KULLANICI BAŞINA analiz limitleri — ÜRETİM VARSAYILANI (3/10/3).
  *  Geliştirme/yük testinde env ile gevşetilebilir (USER_ANALYZE_*).
  *  Yalnız per-user rate limiter'ı besler; global kotaları (daily_limit,
