@@ -43,6 +43,10 @@ abstract interface class AnalyticsService {
   });
   Future<void> logPaywallViewed({required String source});
 
+  /// Mağaza zorunlusu yasal sayfa açıldı (PR-LEGAL-1).
+  /// [document]: privacy|terms|support — içerik/PII taşımaz.
+  Future<void> logLegalLinkOpened({required String document});
+
   Future<void> setUserProperties({String? plan, int? decisionsTotal});
 }
 
@@ -119,6 +123,10 @@ class FirebaseAnalyticsService implements AnalyticsService {
       _log('paywall_viewed', {'source': source});
 
   @override
+  Future<void> logLegalLinkOpened({required String document}) =>
+      _log('legal_link_opened', {'document': document});
+
+  @override
   Future<void> setUserProperties({String? plan, int? decisionsTotal}) async {
     if (plan != null) {
       await _analytics.setUserProperty(name: 'plan', value: plan);
@@ -180,6 +188,8 @@ class NoopAnalyticsService implements AnalyticsService {
   }) async {}
   @override
   Future<void> logPaywallViewed({required String source}) async {}
+  @override
+  Future<void> logLegalLinkOpened({required String document}) async {}
   @override
   Future<void> setUserProperties({String? plan, int? decisionsTotal}) async {}
 }

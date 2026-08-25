@@ -480,6 +480,7 @@ analysis_completed      {latency_ms, tier}          ← AKTİVASYON OLAYI
 analysis_feedback       {thumbs: up|down}
 result_shared           {channel, format: card|pdf}
 paywall_viewed          {source: quota|pdf|advanced_ai}
+legal_link_opened       {document: privacy|terms|support}
 trial_started / purchase_completed {plan: monthly|yearly}
 account_deleted
 ```

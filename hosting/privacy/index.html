@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gizlilik Politikası — Karar Koçum</title>
+<link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+<header>
+<h1>Gizlilik Politikası</h1>
+<p class="meta">Karar Koçum · Veri sorumlusu: Civan FIRAT ·
+Yürürlük tarihi: 26 Ağustos 2026</p>
+</header>
+<main>
+
+<p>Bu politika, Karar Koçum mobil uygulamasını kullandığınızda hangi verilerin
+işlendiğini, neden işlendiğini ve haklarınızı açıklar. Yalnızca uygulamanın
+gerçekten kullandığı hizmetler anlatılmıştır.</p>
+
+<h2>1. İşlenen veriler</h2>
+<ul>
+<li><strong>Anonim kullanıcı kimliği:</strong> Uygulama açıldığında adınız,
+e-postanız veya telefon numaranız istenmeden anonim bir Firebase hesabı
+oluşturulur. Bu kimlik yalnızca verilerinizi size bağlamak için kullanılır.</li>
+<li><strong>Oluşturduğunuz kararlar:</strong> karar başlığı ve açıklaması.</li>
+<li><strong>Seçenekler:</strong> seçenek adları, açıklamaları, artı ve eksileri.</li>
+<li><strong>Kriterler ve ağırlıklar:</strong> kriter adları ve önem dereceleri.</li>
+<li><strong>Puanlar:</strong> seçenekleri kriterlere göre puanlamanız.</li>
+<li><strong>Yapay zekâ analiz sonuçları:</strong> üretilen analiz metni ve
+buna verdiğiniz olumlu/olumsuz geri bildirim.</li>
+<li><strong>Kullanım ve hata teşhis verileri:</strong> çökme kayıtları, hata
+türleri ve uygulamanın kararlılığını ölçen teknik bilgiler.</li>
+<li><strong>App Check doğrulama sinyalleri:</strong> isteğin gerçekten sizin
+cihazınızdaki gerçek uygulamadan geldiğini doğrulayan cihaz ve uygulama
+bütünlüğü sinyalleri.</li>
+<li><strong>Analytics verileri:</strong> yalnızca siz açıkça izin verirseniz.
+İzin varsayılan olarak kapalıdır ve izin vermediğiniz sürece analiz olayı
+gönderilmez.</li>
+</ul>
+<p>Kararlarınızın içeriği hiçbir zaman analitik olay parametresi olarak
+gönderilmez; analitik yalnızca sayısal ve kategorik teknik bilgiler taşır.</p>
+
+<h2>2. Verileri neden işliyoruz</h2>
+<ul>
+<li>Kararlarınızı kaydetmek ve cihazınızda göstermek.</li>
+<li>Talep ettiğinizde yapay zekâ analizi üretmek.</li>
+<li>Kötüye kullanımı önlemek, kotaları ve maliyet korumalarını uygulamak.</li>
+<li>Çökmeleri gidermek ve uygulamanın kararlılığını artırmak.</li>
+</ul>
+
+<h2>3. Yapay zekâ analizi nasıl çalışır</h2>
+<ul>
+<li>Mobil uygulama <strong>OpenAI API anahtarına sahip değildir</strong>.</li>
+<li>Uygulama yalnızca kararın kimliğini bir Cloud Functions uç noktasına
+gönderir; karar içeriğini doğrudan dışarıya göndermez.</li>
+<li>Cloud Function, kararı sizin adınıza <strong>Firestore</strong>'dan okur.</li>
+<li>Analizi üretmek için gereken karar içeriği (başlık, seçenekler, kriterler,
+puanlar) sunucu tarafında <strong>OpenAI</strong> API'sine gönderilir.</li>
+<li>OpenAI API anahtarı <strong>Google Secret Manager</strong>'da saklanır ve
+yalnızca ilgili sunucu hizmet hesabı tarafından okunabilir.</li>
+<li>Üretilen analiz Firestore'da kararınıza bağlı olarak saklanır.</li>
+</ul>
+<p>Yapay zekâ tarafından üretilen içerik hatalı, eksik veya yanıltıcı olabilir.
+Analizler bilgilendirme ve fikir üretme amaçlıdır.</p>
+
+<h2>4. Kullanılan hizmet sağlayıcılar</h2>
+<ul>
+<li>Firebase Authentication — anonim kimlik.</li>
+<li>Cloud Firestore — kararlarınızın saklanması.</li>
+<li>Cloud Functions — sunucu tarafı analiz ve hesap silme işlemleri.</li>
+<li>Firebase App Check — cihaz ve uygulama doğrulaması.</li>
+<li>Firebase Crashlytics — çökme ve hata teşhisi.</li>
+<li>Firebase Analytics — yalnızca onayınız varsa.</li>
+<li>OpenAI API — yapay zekâ analiz metninin üretilmesi.</li>
+</ul>
+
+<h2>5. Yurt dışına aktarım</h2>
+<p>Firebase ve OpenAI, Türkiye dışında bulunan sunucular üzerinde çalışır.
+Veritabanımız Avrupa Birliği bölgesinde (çok bölgeli <code>eur3</code>)
+barındırılır ve sunucu işlevlerimiz Avrupa'da (<code>europe-west1</code>)
+çalışır. Yapay zekâ analizi üretilirken karar içeriği OpenAI'ın sunucularına
+iletilir; bu sunucular Amerika Birleşik Devletleri'nde bulunabilir. Uygulamayı
+kullanarak bu aktarımın gerçekleşebileceğini bilerek hareket etmiş olursunuz.</p>
+
+<h2>6. Saklama süresi ve silme</h2>
+<p>Verileriniz, siz silene veya işlenme amacı ortadan kalkana kadar saklanır.
+Uygulama içindeki <strong>Ayarlar → Hesabımı ve Verilerimi Sil</strong> özelliği
+kararlarınızı, seçeneklerinizi, kriterlerinizi, puanlarınızı, yapay zekâ
+analizlerinizi ve anonim kimlik hesabınızı siler. Bu işlem geri alınamaz.</p>
+<p>Toplam kullanım sayaçları gibi hiçbir kişiyle ilişkilendirilemeyen teknik
+kayıtlar, maliyet korumalarının çalışmaya devam edebilmesi için silinmez.</p>
+
+<h2>7. Paylaşım</h2>
+<p>Verileriniz <strong>satılmaz</strong>. Reklam veya pazarlama amacıyla üçüncü
+taraflara aktarılmaz. Yukarıda sayılan hizmet sağlayıcılar dışında kimseyle
+paylaşılmaz; yasal bir zorunluluk doğması hâli saklıdır.</p>
+
+<h2>8. Güvenlik</h2>
+<p>Verilere erişim Firestore güvenlik kuralları ile kısıtlanır: her kullanıcı
+yalnızca kendi verisine erişebilir. Sunucu işlevleri App Check doğrulaması
+ister. Sunucu sırları Secret Manager'da tutulur ve yalnızca ihtiyaç duyan
+hizmet hesabına açılır. Sunucu kayıtlarında ham kullanıcı kimliği tutulmaz.
+Bu önlemlere rağmen internet üzerinden yapılan hiçbir aktarım veya saklama
+yöntemi için tam güvenlik garantisi verilemez.</p>
+
+<h2>9. Yaş sınırı</h2>
+<p>Karar Koçum 13 yaşın altındaki kullanıcılara yönelik değildir ve bilerek
+13 yaşın altındaki kişilerden veri toplamayız.</p>
+
+<h2>10. Profesyonel danışmanlık değildir</h2>
+<p>Karar Koçum profesyonel finansal, hukuki, tıbbi veya yatırım danışmanlığı
+sunmaz. Ürettiği analizler tavsiye niteliğinde değildir.</p>
+
+<h2>11. Haklarınız</h2>
+<p>KVKK kapsamında verilerinize erişme, düzeltilmesini veya silinmesini isteme
+haklarına sahipsiniz. Silme işlemini uygulama içinden kendiniz yapabilir ya da
+<a href="mailto:civanyonetim@gmail.com">civanyonetim@gmail.com</a> adresine
+yazabilirsiniz.</p>
+
+<h2>12. Değişiklikler</h2>
+<p>Bu politika güncellenebilir. Güncel sürüm her zaman bu sayfada yayımlanır ve
+yürürlük tarihi sayfanın başında belirtilir.</p>
+
+<nav class="doclinks" aria-label="Yasal belgeler">
+<a href="/terms">Kullanım Koşulları</a>
+<a href="/support">Destek</a>
+<a href="/">Ana sayfa</a>
+</nav>
+</main>
+<footer>
+<p>Karar Koçum · Civan FIRAT ·
+<a href="mailto:civanyonetim@gmail.com">civanyonetim@gmail.com</a></p>
+</footer>
+</body>
+</html>

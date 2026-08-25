@@ -58,6 +58,9 @@ dependencies:
   printing: ^5.13.1
   share_plus: ^10.0.0
 
+  # Yasal sayfaları harici tarayıcıda açar (PR-LEGAL-1)
+  url_launcher: ^6.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
