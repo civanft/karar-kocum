@@ -20,6 +20,13 @@ export const PROD_PROJECT_ID = "karar-kocum-production";
 export const DEV_REGION = "us-central1";
 export const PROD_REGION = "europe-west1";
 
+export const DEV_DEFAULT_RUNTIME_SERVICE_ACCOUNT =
+  "740423241326-compute@developer.gserviceaccount.com";
+export const PROD_ANALYZE_RUNTIME_SERVICE_ACCOUNT =
+  "karar-analyze-runtime@karar-kocum-production.iam.gserviceaccount.com";
+export const PROD_DELETE_RUNTIME_SERVICE_ACCOUNT =
+  "karar-delete-runtime@karar-kocum-production.iam.gserviceaccount.com";
+
 /**
  * Saf eşleme (test seam'i). Tanınmayan proje güvenli tarafa — dev
  * bölgesine — düşer: yanlışlıkla açılan bir sandbox projesi, production
@@ -37,3 +44,21 @@ export function regionForProject(projectId: string): string {
 export const functionRegion = projectID
   .equals(PROD_PROJECT_ID)
   .thenElse(PROD_REGION, DEV_REGION);
+
+/**
+ * Production'da her callable yalnız kendi işi için yetkilendirilmiş hesaba
+ * geçer. Dev projesinin mevcut runtime kimliği değişmez.
+ */
+export const analyzeRuntimeServiceAccount = projectID
+  .equals(PROD_PROJECT_ID)
+  .thenElse(
+    PROD_ANALYZE_RUNTIME_SERVICE_ACCOUNT,
+    DEV_DEFAULT_RUNTIME_SERVICE_ACCOUNT,
+  );
+
+export const deleteRuntimeServiceAccount = projectID
+  .equals(PROD_PROJECT_ID)
+  .thenElse(
+    PROD_DELETE_RUNTIME_SERVICE_ACCOUNT,
+    DEV_DEFAULT_RUNTIME_SERVICE_ACCOUNT,
+  );

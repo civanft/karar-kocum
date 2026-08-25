@@ -5,7 +5,10 @@
  */
 import { onCall } from "firebase-functions/v2/https";
 
-import { functionRegion } from "../core/deployment.js";
+import {
+  analyzeRuntimeServiceAccount,
+  functionRegion,
+} from "../core/deployment.js";
 
 import { AppError, toHttpsError } from "../core/errors.js";
 import { log } from "../core/logger.js";
@@ -36,6 +39,7 @@ import {
 export const analyzeDecision = onCall(
   {
     region: functionRegion,
+    serviceAccount: analyzeRuntimeServiceAccount,
     enforceAppCheck: true,
     consumeAppCheckToken: true,
     secrets: [openaiApiKey],

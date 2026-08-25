@@ -1,7 +1,10 @@
 /** KVKK / Store P0 hesap silme kaskadı (PR-R1, sertleştirme PR-R1B). */
 import { onCall, type CallableRequest } from "firebase-functions/v2/https";
 
-import { functionRegion } from "../core/deployment.js";
+import {
+  deleteRuntimeServiceAccount,
+  functionRegion,
+} from "../core/deployment.js";
 
 import { toHttpsError } from "../core/errors.js";
 import { log } from "../core/logger.js";
@@ -19,6 +22,7 @@ import { firestoreAccountDeletionPorts } from "./firestore_account_deletion_port
 
 export const deleteAccountOptions = {
   region: functionRegion,
+  serviceAccount: deleteRuntimeServiceAccount,
   enforceAppCheck: true,
   consumeAppCheckToken: true,
   memory: "512MiB",
