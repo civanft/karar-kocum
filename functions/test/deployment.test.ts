@@ -10,6 +10,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  analyzeRuntimeServiceAccount,
+  deleteRuntimeServiceAccount,
   DEV_PROJECT_ID,
   DEV_REGION,
   functionRegion,
@@ -72,5 +74,27 @@ describe("deploy metadata", () => {
     const unique = new Set(DEPLOYED.map((name) => regionOf(name)));
     expect(unique.size).toBe(1);
     expect([...unique][0]).toBe(functionRegion);
+  });
+
+  it("analyzeDecision merkezi ve ortam-duyarlı runtime hesabını kullanır", () => {
+    const endpoint = api.analyzeDecision.__endpoint;
+
+    expect(endpoint.serviceAccountEmail).toBe(analyzeRuntimeServiceAccount);
+    expect(String(endpoint.serviceAccountEmail)).toBe(
+      'params.PROJECT_ID == "karar-kocum-production" ? ' +
+        '"karar-analyze-runtime@karar-kocum-production.iam.gserviceaccount.com" : ' +
+        '"740423241326-compute@developer.gserviceaccount.com"',
+    );
+  });
+
+  it("deleteAccount merkezi ve ortam-duyarlı runtime hesabını kullanır", () => {
+    const endpoint = api.deleteAccount.__endpoint;
+
+    expect(endpoint.serviceAccountEmail).toBe(deleteRuntimeServiceAccount);
+    expect(String(endpoint.serviceAccountEmail)).toBe(
+      'params.PROJECT_ID == "karar-kocum-production" ? ' +
+        '"karar-delete-runtime@karar-kocum-production.iam.gserviceaccount.com" : ' +
+        '"740423241326-compute@developer.gserviceaccount.com"',
+    );
   });
 });
