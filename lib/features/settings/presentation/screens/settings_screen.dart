@@ -1,17 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/config/legal_links.dart';
+import '../../../../core/services/analytics/analytics_service.dart';
+import '../../../../core/services/external_link_launcher.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../../core/widgets/app_section_header.dart';
 import '../../domain/account_deletion.dart';
 import '../providers/settings_providers.dart';
 
-/// Ayarlar — yalnız "Hesap ve Veriler" (PR-R1, mağaza zorunluluğu).
+/// Ayarlar — "Hesap ve Veriler" (PR-R1) ve "Yasal" (PR-LEGAL-1).
 ///
-/// Bilinçli olarak MİNİMUM: sahte legal bağlantı, placeholder satır ya da
-/// henüz çalışmayan hiçbir seçenek yok. Mağaza incelemesi çalışmayan
-/// bağlantıyı reddeder.
+/// Bilinçli olarak MİNİMUM: placeholder satır ya da henüz çalışmayan hiçbir
+/// seçenek yok. Yasal bağlantılar yayımlanmış gerçek sayfalara gider;
+/// mağaza incelemesi çalışmayan bağlantıyı reddeder.
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
@@ -29,6 +34,26 @@ class SettingsScreen extends ConsumerWidget {
             _DeleteAccountTile(
               isDeleting: isDeleting,
               onPressed: () => _confirmAndDelete(context, ref),
+            ),
+            const SizedBox(height: AppTokens.s4),
+            const AppSectionHeader(title: 'Yasal'),
+            const _LegalTile(
+              icon: Icons.privacy_tip_outlined,
+              document: 'privacy',
+              title: 'Gizlilik Politikası',
+              url: LegalLinks.privacy,
+            ),
+            const _LegalTile(
+              icon: Icons.description_outlined,
+              document: 'terms',
+              title: 'Kullanım Koşulları',
+              url: LegalLinks.terms,
+            ),
+            const _LegalTile(
+              icon: Icons.help_outline,
+              document: 'support',
+              title: 'Destek',
+              url: LegalLinks.support,
             ),
           ],
         ),
@@ -91,6 +116,77 @@ class SettingsScreen extends ConsumerWidget {
           'Hesabın ve verilerin silindi. Yeni oturum başlatılamadı; '
               'uygulamayı yeniden aç.',
       };
+}
+
+/// Yasal belge satırı — bağlantıyı HARİCİ tarayıcıda açar.
+///
+/// Bilinçli olarak yükleme durumu YOK: `launchUrl` uygulamayı arka plana
+/// atar ve dönüşte ekran zaten yeniden çizilir; burada bir spinner açmak
+/// kullanıcı geri geldiğinde takılı kalma riski yaratırdı.
+class _LegalTile extends ConsumerWidget {
+  const _LegalTile({
+    required this.icon,
+    required this.title,
+    required this.url,
+    required this.document,
+  });
+
+  final IconData icon;
+  final String title;
+  final String url;
+
+  /// Analytics ayrımı: privacy|terms|support. URL veya içerik gönderilmez.
+  final String document;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Semantics(
+      button: true,
+      label: '$title sayfasını tarayıcıda aç',
+      child: ListTile(
+        onTap: () => _open(context, ref),
+        minTileHeight: 56,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: AppTokens.s4,
+          vertical: AppTokens.s2,
+        ),
+        leading: Icon(icon),
+        title: Text(title),
+        trailing: const Icon(Icons.open_in_new, size: 18),
+      ),
+    );
+  }
+
+  /// Sıra ÖNEMLİ: olay yalnız gerçekten açıldıktan sonra gönderilir.
+  /// Önce göndermek, açılmayan sayfayı "açıldı" diye sayar ve metriği bozar.
+  Future<void> _open(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final analytics = ref.read(analyticsServiceProvider);
+
+    var opened = false;
+    try {
+      opened = await ref.read(externalLinkLauncherProvider).open(url);
+    } catch (_) {
+      // Adapter normalde yutar; yine de burada da savunma var ki bir
+      // sızıntı kullanıcıya yakalanmamış hata olarak yansımasın.
+      opened = false;
+    }
+
+    if (!opened) {
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('$title açılamadı. Lütfen daha sonra dene.')),
+      );
+      return;
+    }
+
+    // Analytics telemetridir: hatası kullanıcı akışını ETKİLEMEZ.
+    unawaited(
+      analytics
+          .logLegalLinkOpened(document: document)
+          .catchError((Object _) {}),
+    );
+  }
 }
 
 /// Yıkıcı aksiyon satırı — ListTile en az 48dp dokunma alanı verir.
