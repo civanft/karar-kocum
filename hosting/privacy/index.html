@@ -29,17 +29,17 @@ oluşturulur. Bu kimlik yalnızca verilerinizi size bağlamak için kullanılır
 <li><strong>Puanlar:</strong> seçenekleri kriterlere göre puanlamanız.</li>
 <li><strong>Yapay zekâ analiz sonuçları:</strong> üretilen analiz metni ve
 buna verdiğiniz olumlu/olumsuz geri bildirim.</li>
-<li><strong>Kullanım ve hata teşhis verileri:</strong> çökme kayıtları, hata
-türleri ve uygulamanın kararlılığını ölçen teknik bilgiler.</li>
+<li><strong>Hata teşhis verileri:</strong> çökme kayıtları, hata türleri ve
+uygulamanın kararlılığını ölçen teknik bilgiler (Firebase Crashlytics).</li>
 <li><strong>App Check doğrulama sinyalleri:</strong> isteğin gerçekten sizin
 cihazınızdaki gerçek uygulamadan geldiğini doğrulayan cihaz ve uygulama
 bütünlüğü sinyalleri.</li>
-<li><strong>Analytics verileri:</strong> yalnızca siz açıkça izin verirseniz.
-İzin varsayılan olarak kapalıdır ve izin vermediğiniz sürece analiz olayı
-gönderilmez.</li>
 </ul>
-<p>Kararlarınızın içeriği hiçbir zaman analitik olay parametresi olarak
-gönderilmez; analitik yalnızca sayısal ve kategorik teknik bilgiler taşır.</p>
+<p><strong>Bu sürümde kullanım analitiği toplanmaz.</strong> Uygulamanın bu
+sürümünde herhangi bir analitik ölçüm aracı bulunmaz; davranışsal kullanım
+verisi toplanmaz.</p>
+<p><strong>Reklam gösterilmez, reklam kimliği kullanılmaz ve hiçbir takip
+(tracking) yapılmaz.</strong> Uygulamada reklam ağı ya da takip aracı yoktur.</p>
 
 <h2>2. Verileri neden işliyoruz</h2>
 <ul>
@@ -71,7 +71,6 @@ Analizler bilgilendirme ve fikir üretme amaçlıdır.</p>
 <li>Cloud Functions — sunucu tarafı analiz ve hesap silme işlemleri.</li>
 <li>Firebase App Check — cihaz ve uygulama doğrulaması.</li>
 <li>Firebase Crashlytics — çökme ve hata teşhisi.</li>
-<li>Firebase Analytics — yalnızca onayınız varsa.</li>
 <li>OpenAI API — yapay zekâ analiz metninin üretilmesi.</li>
 </ul>
 
@@ -90,6 +89,10 @@ kararlarınızı, seçeneklerinizi, kriterlerinizi, puanlarınızı, yapay zekâ
 analizlerinizi ve anonim kimlik hesabınızı siler. Bu işlem geri alınamaz.</p>
 <p>Toplam kullanım sayaçları gibi hiçbir kişiyle ilişkilendirilemeyen teknik
 kayıtlar, maliyet korumalarının çalışmaya devam edebilmesi için silinmez.</p>
+<p>Çökme ve hata teşhis kayıtları bu silme işleminin kapsamı dışındadır: bu
+kayıtlar Firebase Crashlytics tarafında tutulur ve sağlayıcının kendi saklama
+sürecine tabidir. Bu kayıtlarda kararlarınızın içeriği bulunmaz ve uygulama
+Crashlytics'e ayrıca bir kullanıcı kimliği tanımlamaz.</p>
 
 <h2>7. Paylaşım</h2>
 <p>Verileriniz <strong>satılmaz</strong>. Reklam veya pazarlama amacıyla üçüncü

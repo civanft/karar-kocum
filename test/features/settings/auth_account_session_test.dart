@@ -46,11 +46,5 @@ class _RecordingAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<AppUser> signInWithGoogle() => throw UnimplementedError();
-
-  @override
-  Future<AppUser> signInWithApple() => throw UnimplementedError();
-
-  @override
   Future<void> signOut() async => calls.add('signOut');
 }

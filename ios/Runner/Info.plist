@@ -22,6 +22,11 @@
 	<string>$(FLUTTER_BUILD_NAME)</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
+	<!-- Export compliance: uygulama yalnız standart HTTPS ve Apple platform
+	     şifrelemesini kullanır; özel/tescilli şifreleme YOKTUR. Bu anahtar
+	     olmadan her yüklemede elle soru sorulur. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>

@@ -26,12 +26,6 @@ class FakeAuthRepository implements AuthRepository {
   Future<AppUser> signInAnonymously() async => user!;
 
   @override
-  Future<AppUser> signInWithGoogle() async => user!;
-
-  @override
-  Future<AppUser> signInWithApple() async => user!;
-
-  @override
   Future<void> signOut() async {}
 }
 
