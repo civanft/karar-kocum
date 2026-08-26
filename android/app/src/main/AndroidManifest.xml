@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Sprint C.1: karar takibi YEREL bildirimi (FCM değil).
          POST_NOTIFICATIONS: Android 13+ çalışma zamanı izni.
          RECEIVE_BOOT_COMPLETED: 7 gün sonrasına planlanan bildirim
@@ -6,8 +7,21 @@
          SCHEDULE_EXACT_ALARM İSTENMEZ — inexact planlama kullanıyoruz. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+
+    <!-- PR-STORE-2: reklam/attribution izinleri SAVUNMACI biçimde kaldırılır.
+         Uygulama reklam göstermez ve reklam kimliği kullanmaz; bir bağımlılık
+         bu izinleri manifest-merger ile eklerse Play Data Safety beyanı
+         sessizce yanlış hâle gelirdi. -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID"
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_AD_ID"
+        tools:node="remove"/>
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_ATTRIBUTION"
+        tools:node="remove"/>
     <application
         android:label="Karar Koçum"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round">

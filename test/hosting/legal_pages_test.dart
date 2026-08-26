@@ -128,6 +128,58 @@ void main() {
       }
     });
 
+    test('v1 binary ile uyum: Analytics AKTİF SAĞLAYICI olarak yazılmaz', () {
+      final html = _read(_pages['privacy']!);
+      expect(
+        html,
+        isNot(contains('Firebase Analytics')),
+        reason: 'SDK v1 binary\'de yok; sağlayıcı listesinde durmamalı',
+      );
+      expect(
+        html.contains('izin verirseniz') || html.contains('onayınız varsa'),
+        isFalse,
+        reason: 'consent ile toplama vaadi kaldı',
+      );
+    });
+
+    test('reklam ve tracking yapılmadığı açıkça yazılır', () {
+      final html = _read(_pages['privacy']!);
+      expect(html, contains('reklam'));
+      expect(html.toLowerCase(), contains('takip'));
+    });
+
+    test('Crashlytics teşhis verisi ve silme kapsamı doğru anlatılır', () {
+      final html = _read(_pages['privacy']!);
+      expect(html, contains('Crashlytics'));
+      expect(
+        html.contains('çökme kayıtları hesap silme') ||
+            html.contains('teşhis kayıtları'),
+        isTrue,
+        reason: 'Crashlytics kayıtlarının kaskad dışında olduğu belirtilmeli',
+      );
+    });
+
+    test('ödeme/abonelik/reklam SDK adı hiçbir sayfada geçmez', () {
+      for (final entry in _pages.entries) {
+        final html = _read(entry.value).toLowerCase();
+        for (final bad in [
+          // YALNIZ SDK/ürün adları: "reklam kimliği kullanılmaz" gibi
+          // OLUMSUZLAMA cümleleri istenen ifadedir, yasak değil.
+          'revenuecat',
+          'admob',
+          'google sign-in',
+        ]) {
+          expect(html.contains(bad), isFalse, reason: '${entry.key}: $bad');
+        }
+      }
+    });
+
+    test('OpenAI sunucu tarafı aktarımı KORUNUR', () {
+      final html = _read(_pages['privacy']!);
+      expect(html, contains('OpenAI'));
+      expect(html, contains('Secret Manager'));
+    });
+
     test('koşullar tavsiye/sorumluluk sınırını belirtir', () {
       final html = _read(_pages['terms']!);
       expect(html, contains('13'));

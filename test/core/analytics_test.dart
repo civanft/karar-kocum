@@ -1,13 +1,10 @@
-import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:karar_veriyorum/core/config/firebase_bootstrap.dart';
 import 'package:karar_veriyorum/core/services/analytics/analytics_service.dart';
 import 'package:karar_veriyorum/features/decision/data/repositories/in_memory_decision_repository.dart';
 import 'package:karar_veriyorum/features/decision/domain/entities/decision.dart';
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_editor.dart';
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_providers.dart';
-import 'package:mocktail/mocktail.dart';
 
 /// Olayları sayan sahte servis.
 class RecordingAnalytics extends NoopAnalyticsService {
@@ -35,108 +32,38 @@ class RecordingAnalytics extends NoopAnalyticsService {
   }
 }
 
-class MockFirebaseAnalytics extends Mock implements FirebaseAnalytics {}
-
 void main() {
-  group('FirebaseAnalyticsService — olay adı ve parametre şeması', () {
-    late MockFirebaseAnalytics mock;
-    late FirebaseAnalyticsService service;
-    final logged = <(String, Map<String, Object>?)>[];
-
-    setUp(() {
-      mock = MockFirebaseAnalytics();
-      logged.clear();
-      when(
-        () => mock.logEvent(
-          name: any(named: 'name'),
-          parameters: any(named: 'parameters'),
-        ),
-      ).thenAnswer((inv) async {
-        logged.add(
-          (
-            inv.namedArguments[#name] as String,
-            inv.namedArguments[#parameters] as Map<String, Object>?,
-          ),
-        );
-      });
-      when(
-        () => mock.setUserProperty(
-          name: any(named: 'name'),
-          value: any(named: 'value'),
-        ),
-      ).thenAnswer((_) async {});
-      service = FirebaseAnalyticsService(mock);
+  group('v1 production sözleşmesi (PR-STORE-2)', () {
+    test('analytics v1\'de KAPALI (saf seam)', () {
+      expect(analyticsEnabledInV1(), isFalse);
     });
 
-    test('tüm huni ve AI olayları şemadaki adlarla loglanır', () async {
-      await service.logDecisionCreated(source: 'template');
-      await service.logOptionsCompleted(optionCount: 3);
-      await service.logCriteriaCompleted(
-        criterionCount: 2,
-        aiSuggestedCount: 1,
-      );
-      await service.logScoringCompleted();
-      await service.logResultViewed();
-      await service.logAnalysisRequested(tier: 'basic');
-      await service.logAnalysisCompleted(
-        tier: 'basic',
-        latencyMs: 4200,
-        cached: true,
-      );
-      await service.logAnalysisFeedback(thumbsUp: true);
-      await service.logResultShared(channel: 'whatsapp', format: 'card');
-      await service.logPaywallViewed(source: 'quota');
-
-      expect(logged.map((e) => e.$1), [
-        'decision_created',
-        'options_completed',
-        'criteria_completed',
-        'scoring_completed',
-        'result_viewed',
-        'analysis_requested',
-        'analysis_completed',
-        'analysis_feedback',
-        'result_shared',
-        'paywall_viewed',
-      ]);
-      // İçerik/PII taşınmadığının nokta kontrolü:
-      expect(logged[6].$2, {'tier': 'basic', 'latency_ms': 4200, 'cached': 1});
-      expect(logged[7].$2, {'thumbs': 'up'});
-    });
-
-    test('decisions_total kovalanır (kesin sayı sızmaz)', () async {
-      await service.setUserProperties(plan: 'premium', decisionsTotal: 4);
-      verify(
-        () => mock.setUserProperty(name: 'plan', value: 'premium'),
-      ).called(1);
-      verify(
-        () => mock.setUserProperty(name: 'decisions_total', value: '3-5'),
-      ).called(1);
-    });
-  });
-
-  group('analyticsEnabled (KVKK kapısı)', () {
-    test('yalnız Firebase hazır + consent TRUE iken açık', () {
-      expect(
-        analyticsEnabled(FirebaseStatus.ready, consent: true),
-        isTrue,
-      );
-      expect(
-        analyticsEnabled(FirebaseStatus.ready, consent: false),
-        isFalse,
-      );
-      expect(
-        analyticsEnabled(FirebaseStatus.localMode, consent: true),
-        isFalse,
-      );
-    });
-
-    test('varsayılan provider: consent kapalı → Noop (opt-in)', () {
+    test('provider DAİMA Noop döner', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
       expect(
         container.read(analyticsServiceProvider),
         isA<NoopAnalyticsService>(),
+      );
+    });
+
+    test('olay çağrıları hata üretmeden tamamlanır (platform kanalı YOK)',
+        () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final service = container.read(analyticsServiceProvider);
+
+      await expectLater(
+        Future.wait([
+          service.logDecisionCreated(source: 'blank'),
+          service.logOptionsCompleted(optionCount: 2),
+          service.logScoringCompleted(),
+          service.logResultViewed(),
+          service.logAnalysisRequested(tier: 'basic'),
+          service.logLegalLinkOpened(document: 'privacy'),
+          service.setUserProperties(plan: 'free', decisionsTotal: 3),
+        ]),
+        completes,
       );
     });
   });
