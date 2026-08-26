@@ -157,15 +157,34 @@ class _LegalTile extends ConsumerWidget {
     );
   }
 
+  /// Sıra ÖNEMLİ: olay yalnız gerçekten açıldıktan sonra gönderilir.
+  /// Önce göndermek, açılmayan sayfayı "açıldı" diye sayar ve metriği bozar.
   Future<void> _open(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
+    final analytics = ref.read(analyticsServiceProvider);
+
+    var opened = false;
+    try {
+      opened = await ref.read(externalLinkLauncherProvider).open(url);
+    } catch (_) {
+      // Adapter normalde yutar; yine de burada da savunma var ki bir
+      // sızıntı kullanıcıya yakalanmamış hata olarak yansımasın.
+      opened = false;
+    }
+
+    if (!opened) {
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('$title açılamadı. Lütfen daha sonra dene.')),
+      );
+      return;
+    }
+
+    // Analytics telemetridir: hatası kullanıcı akışını ETKİLEMEZ.
     unawaited(
-      ref.read(analyticsServiceProvider).logLegalLinkOpened(document: document),
-    );
-    final opened = await ref.read(externalLinkLauncherProvider).open(url);
-    if (opened || !context.mounted) return;
-    messenger.showSnackBar(
-      SnackBar(content: Text('$title açılamadı. Lütfen daha sonra dene.')),
+      analytics
+          .logLegalLinkOpened(document: document)
+          .catchError((Object _) {}),
     );
   }
 }

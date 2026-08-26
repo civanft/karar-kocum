@@ -115,6 +115,54 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
   });
 
+  testWidgets('açma BAŞARISIZSA analytics gönderilmez', (tester) async {
+    launcher.result = false;
+    await pumpSettings(tester);
+
+    await tester.tap(find.text('Gizlilik Politikası'));
+    await tester.pump();
+
+    expect(
+      analytics.documents,
+      isEmpty,
+      reason: 'sayfa açılmadığı hâlde "opened" kaydı üretilmiş',
+    );
+    expect(find.byType(SnackBar), findsOneWidget);
+  });
+
+  testWidgets('launcher FIRLATIRSA analytics gönderilmez', (tester) async {
+    launcher.throws = true;
+    await pumpSettings(tester);
+
+    await tester.tap(find.text('Kullanım Koşulları'));
+    await tester.pump();
+
+    expect(analytics.documents, isEmpty);
+  });
+
+  testWidgets('başarıda analytics TAM BİR KEZ gönderilir', (tester) async {
+    await pumpSettings(tester);
+
+    await tester.tap(find.text('Destek'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(analytics.documents, ['support']);
+  });
+
+  testWidgets('analytics hatası UI davranışını ETKİLEMEZ', (tester) async {
+    analytics.throws = true;
+    await pumpSettings(tester);
+
+    await tester.tap(find.text('Gizlilik Politikası'));
+    await tester.pump();
+
+    // Açma başarılıydı: hata SnackBar'ı çıkmamalı, ekran ayakta kalmalı.
+    expect(find.byType(SnackBar), findsNothing);
+    expect(tester.takeException(), isNull);
+    expect(find.text('Gizlilik Politikası'), findsOneWidget);
+  });
+
   testWidgets('analytics YALNIZ belge adını taşır, URL/PII taşımaz',
       (tester) async {
     await pumpSettings(tester);
@@ -139,19 +187,23 @@ void main() {
 class _FakeLauncher implements ExternalLinkLauncher {
   final List<String> opened = [];
   bool result = true;
+  bool throws = false;
 
   @override
   Future<bool> open(String url) async {
     opened.add(url);
+    if (throws) throw Exception('kanal yok');
     return result;
   }
 }
 
 class _RecordingAnalytics extends NoopAnalyticsService {
   final List<String> documents = [];
+  bool throws = false;
 
   @override
   Future<void> logLegalLinkOpened({required String document}) async {
+    if (throws) throw Exception('analytics kanalı yok');
     documents.add(document);
   }
 }

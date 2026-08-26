@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -96,6 +97,37 @@ void main() {
       }
     });
 
+    test('destek sayfası "öneri" izlenimi vermez', () {
+      final html = _read(_pages['support']!);
+      expect(
+        html,
+        isNot(contains('Sonuçlar bir öneridir')),
+        reason: 'diğer belgelerle çelişen tavsiye ifadesi',
+      );
+      expect(html, contains('bilgilendirme'));
+      expect(html, contains('fikir üretme'));
+      expect(html, contains('nihai karar'));
+    });
+
+    test('hiçbir sayfa profesyonel tavsiye izlenimi vermez', () {
+      for (final entry in _pages.entries) {
+        final html = _read(entry.value).toLowerCase();
+        for (final bad in [
+          'tavsiye ederiz',
+          'öneririz',
+          'size tavsiye',
+          'uzman görüşü sunar',
+          'danışmanlık sunar',
+        ]) {
+          expect(
+            html.contains(bad),
+            isFalse,
+            reason: '${entry.key} içinde "$bad" var',
+          );
+        }
+      }
+    });
+
     test('koşullar tavsiye/sorumluluk sınırını belirtir', () {
       final html = _read(_pages['terms']!);
       expect(html, contains('13'));
@@ -176,30 +208,64 @@ void main() {
   });
 
   group('firebase.json hosting yapılandırması', () {
-    test('hosting bloğu legal siteyi işaret eder ve güvenlik başlıkları var',
-        () {
-      final raw = _read('firebase.json');
-      expect(raw, contains('"hosting"'));
-      expect(raw, contains('"public": "hosting"'));
-      for (final header in [
-        'X-Content-Type-Options',
-        'X-Frame-Options',
-        'Referrer-Policy',
-        'Permissions-Policy',
-        'Content-Security-Policy',
-      ]) {
-        expect(raw, contains(header), reason: '$header eksik');
-      }
-      expect(raw, contains('nosniff'));
-      expect(raw, contains('DENY'));
-      expect(raw, contains('no-referrer'));
+    // JSON PARSE EDİLİR: ham metin araması, anahtar başka bir blokta ya da
+    // yorum içinde geçtiğinde sahte başarı üretir.
+    late Map<String, dynamic> config;
+    late Map<String, dynamic> hosting;
+
+    setUpAll(() {
+      config = jsonDecode(_read('firebase.json')) as Map<String, dynamic>;
+      hosting = config['hosting'] as Map<String, dynamic>;
     });
 
-    test('firestore/functions yapılandırması korunur', () {
-      final raw = _read('firebase.json');
-      for (final key in ['"firestore"', '"functions"', '"flutter"']) {
-        expect(raw, contains(key), reason: '$key düştü');
+    test('public dizini yalnız legal siteyi işaret eder', () {
+      expect(hosting['public'], 'hosting');
+    });
+
+    test('clean URL sözleşmesi: /privacy uzantısız çalışır', () {
+      // cleanUrls kapanırsa uygulamadaki üç bağlantı 404 verir.
+      expect(hosting['cleanUrls'], isTrue);
+      expect(hosting['trailingSlash'], isFalse);
+    });
+
+    test('güvenlik başlıkları tüm yollara uygulanır', () {
+      final headers = (hosting['headers'] as List)
+          .cast<Map<String, dynamic>>()
+          .firstWhere((h) => h['source'] == '**');
+      final byKey = {
+        for (final h
+            in (headers['headers'] as List).cast<Map<String, dynamic>>())
+          h['key'] as String: h['value'] as String,
+      };
+      expect(byKey['X-Content-Type-Options'], 'nosniff');
+      expect(byKey['X-Frame-Options'], 'DENY');
+      expect(byKey['Referrer-Policy'], 'no-referrer');
+      expect(byKey['Permissions-Policy'], contains('camera=()'));
+      expect(byKey['Permissions-Policy'], contains('geolocation=()'));
+      expect(byKey['Content-Security-Policy'], contains("default-src 'none'"));
+      const csp = 'Content-Security-Policy';
+      expect(byKey[csp], contains("frame-ancestors 'none'"));
+    });
+
+    test('HTML UTF-8 olarak sunulur', () {
+      final html = (hosting['headers'] as List)
+          .cast<Map<String, dynamic>>()
+          .firstWhere((h) => (h['source'] as String).endsWith('.html'));
+      final byKey = {
+        for (final h in (html['headers'] as List).cast<Map<String, dynamic>>())
+          h['key'] as String: h['value'] as String,
+      };
+      expect(byKey['Content-Type'], contains('charset=utf-8'));
+    });
+
+    test('firestore/functions/flutter/emulator yapılandırması korunur', () {
+      for (final key in ['firestore', 'functions', 'flutter', 'emulators']) {
+        expect(config.containsKey(key), isTrue, reason: '$key düştü');
       }
+      final fs = config['firestore'] as Map<String, dynamic>;
+      expect(fs['rules'], 'firestore.rules');
+      expect(fs['indexes'], 'firestore.indexes.json');
+      expect((config['functions'] as Map)['source'], 'functions');
     });
   });
 }
