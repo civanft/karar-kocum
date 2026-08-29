@@ -8,6 +8,7 @@ import '../../../journey/data/follow_up_aware_decision_repository.dart';
 import '../../../journey/presentation/providers/journey_providers.dart';
 import '../../data/repositories/firestore_decision_repository.dart';
 import '../../data/repositories/in_memory_decision_repository.dart';
+import '../../data/repositories/unavailable_decision_repository.dart';
 import '../../domain/entities/decision.dart';
 import '../../domain/repositories/decision_repository.dart';
 import '../../domain/usecases/compute_result.dart';
@@ -24,17 +25,19 @@ final firestoreInstanceProvider =
     Provider<FirebaseFirestore>((_) => FirebaseFirestore.instance);
 
 final decisionRepositoryProvider = Provider<DecisionRepository>((ref) {
-  final firebaseReady =
-      ref.watch(firebaseStatusProvider) == FirebaseStatus.ready;
+  final status = ref.watch(firebaseStatusProvider);
   // select: yalnız uid DEĞİŞİNCE yeniden kur — AsyncLoading→AsyncData
   // geçişi repo'yu boşuna yeniden yaratıp in-memory veriyi düşürmesin.
   final uid = ref.watch(authStateProvider.select((s) => s.valueOrNull?.uid));
   final DecisionRepository base;
-  if (firebaseReady && uid != null) {
+  if (status == FirebaseStatus.ready && uid != null) {
     base = FirestoreDecisionRepository(
       ref.watch(firestoreInstanceProvider),
       uid: uid,
     );
+  } else if (status == FirebaseStatus.unavailable) {
+    // FAIL-CLOSED: in-memory depo release'de kalıcı sanılan karar yazdırır.
+    base = const UnavailableDecisionRepository();
   } else {
     final repo = InMemoryDecisionRepository();
     ref.onDispose(repo.dispose);

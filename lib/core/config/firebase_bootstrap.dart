@@ -18,14 +18,47 @@ enum FirebaseStatus {
   ready,
 
   /// Yapılandırma placeholder ya da başlatma hatası — uygulama YEREL MODDA
-  /// çalışır (in-memory depo, kimliksiz). Geliştirme ve CI için normaldir.
+  /// çalışır (in-memory depo, kimliksiz). Yalnız debug/profile/test için
+  /// normaldir; release'de ASLA seçilmez.
   localMode,
+
+  /// Release'de Firebase'e bağlanılamadı — FAIL-CLOSED.
+  ///
+  /// Yerel moda düşmek release'de kabul edilemez: in-memory depo kalıcı
+  /// sanılan karar, LocalCreditsRepository sahte kredi ve MockAiAnalysisClient
+  /// uydurma bir analiz gösterirdi. Bu durumda uygulama açık bir "bağlanılamadı"
+  /// ekranı gösterir ve hiçbir sahte veri üretmez.
+  unavailable,
 }
+
+/// Başlatma hatasının hangi duruma düşeceğini belirleyen SAF politika.
+///
+/// [kReleaseMode] doğrudan test edilemediği için karar buraya ayrıldı;
+/// çağıran taraf bayrağı geçer, test seam'i saf kalır.
+FirebaseStatus firebaseFailureStatus({required bool isReleaseMode}) =>
+    isReleaseMode ? FirebaseStatus.unavailable : FirebaseStatus.localMode;
 
 /// Uygulama açılışında Firebase'i dener; başarısızlık ÇÖKME DEĞİLDİR.
 /// Splash bütçesi (mimari §13): burada yalnız init + anonim oturum var,
 /// Remote Config/Analytics sonraki sprintlerde eklenirken de bekletilmez.
 abstract final class FirebaseBootstrap {
+  /// Aynı anda iki başlatma çalışmasını önler: retry butonuna arka arkaya
+  /// basılması ya da paralel bir çağrı duplicate-app üretmemeli.
+  static Future<FirebaseStatus>? _inFlight;
+
+  /// Retry için idempotent giriş noktası.
+  ///
+  /// Firebase app zaten kuruluysa yeniden kurulmaz (`Firebase.apps`);
+  /// yalnız eksik olan anonim oturum tamamlanır. Devam eden bir başlatma
+  /// varsa aynı Future paylaşılır.
+  static Future<FirebaseStatus> ensureInitialized() {
+    final running = _inFlight;
+    if (running != null) return running;
+    final started = tryInitialize().whenComplete(() => _inFlight = null);
+    _inFlight = started;
+    return started;
+  }
+
   static Future<FirebaseStatus> tryInitialize() async {
     final FirebaseOptions options;
     try {
@@ -36,21 +69,33 @@ abstract final class FirebaseBootstrap {
       options = FirebaseEnvironment.resolve(isReleaseMode: kReleaseMode)
           .currentPlatformOptions();
     } on UnsupportedError catch (e) {
-      debugPrint('FirebaseBootstrap: platform yapılandırması yok — '
-          'yerel mod. $e');
-      return FirebaseStatus.localMode;
+      // Release'de de aynı güvenlik politikası: kayıtsız platform sahte
+      // veriyle çalışmaz.
+      if (!kReleaseMode) {
+        debugPrint('FirebaseBootstrap: platform yapılandırması yok — '
+            'yerel mod. $e');
+      }
+      return firebaseFailureStatus(isReleaseMode: kReleaseMode);
     }
 
     try {
-      await Firebase.initializeApp(options: options);
-      await _activateAppCheck();
+      // İdempotent: zaten kuruluysa duplicate-app hatası üretmeden geç.
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(options: options);
+        await _activateAppCheck();
+      }
       await _ensureSignedIn();
       return FirebaseStatus.ready;
     } catch (error, stackTrace) {
-      // İlk açılış + uçak modu gibi durumlarda kullanıcıyı kilitlemeyiz.
-      debugPrint('FirebaseBootstrap: başlatılamadı, yerel mod. $error');
-      debugPrintStack(stackTrace: stackTrace, maxFrames: 8);
-      return FirebaseStatus.localMode;
+      // Release'de teşhis AYRINTISI yazdırılmaz: exception mesajı Firebase
+      // proje kimliği, UID ya da belge yolu taşıyabilir. Yalnız hata TÜRÜ.
+      if (kReleaseMode) {
+        debugPrint('FirebaseBootstrap: başlatılamadı (${error.runtimeType}).');
+      } else {
+        debugPrint('FirebaseBootstrap: başlatılamadı, yerel mod. $error');
+        debugPrintStack(stackTrace: stackTrace, maxFrames: 8);
+      }
+      return firebaseFailureStatus(isReleaseMode: kReleaseMode);
     }
   }
 
@@ -67,7 +112,9 @@ abstract final class FirebaseBootstrap {
         appleProvider: appleAppCheckProviderFor(isDebug: kDebugMode),
       );
     } catch (error) {
-      debugPrint('FirebaseBootstrap: App Check aktive edilemedi. $error');
+      if (!kReleaseMode) {
+        debugPrint('FirebaseBootstrap: App Check aktive edilemedi. $error');
+      }
     }
   }
 

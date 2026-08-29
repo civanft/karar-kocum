@@ -8,6 +8,7 @@ import '../../../../core/config/firebase_environment.dart';
 import '../../../../core/services/analytics/analytics_service.dart';
 import '../../data/firebase_ai_analysis_client.dart';
 import '../../data/mock_ai_analysis_client.dart';
+import '../../data/unavailable_ai_analysis_client.dart';
 import '../../domain/entities/ai_analysis.dart';
 import '../../domain/repositories/ai_analysis_client.dart';
 
@@ -43,17 +44,21 @@ class AnalysisQuotaExceeded extends AnalysisState {
   final int totalCredits;
 }
 
-/// AI istemcisi bağlama noktası (6D-2): Firebase hazırsa gerçek callable,
-/// aksi halde yerel/test mock'u. Testler bu provider'ı override eder.
+/// AI istemcisi bağlama noktası (6D-2, PR-RELEASE-1).
+///
+/// Mock YALNIZ localMode'da (debug/profile/test) kullanılır. Release'de
+/// bağlantı kurulamadığında (`unavailable`) mock DÖNMEZ — uydurma bir analiz
+/// kullanıcıya gerçek gibi görünürdü. Testler bu provider'ı override eder.
 final aiAnalysisClientProvider = Provider<AiAnalysisClient>((ref) {
-  final ready = ref.watch(firebaseStatusProvider) == FirebaseStatus.ready;
-  return ready
-      ? FirebaseAiAnalysisClient(
-          FirebaseFunctions.instanceFor(
-            region: ref.watch(functionsRegionProvider),
-          ),
-        )
-      : MockAiAnalysisClient();
+  return switch (ref.watch(firebaseStatusProvider)) {
+    FirebaseStatus.ready => FirebaseAiAnalysisClient(
+        FirebaseFunctions.instanceFor(
+          region: ref.watch(functionsRegionProvider),
+        ),
+      ),
+    FirebaseStatus.localMode => MockAiAnalysisClient(),
+    FirebaseStatus.unavailable => const UnavailableAiAnalysisClient(),
+  };
 });
 
 /// Karar başına analiz durumu — gövde artık gerçek callable çağırır (6D-2).

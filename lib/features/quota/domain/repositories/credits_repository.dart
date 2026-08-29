@@ -23,3 +23,28 @@ class LocalCreditsRepository implements CreditsRepository {
   @override
   Stream<int> watchRemaining() => Stream.value(_remaining);
 }
+
+/// Release'de servise bağlanılamadığında kullanılan kredi deposu
+/// (PR-RELEASE-1).
+///
+/// SAHTE KREDİ YAYINLAMAZ: [LocalCreditsRepository] sabit bir başlangıç
+/// değeri (ör. 5) yayımlar; kullanıcı bunu gerçek hakkı sanır ve analiz
+/// denediğinde başarısız olur. Burada akış açık bir hata ile başlar.
+class UnavailableCreditsRepository implements CreditsRepository {
+  const UnavailableCreditsRepository();
+
+  static const String message =
+      'Servise bağlanılamadı. Bağlantını kontrol edip tekrar dene.';
+
+  @override
+  Stream<int> watchRemaining() =>
+      Stream.error(const CreditsUnavailableException());
+}
+
+/// Kullanıcıya gösterilebilir, teknik ayrıntı taşımayan hata.
+class CreditsUnavailableException implements Exception {
+  const CreditsUnavailableException();
+
+  @override
+  String toString() => UnavailableCreditsRepository.message;
+}
