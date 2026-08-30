@@ -65,6 +65,12 @@ void main() {
     );
     addTearDown(container.dispose);
 
+    // rewardFlowProvider autoDispose: abonelik olmadan notifier okunduğunda
+    // provider anında dispose edilir ve state kaybolur (reward_flow_test
+    // kalıbı).
+    final sub = container.listen(rewardFlowProvider, (_, __) {});
+    addTearDown(sub.close);
+
     await container.read(rewardFlowProvider.notifier).watchAd();
 
     final state = container.read(rewardFlowProvider);

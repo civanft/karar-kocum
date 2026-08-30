@@ -97,6 +97,7 @@ void main() {
       container.read(decisionRepositoryProvider).watchAll().first,
       throwsA(isA<Exception>()),
     );
-    expect(container.read(currentUidProvider), isNot('local-user'));
+    // isNull: boş string sentinel'inin geri dönmesini de yakalar.
+    expect(container.read(currentUidProvider), isNull);
   });
 }

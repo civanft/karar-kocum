@@ -81,7 +81,14 @@ void main() {
       find.text(const AuthFailure('missing-session').userMessage),
       findsOneWidget,
     );
-    // Buton yeniden kullanılabilir kalmalı.
-    expect(find.text('Devam Et'), findsOneWidget);
+    // Buton yeniden kullanılabilir kalmalı — metnin görünmesi yetmez,
+    // gerçek widget'ın onPressed'i null OLMAMALI (public davranış).
+    final button = tester.widget<FilledButton>(
+      find.ancestor(
+        of: find.text('Devam Et'),
+        matching: find.byType(FilledButton),
+      ),
+    );
+    expect(button.onPressed, isNotNull);
   });
 }

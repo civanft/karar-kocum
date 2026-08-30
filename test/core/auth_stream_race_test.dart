@@ -113,14 +113,15 @@ void main() {
   });
 
   group('C. unavailable', () {
-    test('currentUidProvider local-user döndürmez', () {
+    test('unavailable durumda currentUidProvider null döndürür', () {
       final c = ProviderContainer(
         overrides: [
           firebaseStatusProvider.overrideWithValue(FirebaseStatus.unavailable),
         ],
       );
       addTearDown(c.dispose);
-      expect(c.read(currentUidProvider), isNot('local-user'));
+      // isNot('local-user') zayıftı: boş string sentinel'i de geçerdi.
+      expect(c.read(currentUidProvider), isNull);
     });
   });
 
