@@ -42,6 +42,16 @@ class _NewDecisionScreenState extends ConsumerState<NewDecisionScreen> {
       setState(() => _errorText = failure.message);
       return;
     }
+    // UID, HER TÜRLÜ yan etkiden ve spinner'dan ÖNCE çözülür: oturum yoksa
+    // ne yazma başlar ne de spinner açılır (PR-P1-UID-1).
+    final ownerUid = ref.read(currentUidProvider);
+    if (ownerUid == null) {
+      setState(
+        () => _errorText = const AuthFailure('missing-session').userMessage,
+      );
+      return;
+    }
+
     setState(() {
       _errorText = null;
       _submitting = true;
@@ -52,7 +62,7 @@ class _NewDecisionScreenState extends ConsumerState<NewDecisionScreen> {
     // ASLA kilitleyemez (catch → hata mesajı; state her yolda çözülür).
     try {
       final result = await ref.read(createDecisionProvider)(
-        ownerUid: ref.read(currentUidProvider),
+        ownerUid: ownerUid,
         title: _controller.text,
       );
 

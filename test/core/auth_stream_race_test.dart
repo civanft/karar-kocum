@@ -74,6 +74,12 @@ void main() {
     test('currentUidProvider GERÇEK uid döndürür', () {
       expect(readyWith(user).read(currentUidProvider), 'anon-race');
     });
+
+    test('sözleşme tablosu: hiçbir durumda boş string dönmez', () {
+      for (final c in [readyWith(user), readyWith(null)]) {
+        expect(c.read(currentUidProvider), isNot(''));
+      }
+    });
   });
 
   group('B. ready + currentUser null, stream yayın yok', () {
@@ -98,8 +104,11 @@ void main() {
       );
     });
 
-    test('currentUidProvider ASLA local-user döndürmez', () {
-      expect(readyWith(null).read(currentUidProvider), isNot('local-user'));
+    // PR-P1-UID-1: boş string sentinel KALDIRILDI — eksik kimlik artık
+    // tip düzeyinde null. isNot('local-user') zayıf bir kontroldü; '' de
+    // geçerdi ve sahte bir kimlik olarak downstream'e sızabilirdi.
+    test('currentUidProvider NULL döndürür (boş string sentinel yok)', () {
+      expect(readyWith(null).read(currentUidProvider), isNull);
     });
   });
 
