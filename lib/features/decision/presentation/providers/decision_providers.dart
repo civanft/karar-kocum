@@ -65,17 +65,19 @@ final computeResultProvider = Provider<ComputeResult>(
 );
 
 /// Oturum uid'i; yerel modda sabit kimlik.
-/// Sahiplik kimliği.
+/// Sahiplik kimliği — eksik oturum TİP DÜZEYİNDE `null`.
 ///
-/// `local-user` YALNIZ [FirebaseStatus.localMode]'da kullanılır. ready ya da
-/// unavailable durumunda gerçek UID yoksa boş dize döner: sahte bir kimlikle
-/// veri yazılmasını engeller (depolar zaten fail-closed davranır).
-final currentUidProvider = Provider<String>((ref) {
+/// Boş dize sentinel'i KALDIRILDI (PR-P1-UID-1): `''` geçerli bir String'dir
+/// ve `ownerUid` alanına sessizce sızabiliyordu. Artık çağıran taraf null
+/// kontrolünü atlayamaz.
+///
+/// `local-user` YALNIZ [FirebaseStatus.localMode]'da kullanılır.
+final currentUidProvider = Provider<String?>((ref) {
   final uid = ref.watch(resolvedUidProvider);
   if (uid != null) return uid;
   return ref.watch(firebaseStatusProvider) == FirebaseStatus.localMode
       ? 'local-user'
-      : '';
+      : null;
 });
 
 /// Ana ekran listesi.

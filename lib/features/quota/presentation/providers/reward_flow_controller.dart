@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/error/failure.dart';
 import '../../../decision/presentation/providers/decision_providers.dart';
 import '../../domain/repositories/reward_ports.dart';
 import 'credits_providers.dart';
@@ -50,10 +51,18 @@ class RewardFlowController extends AutoDisposeNotifier<RewardState> {
   Future<void> watchAd() async {
     if (state is RewardInProgress) return; // çift tık koruması
 
+    // UID, HERHANGİ bir port işlemi başlamadan ÖNCE çözülür: oturum yoksa
+    // bilet oluşmaz, reklam gösterilmez, SSV'ye boş kimlik gitmez ve kredi
+    // akışı dinlenmez (PR-P1-UID-1).
+    final uid = ref.read(currentUidProvider);
+    if (uid == null) {
+      state = RewardFailed(const AuthFailure('missing-session').userMessage);
+      return;
+    }
+
     final tickets = ref.read(rewardTicketPortProvider);
     final ads = ref.read(rewardedAdPortProvider);
     final credits = ref.read(creditsRepositoryProvider);
-    final uid = ref.read(currentUidProvider);
     final timeout = ref.read(rewardVerifyTimeoutProvider);
 
     try {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/error/failure.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../decision/presentation/providers/decision_providers.dart';
 import '../../domain/entities/decision_template.dart';
@@ -50,6 +51,17 @@ class _TemplatePreviewContentState
 
   Future<void> _createFromTemplate() async {
     if (_creating) return; // çift dokunuş tek karar üretir
+
+    // UID, _creating ve creator çağrısından ÖNCE çözülür: oturum yoksa
+    // ne spinner açılır ne de yazma başlar (PR-P1-UID-1).
+    final ownerUid = ref.read(currentUidProvider);
+    if (ownerUid == null) {
+      setState(
+        () => _errorText = const AuthFailure('missing-session').userMessage,
+      );
+      return;
+    }
+
     setState(() {
       _creating = true;
       _errorText = null;
@@ -58,7 +70,7 @@ class _TemplatePreviewContentState
     // İş mantığı TemplateDecisionCreator'da (birim testli) — sheet yalnız
     // durum + navigasyon tutar.
     final decisionId = await ref.read(templateDecisionCreatorProvider)(
-      ownerUid: ref.read(currentUidProvider),
+      ownerUid: ownerUid,
       title: _titleController.text,
       template: widget.template,
     );

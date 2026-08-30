@@ -74,6 +74,12 @@ void main() {
     test('currentUidProvider GERÇEK uid döndürür', () {
       expect(readyWith(user).read(currentUidProvider), 'anon-race');
     });
+
+    test('sözleşme tablosu: hiçbir durumda boş string dönmez', () {
+      for (final c in [readyWith(user), readyWith(null)]) {
+        expect(c.read(currentUidProvider), isNot(''));
+      }
+    });
   });
 
   group('B. ready + currentUser null, stream yayın yok', () {
@@ -98,20 +104,24 @@ void main() {
       );
     });
 
-    test('currentUidProvider ASLA local-user döndürmez', () {
-      expect(readyWith(null).read(currentUidProvider), isNot('local-user'));
+    // PR-P1-UID-1: boş string sentinel KALDIRILDI — eksik kimlik artık
+    // tip düzeyinde null. isNot('local-user') zayıf bir kontroldü; '' de
+    // geçerdi ve sahte bir kimlik olarak downstream'e sızabilirdi.
+    test('currentUidProvider NULL döndürür (boş string sentinel yok)', () {
+      expect(readyWith(null).read(currentUidProvider), isNull);
     });
   });
 
   group('C. unavailable', () {
-    test('currentUidProvider local-user döndürmez', () {
+    test('unavailable durumda currentUidProvider null döndürür', () {
       final c = ProviderContainer(
         overrides: [
           firebaseStatusProvider.overrideWithValue(FirebaseStatus.unavailable),
         ],
       );
       addTearDown(c.dispose);
-      expect(c.read(currentUidProvider), isNot('local-user'));
+      // isNot('local-user') zayıftı: boş string sentinel'i de geçerdi.
+      expect(c.read(currentUidProvider), isNull);
     });
   });
 

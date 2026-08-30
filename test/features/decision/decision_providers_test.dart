@@ -20,7 +20,8 @@ void main() {
 
   test('decisionListProvider: oluşturulan karar listede görünür', () async {
     final created = await container.read(createDecisionProvider)(
-      ownerUid: container.read(currentUidProvider),
+      // localMode: yukarıda 'local-user' olarak assert edildi.
+      ownerUid: container.read(currentUidProvider)!,
       title: 'Hangi laptopu almalıyım?',
     );
     final decision = switch (created) {
@@ -34,7 +35,7 @@ void main() {
 
   test('liste updatedAt azalan sıradadır (en yeni üstte)', () async {
     final create = container.read(createDecisionProvider);
-    final uid = container.read(currentUidProvider);
+    final uid = container.read(currentUidProvider)!; // localMode
 
     await create(ownerUid: uid, title: 'Birinci karar');
     await Future<void>.delayed(const Duration(milliseconds: 5));
