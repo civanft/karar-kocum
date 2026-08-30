@@ -10,15 +10,20 @@ import '../../domain/repositories/credits_repository.dart';
 /// Firestore; aksi halde yerel sabit (uid select'i gereksiz yeniden
 /// kurulumu önler — bkz. decision_providers'daki aynı desen).
 final creditsRepositoryProvider = Provider<CreditsRepository>((ref) {
-  final firebaseReady =
-      ref.watch(firebaseStatusProvider) == FirebaseStatus.ready;
-  final uid = ref.watch(authStateProvider.select((s) => s.valueOrNull?.uid));
+  final status = ref.watch(firebaseStatusProvider);
+  // Stream henüz yayınlamadıysa senkron currentUser'a düşer (yarış koruması).
+  final uid = ref.watch(resolvedUidProvider);
 
-  if (firebaseReady && uid != null) {
+  if (status == FirebaseStatus.ready && uid != null) {
     return FirestoreCreditsRepository(
       ref.watch(firestoreInstanceProvider),
       uid: uid,
     );
+  }
+  // FAIL-CLOSED: sabit "5 kredi" göstermek kullanıcıya sahte hak vaat eder;
+  // analiz denediğinde başarısız olur. localMode dışında asla gösterilmez.
+  if (status != FirebaseStatus.localMode) {
+    return const UnavailableCreditsRepository();
   }
   return LocalCreditsRepository();
 });

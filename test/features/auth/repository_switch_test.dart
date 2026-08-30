@@ -71,7 +71,10 @@ void main() {
     expect(container.read(currentUidProvider), 'anon-1');
   });
 
-  test('Firebase hazır ama oturum yok → güvenli düşüş: in-memory', () async {
+  // PR-RELEASE-1A: sözleşme DEĞİŞTİ. Eskiden "güvenli düşüş: in-memory"
+  // idi; in-memory depo kullanıcıya kalıcı sanacağı karar yazdırdığı için
+  // artık FAIL-CLOSED. Assertion kaldırılmadı, yeni davranışa çevrildi.
+  test('Firebase hazır ama oturum yok → fail-closed, yerel depo YOK', () async {
     final container = ProviderContainer(
       overrides: [
         firebaseStatusProvider.overrideWithValue(FirebaseStatus.ready),
@@ -87,7 +90,13 @@ void main() {
       (container.read(decisionRepositoryProvider)
               as FollowUpAwareDecisionRepository)
           .inner,
-      isA<InMemoryDecisionRepository>(),
+      isNot(isA<InMemoryDecisionRepository>()),
     );
+    // Davranışsal kanıt: hiçbir karar akışı veri yayımlamaz.
+    await expectLater(
+      container.read(decisionRepositoryProvider).watchAll().first,
+      throwsA(isA<Exception>()),
+    );
+    expect(container.read(currentUidProvider), isNot('local-user'));
   });
 }
