@@ -2,7 +2,7 @@
   "name": "karar-veriyorum-functions",
   "private": true,
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "main": "lib/index.js",
   "scripts": {
@@ -24,7 +24,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@firebase/rules-unit-testing": "^5.0.1",
-    "@types/node": "^20.14.0",
+    "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^9.39.5",
     "typescript": "^5.5.3",

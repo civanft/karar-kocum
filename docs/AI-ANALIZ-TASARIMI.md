@@ -21,7 +21,7 @@
 
 Ortak boru hattı katmanları paylaşılan modüllerde: `middleware/` (auth+AppCheck+rate limit+kota), `openai/` (istemci, retry, şema), `prompts/` (sürümlü şablonlar), `moderation/`.
 
-**Runtime yapılandırması:** Node 20, 2. nesil; `analyzeDecision`: bellek 512 MB, timeout 120 sn, **concurrency 20** (I/O-bağımlı — instance başına eşzamanlı istek OpenAI beklerken CPU harcamaz), `minInstances 0` (dev/staging) / `1` (prod — soğuk başlatmayı ilk chunk hedefinden çıkarır), `maxInstances 30` (global maliyet freni, §6).
+**Runtime yapılandırması:** Node 22, 2. nesil; `analyzeDecision`: bellek 512 MB, timeout 120 sn, **concurrency 20** (I/O-bağımlı — instance başına eşzamanlı istek OpenAI beklerken CPU harcamaz), `minInstances 0` (dev/staging) / `1` (prod — soğuk başlatmayı ilk chunk hedefinden çıkarır), `maxInstances 30` (global maliyet freni, §6).
 
 ### 1.2 `analyzeDecision` boru hattı
 

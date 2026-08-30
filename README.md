@@ -49,7 +49,7 @@ flutter test --coverage                                    # tüm testler yeşil
 bash scripts/check_coverage.sh 80                          # kapsam ≥ %80
 ```
 
-Functions tarafı (Node 20; emulator gerektirenler için Java 21):
+Functions tarafı (Node 22; emulator gerektirenler için Java 21):
 
 ```sh
 npm --prefix functions run lint
