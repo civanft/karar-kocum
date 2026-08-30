@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../config/firebase_bootstrap.dart';
+import '../theme/app_theme.dart';
 
 /// Release başlangıç kapısı (PR-RELEASE-1).
 ///
@@ -55,9 +56,18 @@ class _StartupGateState extends State<StartupGate> {
   @override
   Widget build(BuildContext context) {
     if (_status != FirebaseStatus.unavailable) {
+      // NESTED MaterialApp YOK: uygulamanın kendi kökünü kuruyor.
       return widget.appBuilder(context);
     }
-    return _UnavailableScreen(busy: _retrying, onRetry: _onRetry);
+    // Bu dal PRODUCTION KÖKÜDÜR: yukarıda MaterialApp/Directionality yoktur,
+    // bu yüzden kendi Material bağlamını kendisi kurar (P0, PR-RELEASE-1A).
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      themeMode: ThemeMode.system,
+      home: _UnavailableScreen(busy: _retrying, onRetry: _onRetry),
+    );
   }
 }
 

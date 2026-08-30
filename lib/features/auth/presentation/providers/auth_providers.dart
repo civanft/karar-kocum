@@ -18,3 +18,17 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
 final authStateProvider = StreamProvider<AppUser?>(
   (ref) => ref.watch(authRepositoryProvider).authStateChanges(),
 );
+
+/// UID çözümü — TEK MERKEZ (PR-RELEASE-1A).
+///
+/// Açılışta `authStateChanges` ilk değerini yayınlamadan önce kısa bir pencere
+/// vardır. O pencerede stream'e bakıp "oturum yok" sonucuna varmak, Firebase
+/// HAZIR olduğu hâlde yerel/in-memory depoya düşülmesine yol açıyordu.
+/// Sıra: (1) stream'in yayınladığı UID, (2) senkron `currentUser` fallback.
+/// Hiçbiri yoksa `null` — çağıran taraf fail-closed davranır.
+final resolvedUidProvider = Provider<String?>((ref) {
+  final streamed =
+      ref.watch(authStateProvider.select((s) => s.valueOrNull?.uid));
+  if (streamed != null) return streamed;
+  return ref.watch(authRepositoryProvider).currentUser?.uid;
+});

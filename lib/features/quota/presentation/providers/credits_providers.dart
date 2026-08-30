@@ -11,7 +11,8 @@ import '../../domain/repositories/credits_repository.dart';
 /// kurulumu önler — bkz. decision_providers'daki aynı desen).
 final creditsRepositoryProvider = Provider<CreditsRepository>((ref) {
   final status = ref.watch(firebaseStatusProvider);
-  final uid = ref.watch(authStateProvider.select((s) => s.valueOrNull?.uid));
+  // Stream henüz yayınlamadıysa senkron currentUser'a düşer (yarış koruması).
+  final uid = ref.watch(resolvedUidProvider);
 
   if (status == FirebaseStatus.ready && uid != null) {
     return FirestoreCreditsRepository(
@@ -19,9 +20,9 @@ final creditsRepositoryProvider = Provider<CreditsRepository>((ref) {
       uid: uid,
     );
   }
-  // FAIL-CLOSED: release'de sabit "5 kredi" göstermek kullanıcıya sahte hak
-  // vaat eder; analiz denediğinde başarısız olur.
-  if (status == FirebaseStatus.unavailable) {
+  // FAIL-CLOSED: sabit "5 kredi" göstermek kullanıcıya sahte hak vaat eder;
+  // analiz denediğinde başarısız olur. localMode dışında asla gösterilmez.
+  if (status != FirebaseStatus.localMode) {
     return const UnavailableCreditsRepository();
   }
   return LocalCreditsRepository();

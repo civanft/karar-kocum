@@ -26,17 +26,17 @@ final firestoreInstanceProvider =
 
 final decisionRepositoryProvider = Provider<DecisionRepository>((ref) {
   final status = ref.watch(firebaseStatusProvider);
-  // select: yalnız uid DEĞİŞİNCE yeniden kur — AsyncLoading→AsyncData
-  // geçişi repo'yu boşuna yeniden yaratıp in-memory veriyi düşürmesin.
-  final uid = ref.watch(authStateProvider.select((s) => s.valueOrNull?.uid));
+  // Stream henüz yayınlamadıysa senkron currentUser'a düşer (yarış koruması).
+  final uid = ref.watch(resolvedUidProvider);
   final DecisionRepository base;
   if (status == FirebaseStatus.ready && uid != null) {
     base = FirestoreDecisionRepository(
       ref.watch(firestoreInstanceProvider),
       uid: uid,
     );
-  } else if (status == FirebaseStatus.unavailable) {
-    // FAIL-CLOSED: in-memory depo release'de kalıcı sanılan karar yazdırır.
+  } else if (status != FirebaseStatus.localMode) {
+    // FAIL-CLOSED: unavailable VE "ready ama UID yok" — in-memory depo
+    // kullanıcıya kalıcı sanacağı karar yazdırırdı.
     base = const UnavailableDecisionRepository();
   } else {
     final repo = InMemoryDecisionRepository();
@@ -65,11 +65,18 @@ final computeResultProvider = Provider<ComputeResult>(
 );
 
 /// Oturum uid'i; yerel modda sabit kimlik.
-final currentUidProvider = Provider<String>(
-  (ref) =>
-      ref.watch(authStateProvider.select((s) => s.valueOrNull?.uid)) ??
-      'local-user',
-);
+/// Sahiplik kimliği.
+///
+/// `local-user` YALNIZ [FirebaseStatus.localMode]'da kullanılır. ready ya da
+/// unavailable durumunda gerçek UID yoksa boş dize döner: sahte bir kimlikle
+/// veri yazılmasını engeller (depolar zaten fail-closed davranır).
+final currentUidProvider = Provider<String>((ref) {
+  final uid = ref.watch(resolvedUidProvider);
+  if (uid != null) return uid;
+  return ref.watch(firebaseStatusProvider) == FirebaseStatus.localMode
+      ? 'local-user'
+      : '';
+});
 
 /// Ana ekran listesi.
 final decisionListProvider = StreamProvider<List<Decision>>(
