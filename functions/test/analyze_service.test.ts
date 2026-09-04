@@ -6,9 +6,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canTransition,
+  JournalState,
+} from "../src/ai/analysis_journal";
+import {
   AnalyzeService,
   LATEST_ANALYSIS_ID,
   type AnalysisPorts,
+  type JournalRecord,
   type StoredAnalysis,
 } from "../src/ai/analyze_service";
 import { CostCircuitBreaker, type SpendStore } from "../src/ai/cost_control";
@@ -56,6 +61,11 @@ const validOutput: AnalysisOutput = {
   confidence: "medium",
 };
 
+/**
+ * İş Paketi 2: portlar artık journal'lı. Sahte, gerçek Firestore
+ * implementasyonuyla AYNI sözleşmeyi taşır — bellek içi journal + geçiş
+ * kapıları + fingerprint doğrulaması. `commits` artık FİNALİZE sayısıdır.
+ */
 class FakePorts implements AnalysisPorts {
   content: unknown | null = validContent;
   plan: "free" | "premium" = "free";
@@ -63,6 +73,12 @@ class FakePorts implements AnalysisPorts {
   credits: number | null = null;
   commits = 0;
   lastAnalysis: StoredAnalysis | null = null;
+  /** Finalize sırasında karar değişmiş gibi davran (superseded testi). */
+  fingerprintOverride: string | null = null;
+  /** Belirli bir adımda tek seferlik hata enjekte et. */
+  failOn: { recordProviderSuccess?: boolean; finalize?: boolean } = {};
+
+  readonly journal = new Map<string, JournalRecord>();
 
   async readDecisionContent() {
     return this.content;
@@ -72,10 +88,82 @@ class FakePorts implements AnalysisPorts {
     return { plan: this.plan, remaining: this.credits ?? 5 };
   }
 
-  async commitAnalysis(params: {
+  async readJournal(requestId: string) {
+    return this.journal.get(requestId) ?? null;
+  }
+
+  async reserve(params: {
+    requestId: string;
+    decisionId: string;
+    contentFingerprint: string;
+  }) {
+    const existing = this.journal.get(params.requestId);
+    if (existing) return { created: false, record: existing };
+    const record: JournalRecord = {
+      state: JournalState.reserved,
+      decisionId: params.decisionId,
+      contentFingerprint: params.contentFingerprint,
+    };
+    this.journal.set(params.requestId, record);
+    return { created: true, record };
+  }
+
+  async markProviderCallStarted(requestId: string) {
+    const r = this.journal.get(requestId);
+    if (!r || !canTransition(r.state, JournalState.providerCallStarted)) {
+      return false;
+    }
+    r.state = JournalState.providerCallStarted;
+    return true;
+  }
+
+  async recordProviderSuccess(params: {
+    requestId: string;
+    analysis: StoredAnalysis;
+    usage: { inputTokens: number; outputTokens: number };
+  }) {
+    if (this.failOn.recordProviderSuccess) {
+      this.failOn.recordProviderSuccess = false;
+      throw new Error("journal yazımı başarısız (enjekte)");
+    }
+    const r = this.journal.get(params.requestId);
+    if (!r || !canTransition(r.state, JournalState.providerSucceeded)) return;
+    r.state = JournalState.providerSucceeded;
+    r.analysis = params.analysis;
+    r.usage = params.usage;
+  }
+
+  async markOutcome(params: { requestId: string; state: JournalState }) {
+    const r = this.journal.get(params.requestId);
+    if (!r || !canTransition(r.state, params.state)) return;
+    r.state = params.state;
+  }
+
+  async finalize(params: {
+    requestId: string;
+    expectedFingerprint: string;
     analysis: StoredAnalysis;
     initialCredits: number;
-  }): Promise<string> {
+  }): Promise<{ outcome: "completed" | "superseded"; analysisId: string }> {
+    if (this.failOn.finalize) {
+      this.failOn.finalize = false;
+      throw new Error("finalize başarısız (enjekte)");
+    }
+    const r = this.journal.get(params.requestId);
+    if (!r) throw new AppError("internal", "journal yok");
+
+    // Zaten uygulanmış: kredi/sayaç TEKRAR uygulanmaz.
+    if (r.state === JournalState.completed) {
+      return { outcome: "completed", analysisId: LATEST_ANALYSIS_ID };
+    }
+    if (r.state === JournalState.superseded) {
+      return { outcome: "superseded", analysisId: LATEST_ANALYSIS_ID };
+    }
+    const current = this.fingerprintOverride ?? params.expectedFingerprint;
+    if (current !== params.expectedFingerprint) {
+      r.state = JournalState.superseded;
+      return { outcome: "superseded", analysisId: LATEST_ANALYSIS_ID };
+    }
     if (this.plan !== "premium") {
       const remaining = this.credits ?? params.initialCredits;
       if (remaining <= 0) {
@@ -85,7 +173,8 @@ class FakePorts implements AnalysisPorts {
     }
     this.commits++;
     this.lastAnalysis = params.analysis;
-    return LATEST_ANALYSIS_ID;
+    r.state = JournalState.completed;
+    return { outcome: "completed", analysisId: LATEST_ANALYSIS_ID };
   }
 }
 
@@ -180,7 +269,9 @@ function make(overrides?: {
   return { service, ports, gateway, rate, spend, counter, tokens };
 }
 
-const request = { decisionId: "d1" };
+// İş Paketi 2: payload STRICT ve requestId ZORUNLU (idempotency anahtarı).
+const reqId = (seed: string) => seed.repeat(24).slice(0, 24);
+const request = { decisionId: "d1", requestId: reqId("a") };
 
 describe("mutlu yol", () => {
   it("analiz üretir, latest'e commit'ler, kredi 5→4, maliyet kaydedilir", async () => {
@@ -199,13 +290,33 @@ describe("mutlu yol", () => {
     expect(spend.total).toBeLessThan(0.002);
   });
 
-  it("yeniden analiz aynı kimliğe yazar (üzerine yazma — geçmiş yok)", async () => {
-    const { service, ports } = make();
+  // SÖZLEŞME DEĞİŞİKLİĞİ (İş Paketi 2): eskiden AYNI requestId ile ikinci
+  // çağrı ikinci bir ÜCRETLİ sağlayıcı isteği ve İKİNCİ kredi düşümü
+  // üretiyordu. Artık idempotent. Gerçek "yeniden analiz" YENİ requestId
+  // ile gelir ve o zaman yeni bir analiz üretilir.
+  it("AYNI requestId ile ikinci çağrı idempotenttir", async () => {
+    const { service, ports, gateway } = make();
     const first = await service.run(ctx, request);
     const second = await service.run(ctx, request);
+
     expect(first.analysisId).toBe(second.analysisId);
+    expect(second.analysis).toEqual(first.analysis);
+    expect(gateway.completions).toBe(1); // ikinci sağlayıcı çağrısı YOK
+    expect(ports.commits).toBe(1);
+    expect(ports.credits).toBe(4); // kredi YALNIZ bir kez düştü
+  });
+
+  it("YENİ requestId gerçek yeniden analiz üretir, aynı kimliğe yazar", async () => {
+    const { service, ports, gateway } = make();
+    const first = await service.run(ctx, request);
+    const second = await service.run(ctx, {
+      decisionId: "d1",
+      requestId: reqId("c"),
+    });
+    expect(first.analysisId).toBe(second.analysisId);
+    expect(gateway.completions).toBe(2);
     expect(ports.commits).toBe(2);
-    expect(ports.credits).toBe(3); // her analiz 1 kredi (cache yok — 6B)
+    expect(ports.credits).toBe(3);
   });
 });
 
@@ -226,7 +337,7 @@ describe("kredi adaleti (6C-2 invariant'ları)", () => {
     expect(ports.credits).toBe(0);
 
     const error = await service
-      .run(ctx, { decisionId: "d2" })
+      .run(ctx, { decisionId: "d2", requestId: reqId("b") })
       .catch((e: unknown) => e);
     expect((error as AppError).code).toBe("quota-exceeded");
     expect(ports.credits).toBe(0); // değişmedi
@@ -280,7 +391,7 @@ describe("koruma sırası", () => {
 
     await service.run(ctx, request); // slot 1/1
     const error = await service
-      .run(ctx, { decisionId: "d2" })
+      .run(ctx, { decisionId: "d2", requestId: reqId("b") })
       .catch((e: unknown) => e);
 
     expect((error as AppError).code).toBe("daily-limit");

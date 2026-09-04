@@ -4,6 +4,7 @@ import 'package:karar_veriyorum/features/ai_analysis/data/mock_ai_analysis_clien
 import 'package:karar_veriyorum/features/ai_analysis/domain/entities/ai_analysis.dart';
 import 'package:karar_veriyorum/features/ai_analysis/domain/repositories/ai_analysis_client.dart';
 import 'package:karar_veriyorum/features/ai_analysis/presentation/providers/analysis_providers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// İstenen sonucu senkron döndüren/atan test client'ı.
 class _StubClient implements AiAnalysisClient {
@@ -11,13 +12,19 @@ class _StubClient implements AiAnalysisClient {
   final Object _result; // AiAnalysis | AiAnalysisFailure
 
   @override
-  Future<AiAnalysis> analyze(String decisionId) async {
+  Future<AiAnalysis> analyze({
+    required String decisionId,
+    required String requestId,
+  }) async {
     if (_result is AiAnalysisFailure) throw _result;
     return _result as AiAnalysis;
   }
 }
 
 void main() {
+  // İş Paketi 2: controller bekleyen requestId'yi SharedPreferences'ta tutar.
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   ProviderContainer make(AiAnalysisClient client) {
     final container = ProviderContainer(
       overrides: [aiAnalysisClientProvider.overrideWithValue(client)],
@@ -141,6 +148,9 @@ void main() {
 
 class _ThrowingClient implements AiAnalysisClient {
   @override
-  Future<AiAnalysis> analyze(String decisionId) async =>
+  Future<AiAnalysis> analyze({
+    required String decisionId,
+    required String requestId,
+  }) async =>
       throw StateError('beklenmedik');
 }

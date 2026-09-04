@@ -769,3 +769,62 @@ describe("decisionCount atomikliği (security hotfix)", () => {
       );
     });
 });
+
+/**
+ * İŞ PAKETİ 2 — analiz journal'ı istemciye TAMAMEN kapalıdır.
+ *
+ * Journal idempotency ve muhasebe kaydıdır; istemcinin okuması bile
+ * gerekmez. Sahibi olan kullanıcı dahil hiç kimse erişemez (default-deny).
+ */
+describe("analysisRequests journal (İş Paketi 2)", () => {
+  const rid = "a".repeat(24);
+  const journalPath = (uid: string) =>
+    `users/${uid}/analysisRequests/${rid}`;
+
+  it("SAHİBİ bile journal'ı OKUYAMAZ", async () => {
+    const db = env.authenticatedContext("u1").firestore();
+    await assertFails(db.doc(journalPath("u1")).get());
+  });
+
+  it("SAHİBİ journal OLUŞTURAMAZ", async () => {
+    const db = env.authenticatedContext("u1").firestore();
+    await assertFails(
+      db.doc(journalPath("u1")).set({ state: "completed", decisionId: "d1" }),
+    );
+  });
+
+  it("SAHİBİ journal GÜNCELLEYEMEZ", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx
+        .firestore()
+        .doc(journalPath("u1"))
+        .set({ state: "reserved", decisionId: "d1" });
+    });
+    const db = env.authenticatedContext("u1").firestore();
+    await assertFails(
+      db.doc(journalPath("u1")).update({ state: "completed" }),
+    );
+  });
+
+  it("SAHİBİ journal SİLEMEZ", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx
+        .firestore()
+        .doc(journalPath("u1"))
+        .set({ state: "reserved", decisionId: "d1" });
+    });
+    const db = env.authenticatedContext("u1").firestore();
+    await assertFails(db.doc(journalPath("u1")).delete());
+  });
+
+  it("BAŞKA kullanıcı erişemez", async () => {
+    const db = env.authenticatedContext("u2").firestore();
+    await assertFails(db.doc(journalPath("u1")).get());
+    await assertFails(db.doc(journalPath("u1")).set({ state: "x" }));
+  });
+
+  it("oturumsuz istemci erişemez", async () => {
+    const db = env.unauthenticatedContext().firestore();
+    await assertFails(db.doc(journalPath("u1")).get());
+  });
+});

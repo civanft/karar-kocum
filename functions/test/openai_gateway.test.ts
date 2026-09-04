@@ -73,32 +73,38 @@ describe("başarı yolu", () => {
   });
 });
 
-describe("retry (tek deneme)", () => {
-  it("429 → 1 yeniden deneme sonrası başarı", async () => {
+// SÖZLEŞME DEĞİŞİKLİĞİ (İş Paketi 2): provider-side idempotency garantisi
+// belgelenmediği için isteğin sağlayıcıya ULAŞMIŞ OLABİLECEĞİ hatalar artık
+// otomatik yeniden DENENMEZ. Aşağıdaki beklentiler bu davranış değişikliğinin
+// zorunlu sonucudur; testler silinmedi, yeni sözleşmeye taşındı.
+describe("retry sözleşmesi", () => {
+  it("429 → sağlayıcı işlemeden reddetti, 1 yeniden deneme sonrası başarı", async () => {
     const c = client([httpError(429), completion({})]);
     const result = await new OpenAIGateway(c, noSleep).completeAnalysis(params);
     expect(result.output.summary).toBe("Özet");
     expect(c.calls).toBe(2);
   });
 
-  it("iki kez 503 → ai-unavailable (retryable), 2 çağrıda durur", async () => {
-    const c = client([httpError(503), httpError(503), httpError(503)]);
+  it("503 BELİRSİZ → ai-uncertain, TEK çağrıda durur", async () => {
+    const c = client([httpError(503), httpError(503)]);
     const error = await new OpenAIGateway(c, noSleep)
       .completeAnalysis(params)
       .catch((e: unknown) => e);
-    expect((error as AppError).code).toBe("ai-unavailable");
+    expect((error as AppError).code).toBe("ai-uncertain");
     expect((error as AppError).details?.["retryable"]).toBe(true);
-    expect(c.calls).toBe(2);
+    // Eskiden 2 idi: ikinci çağrı ÜCRETLİ bir duplicate riski taşıyordu.
+    expect(c.calls).toBe(1);
   });
 
-  it("timeout (status'suz hata) → retryable, tek deneme sonrası durur", async () => {
+  it("status'suz düz Error ağ hatası SAYILMAZ, retry EDİLMEZ", async () => {
     const c = client([new Error("timeout"), new Error("timeout")]);
     const error = await new OpenAIGateway(c, noSleep)
       .completeAnalysis(params)
       .catch((e: unknown) => e);
-    expect((error as AppError).code).toBe("ai-unavailable");
-    expect((error as AppError).details?.["retryable"]).toBe(true);
-    expect(c.calls).toBe(2); // OPENAI_MAX_RETRIES = 1
+    // Eskiden 'ai-unavailable' + 2 çağrı idi; status yokluğu artık
+    // "ağ hatası" varsayımı üretmiyor (programlama hatası da olabilir).
+    expect((error as AppError).code).toBe("internal");
+    expect(c.calls).toBe(1);
   });
 });
 

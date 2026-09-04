@@ -1,8 +1,11 @@
 /**
  * İstek bağlamı kurulumu — boru hattı adım [1-2] (AI-ANALIZ-TASARIMI.md §1.2).
- * App Check doğrulaması runtime seçeneğiyle yapılır (enforceAppCheck: true,
- * consumeAppCheckToken: true) — token'sız/replay istek handler'a hiç ulaşmaz.
- * Burada yalnız auth (anonim dahil) doğrulanır ve bağlam damgalanır.
+ *
+ * App Check: `enforceAppCheck: true` GEÇERSİZ token'ı engeller,
+ * `consumeAppCheckToken: true` limited-use token'ı TÜKETİR — ama tüketilmiş
+ * bir token TEKRAR oynatıldığında isteği ENGELLEMEZ; yalnız
+ * `request.app.alreadyConsumed = true` işaretler. Bu yüzden replay reddi
+ * BURADA, herhangi bir yan etkiden önce açıkça yapılır (İş Paketi 2).
  */
 import { randomUUID } from "node:crypto";
 
@@ -35,6 +38,16 @@ export function buildContext(
   if (!uid) {
     // Bağlamsız fırlatma: uid yok, hash'lenecek kimlik de yok.
     throw new AppError("unauthenticated", "Oturum gerekli.");
+  }
+  // REPLAY REDDİ — her türlü yan etkiden (log dahil) ÖNCE. İstemci yeni bir
+  // limited-use token alıp AYNI requestId ile güvenle tekrar deneyebilir,
+  // bu yüzden istemci tarafında retryable sınıflandırılır. Mesaj teknik
+  // ayrıntı (token/App Check) sızdırmaz.
+  if (request.app?.alreadyConsumed === true) {
+    throw new AppError(
+      "app-check-replay",
+      "Doğrulama yenilenmeli — lütfen tekrar dene.",
+    );
   }
   const ctx: RequestContext = {
     fn,

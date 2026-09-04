@@ -14,14 +14,18 @@ class FirebaseAiAnalysisClient implements AiAnalysisClient {
   final FirebaseFunctions _functions;
 
   @override
-  Future<AiAnalysis> analyze(String decisionId) async {
+  Future<AiAnalysis> analyze({
+    required String decisionId,
+    required String requestId,
+  }) async {
     final callable = _functions.httpsCallable(
       'analyzeDecision',
       options: HttpsCallableOptions(limitedUseAppCheckToken: true),
     );
     try {
       final result = await callable.call<Map<Object?, Object?>>(
-        <String, Object?>{'decisionId': decisionId},
+        // Payload sunucuda STRICT doğrulanır: fazladan alan reddedilir.
+        <String, Object?>{'decisionId': decisionId, 'requestId': requestId},
       );
       final analysis = result.data['analysis'];
       if (analysis is! Map) {
@@ -65,6 +69,12 @@ class FirebaseAiAnalysisClient implements AiAnalysisClient {
         );
       case 'rate-limited':
       case 'ai-unavailable':
+      // Sağlayıcı sonucu belirsiz: AYNI requestId ile tekrar denemek
+      // güvenlidir — sunucu sağlayıcıyı yeniden ÇAĞIRMAZ.
+      case 'ai-uncertain':
+      // Tüketilmiş App Check token'ı: istemci yeni bir limited-use token
+      // alıp AYNI requestId ile tekrar dener.
+      case 'app-check-replay':
       case 'unauthenticated':
       case 'internal':
       default:
