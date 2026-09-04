@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:karar_veriyorum/features/ai_analysis/domain/pending_analysis_request.dart';
 import 'package:karar_veriyorum/features/journey/data/local_notification_follow_up_scheduler.dart';
 import 'package:karar_veriyorum/features/journey/data/prefs_follow_up_preferences.dart';
 import 'package:karar_veriyorum/features/journey/domain/follow_up_preferences.dart';
@@ -19,11 +20,17 @@ void main() {
     final cleaner = JourneyLocalUserDataCleaner(
       preferences: _RecordingPreferences(calls),
       scheduler: _RecordingScheduler(calls),
+      pendingAnalysisRequests: _RecordingPending(calls),
     );
 
     await cleaner.clearAll();
 
-    expect(calls, ['prefs:clearAll', 'scheduler:cancelAll']);
+    // İş Paketi 2: bekleyen analiz idempotency anahtarları da silinir.
+    expect(calls, [
+      'prefs:clearAll',
+      'scheduler:cancelAll',
+      'pending:clearAll',
+    ]);
   });
 
   test('bildirim iptali patlasa da tercihler temizlenmiş kalır', () async {
@@ -31,6 +38,7 @@ void main() {
     final cleaner = JourneyLocalUserDataCleaner(
       preferences: _RecordingPreferences(calls),
       scheduler: _RecordingScheduler(calls, throwOnCancelAll: true),
+      pendingAnalysisRequests: _RecordingPending(calls),
     );
 
     await expectLater(cleaner.clearAll(), completes);
@@ -119,4 +127,33 @@ class _RecordingScheduler implements FollowUpScheduler {
     calls.add('scheduler:cancelAll');
     if (throwOnCancelAll) throw StateError('bildirim eklentisi hatası');
   }
+}
+
+/// Bekleyen analiz isteklerinin temizlendiğini kaydeder.
+class _RecordingPending implements PendingAnalysisRequestStore {
+  _RecordingPending(this.calls);
+  final List<String> calls;
+
+  @override
+  Future<void> clearAll() async => calls.add('pending:clearAll');
+
+  @override
+  Future<void> clear({
+    required String uid,
+    required String decisionId,
+  }) async {}
+
+  @override
+  Future<String?> read({
+    required String uid,
+    required String decisionId,
+  }) async =>
+      null;
+
+  @override
+  Future<void> write({
+    required String uid,
+    required String decisionId,
+    required String requestId,
+  }) async {}
 }

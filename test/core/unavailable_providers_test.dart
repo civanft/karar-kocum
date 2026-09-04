@@ -40,7 +40,7 @@ void main() {
           .read(aiAnalysisClientProvider);
 
       await expectLater(
-        client.analyze('d1'),
+        client.analyze(decisionId: 'd1', requestId: 'a' * 24),
         throwsA(
           isA<AiAnalysisFailure>()
               .having((e) => e.kind, 'kind', AnalysisFailureKind.retryable)

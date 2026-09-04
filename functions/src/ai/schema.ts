@@ -6,9 +6,30 @@ import { z } from "zod";
 
 // ---- Girdi: istemci payload'ı yalnız kimlik taşır ----
 
-export const analyzeRequestSchema = z.object({
-  decisionId: z.string().min(1).max(64),
-});
+/**
+ * requestId uzunluğu — istemci IdGenerator'ı ile hizalı (36 karakterlik
+ * alfabe: [a-z0-9]). 24 karakter ≈ 124 bit entropi; Random.secure()
+ * kaynağıyla çakışma pratikte imkânsız.
+ */
+export const REQUEST_ID_LENGTH = 24;
+
+/** Kanonik biçim: yalnız [a-z0-9], sabit uzunluk. Firestore belge kimliği
+ *  olarak güvenlidir (yol ayracı, nokta segmenti veya __ öneki yok). */
+const requestIdSchema = z
+  .string()
+  .length(REQUEST_ID_LENGTH)
+  .regex(/^[a-z0-9]+$/);
+
+/**
+ * STRICT: bilinmeyen alan sessizce yutulmaz. requestId idempotency
+ * anahtarıdır — aynı (uid, requestId) için başarılı analiz bir kez uygulanır.
+ */
+export const analyzeRequestSchema = z
+  .object({
+    decisionId: z.string().min(1).max(64),
+    requestId: requestIdSchema,
+  })
+  .strict();
 
 // ---- Girdi: Firestore'dan okunan karar içeriği (Y-3 limitleri) ----
 

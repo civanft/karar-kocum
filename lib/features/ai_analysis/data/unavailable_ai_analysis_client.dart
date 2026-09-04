@@ -13,7 +13,10 @@ class UnavailableAiAnalysisClient implements AiAnalysisClient {
       'Servise bağlanılamadı. Bağlantını kontrol edip tekrar dene.';
 
   @override
-  Future<AiAnalysis> analyze(String decisionId) async {
+  Future<AiAnalysis> analyze({
+    required String decisionId,
+    required String requestId,
+  }) async {
     throw const AiAnalysisFailure(
       kind: AnalysisFailureKind.retryable,
       message: message,

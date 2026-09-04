@@ -82,3 +82,5 @@ jobs:
         run: npm run test:rules
       - name: Hesap silme privacy testleri (Auth + Firestore emulator)
         run: npm run test:privacy
+      - name: Analiz journal idempotency testleri (Firestore emulator)
+        run: npm run test:emulator

@@ -2,6 +2,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/config/firebase_environment.dart';
+import '../../../ai_analysis/data/pending_analysis_request_store.dart';
 
 import '../../../auth/presentation/providers/auth_providers.dart';
 import '../../../decision/presentation/providers/decision_providers.dart';
@@ -25,6 +26,7 @@ final localUserDataCleanerProvider = Provider<LocalUserDataCleaner>(
   (ref) => JourneyLocalUserDataCleaner(
     preferences: ref.watch(followUpPreferencesProvider),
     scheduler: ref.watch(followUpSchedulerProvider),
+    pendingAnalysisRequests: ref.watch(pendingAnalysisRequestStoreProvider),
   ),
 );
 

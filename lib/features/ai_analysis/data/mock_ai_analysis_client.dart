@@ -16,7 +16,10 @@ class MockAiAnalysisClient implements AiAnalysisClient {
   final Duration delay;
 
   @override
-  Future<AiAnalysis> analyze(String decisionId) async {
+  Future<AiAnalysis> analyze({
+    required String decisionId,
+    required String requestId,
+  }) async {
     await Future<void>.delayed(delay);
     return switch (scenario) {
       MockAnalysisScenario.success => AiAnalysis.mock(),

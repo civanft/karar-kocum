@@ -10,23 +10,30 @@ import type { RequestContext } from "./types.js";
 
 export type AppErrorCode =
   | "unauthenticated"
+  /** Tüketilmiş (replay edilen) App Check limited-use token'ı. */
+  | "app-check-replay"
   | "invalid-argument"
   | "rate-limited"
   | "quota-exceeded"
   | "daily-limit"
   | "moderated"
   | "ai-unavailable"
+  /** Sağlayıcı çağrısının sonucu BİLİNMİYOR (belirsiz pencere). */
+  | "ai-uncertain"
   | "unimplemented"
   | "internal";
 
 const HTTPS_CODE: Record<AppErrorCode, FunctionsErrorCode> = {
   unauthenticated: "unauthenticated",
+  // Firebase'in kendi App Check reddiyle aynı taşıma kodu.
+  "app-check-replay": "unauthenticated",
   "invalid-argument": "invalid-argument",
   "rate-limited": "resource-exhausted",
   "quota-exceeded": "resource-exhausted",
   "daily-limit": "resource-exhausted",
   moderated: "failed-precondition",
   "ai-unavailable": "unavailable",
+  "ai-uncertain": "unavailable",
   unimplemented: "unimplemented",
   internal: "internal",
 };

@@ -5,12 +5,21 @@ import '../entities/ai_analysis.dart';
 /// [AiAnalysisFailure] olarak fırlatılır (presentation onu duruma çevirir).
 abstract interface class AiAnalysisClient {
   /// Kararı analiz eder; sonuç [AiAnalysis], hata [AiAnalysisFailure].
-  Future<AiAnalysis> analyze(String decisionId);
+  ///
+  /// [requestId] idempotency ANAHTARIDIR (İş Paketi 2): sunucu aynı
+  /// (uid, requestId) için başarılı analizi YALNIZ BİR KEZ uygular.
+  /// Belirsiz bir hatadan sonra AYNI anahtarla tekrar denemek, sağlayıcıyı
+  /// yeniden çağırmadan önceki sonucu finalize eder.
+  Future<AiAnalysis> analyze({
+    required String decisionId,
+    required String requestId,
+  });
 }
 
 /// Analiz başarısızlığının ürün-anlamlı sınıflandırması.
 enum AnalysisFailureKind {
   /// Tekrar denemenin işe yarayabileceği geçici hata (ağ, servis, rate).
+  /// AYNI requestId ile tekrar denenmelidir.
   retryable,
 
   /// Tekrar denemenin bugün işe yaramayacağı hata (moderasyon, geçersiz,
