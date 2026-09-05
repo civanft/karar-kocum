@@ -236,14 +236,32 @@ kullanıcısı silinene kadar eski Firebase ID token GEÇERLİ kalır (token öm
 bir saate kadar çıkabilir). O pencerede istemci yazması, devam eden bir AI
 analizi ya da bir ödül callback'i silinmiş veriyi **diriltir**.
 
-**Belge içeriği (PII YOK):**
+**Durum makinesi (İş Paketi 3B):**
 
-| Alan | Anlam |
-|------|-------|
-| `schemaVersion` | şema sürümü (1) |
-| `state` | `"deleting"` |
-| `startedAt` | silme başlangıcı (sunucu zamanı) |
-| `expiresAt` | bariyerin sona ereceği an — en az **48 saat** ileride |
+| Durum | Alanlar | TTL |
+|---|---|---|
+| `deleting` | `schemaVersion`, `state`, `startedAt` | **YOK** — `expiresAt` alanı bulunmaz |
+| `deleted` | + `completedAt`, `expiresAt` | `completedAt + ≥48 saat` |
+
+**Neden `deleting` durumunda TTL alanı yok:** Firestore TTL yalnız timestamp
+taşıyan `expiresAt` alanını işler. Bariyer oluşturulurken `expiresAt`
+yazılsaydı, silme 48 saatten uzun süre tamamlanamadığında TTL bariyeri
+kaldırır ve **Auth hesabı hâlâ dururken** eski/yeni oturum tekrar veri
+yazabilirdi. Tamamlanmamış bir silme bariyeri bu yüzden **süresiz** durur:
+kalıcı bariyer, Auth mevcutken bariyerin erken silinmesinden daha güvenlidir.
+
+TTL saati **yalnız** terminal geçişte (`deleted`) başlar; o noktada veri
+temizliği doğrulanmış ve Auth kullanıcısı gerçekten silinmiştir.
+
+**Geçişler:** `deleting → deleted` tek yönlüdür; `deleted → deleting`
+YASAKTIR. Terminal geçiş idempotenttir. 3. Paket biçimindeki
+`deleting + expiresAt` kayıtları bir sonraki retry'da güvenli migrasyonla
+`expiresAt`'ten arındırılır; `startedAt` korunur.
+
+**Terminal geçiş başarısız olursa:** bariyer silinmez, sahte başarı/expiry
+yazılmaz. Veri ve Auth gerçekten silindiği için kullanıcıya hata dönmez;
+PII içermeyen sabit bir teşhis logu üretilir ve bariyer süresiz kalır. Bu
+nadir durum **manuel reconciliation** gerektirir (rollback runbook).
 
 UID yalnız **belge kimliğidir**; gövdede e-posta, isim, karar içeriği veya
 başka hiçbir kişisel veri bulunmaz. Belge istemciye tamamen kapalıdır.
@@ -288,6 +306,23 @@ Bir rezervasyonu açan çağrının artık çalışmadığına, `analyzeDecision
 Daha genç kayıtlar için sınırlı süre beklenir; bu sürede kapanmazlarsa
 **Auth silinmez ve veri silinmez** — kullanıcıya tekrar denenebilir hata
 döner ve bariyer durduğu için yeni veri de oluşamaz.
+
+**Sayfalama (3B):** drain her turda en fazla `pageSize × maxPages` (50×2)
+belge okur. Kapatılan kayıt `reservationExpiresAt` alanını kaybettiği için
+sorgudan düşer; bu yüzden her tur baştan sorgulanır ve ilerleme garanti
+edilir (değer tabanlı imleç kullanılmaz — aynı zaman damgasını paylaşan
+kayıtların tamamı atlanabilirdi). Sayfa bütçesi dolarsa drain `exhausted`
+bildirir: **görülmemiş kayıt olabileceği için asla "kalan yok" denmez.**
+"Kalan yok" iddiası yalnız son sayfanın görüldüğü turda kabul edilir.
+
+**Top-level doğrulama:** Auth'a geçmeden önce `users/{uid}` ağacı **ve**
+`rateLimits/{uid}` + `rateLimits/{uid}:reward` belgelerinin gerçekten
+silindiği doğrulanır.
+
+**Ödül rate-limit'i (3B):** `rateLimits/{uid}:reward` de UID'ye bağlı bir
+kullanıcı kaydıdır. `createRewardTicket`'ın rate-limit transaction'ı
+bariyeri **aynı transaction içinde** okur; UID anahtardan ayrıştırılmaz,
+typed parametre olarak geçirilir.
 
 **Korunanlar:**
 - `ops/*` global sayaçları (günlük harcama/token/analiz limitleri) — kullanıcıya
