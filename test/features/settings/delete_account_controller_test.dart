@@ -241,4 +241,11 @@ class _FakeSession implements AccountSession {
     calls.add('signInAnonymously');
     if (signInThrows) throw StateError('ağ yok');
   }
+
+  /// İş Paketi 3: varsayılan sahte davranış — doğrulama BELİRSİZ kalır,
+  /// yani hiçbir test kazara "silindi" varsaymaz.
+  AccountExistenceCheck existence = AccountExistenceCheck.unknown;
+
+  @override
+  Future<AccountExistenceCheck> verifyAccountDeleted() async => existence;
 }

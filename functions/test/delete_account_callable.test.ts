@@ -22,12 +22,15 @@ const SAHTE_UID = "saldirgan-hedefi";
 function makePorts(overrides: Partial<AccountDeletionPorts> = {}) {
   const seen: string[] = [];
   const ports: AccountDeletionPorts = {
+    raiseBarrier: vi.fn(async () => {}),
+    drainOpenReservations: vi.fn(async () => ({ open: 0 })),
     recursiveDeleteUser: vi.fn(async (uid: string) => {
       seen.push(uid);
     }),
     deleteDocument: vi.fn(async (path: string) => {
       seen.push(path);
     }),
+    userDataRemains: vi.fn(async () => false),
     deleteAuthUser: vi.fn(async (uid: string) => {
       seen.push(uid);
     }),

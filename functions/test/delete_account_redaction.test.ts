@@ -57,10 +57,13 @@ function portsThatFail(
   cause: unknown,
 ): AccountDeletionPorts {
   return {
+    raiseBarrier: vi.fn(async () => {}),
+    drainOpenReservations: vi.fn(async () => ({ open: 0 })),
     recursiveDeleteUser: vi.fn(async () => {
       if (which === "firestore") throw cause;
     }),
     deleteDocument: vi.fn(async () => {}),
+    userDataRemains: vi.fn(async () => false),
     deleteAuthUser: vi.fn(async () => {
       if (which === "auth") throw cause;
     }),

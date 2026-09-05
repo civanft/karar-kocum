@@ -223,4 +223,11 @@ class _NoopSession implements AccountSession {
   Future<void> signOut() async {}
   @override
   Future<void> signInAnonymously() async {}
+
+  /// İş Paketi 3: varsayılan sahte davranış — doğrulama BELİRSİZ kalır,
+  /// yani hiçbir test kazara "silindi" varsaymaz.
+  AccountExistenceCheck existence = AccountExistenceCheck.unknown;
+
+  @override
+  Future<AccountExistenceCheck> verifyAccountDeleted() async => existence;
 }

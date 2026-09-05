@@ -52,10 +52,12 @@ class FirebaseAccountDeletionClient implements AccountDeletionClient {
     } on AccountDeletionFailure {
       rethrow;
     } catch (_) {
+      // Bağlantı koptu: sunucunun işi bitirip bitirmediği BİLİNMİYOR.
       // Ham istisna mesajı kullanıcıya SIZDIRILMAZ.
       throw const AccountDeletionFailure(
         kind: AccountDeletionFailureKind.retryable,
         message: 'Hesap silinemedi, birazdan tekrar dene.',
+        ambiguous: true,
       );
     }
   }
@@ -80,9 +82,11 @@ class FirebaseAccountDeletionClient implements AccountDeletionClient {
       case 'deadline-exceeded':
       case 'internal':
       default:
+        // Sunucu işi TAMAMLAMIŞ olabilir; cevap ulaşmadı.
         return AccountDeletionFailure(
           kind: AccountDeletionFailureKind.retryable,
           message: message,
+          ambiguous: true,
         );
     }
   }

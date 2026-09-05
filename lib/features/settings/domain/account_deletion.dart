@@ -13,10 +13,23 @@ enum AccountDeletionFailureKind {
 /// Kullanıcıya gösterilebilir silme hatası. [message] Türkçe ve
 /// ürün-anlamlıdır; upstream/teknik detay ASLA içine konmaz.
 class AccountDeletionFailure implements Exception {
-  const AccountDeletionFailure({required this.kind, required this.message});
+  const AccountDeletionFailure({
+    required this.kind,
+    required this.message,
+    this.ambiguous = false,
+  });
 
   final AccountDeletionFailureKind kind;
   final String message;
+
+  /// Sunucunun işi TAMAMLAMIŞ olabileceği, ama cevabın istemciye
+  /// ulaşmadığı durum (timeout, bağlantı kopması, 5xx). Yalnız bu
+  /// durumda "hesap gerçekten silindi mi?" doğrulaması yapılır.
+  ///
+  /// `unauthenticated` gibi kesin hatalar ambiguous DEĞİLDİR: çağrı
+  /// sunucuya hiç ulaşmamış olabilir ve kör biçimde "silindi" saymak
+  /// kullanıcının yerel verisini haksız yere siler.
+  final bool ambiguous;
 
   bool get isRetryable => kind == AccountDeletionFailureKind.retryable;
 
@@ -55,6 +68,22 @@ abstract interface class LocalUserDataCleaner {
   Future<void> clearAll();
 }
 
+/// BELİRSİZ SONUÇ doğrulamasının cevabı (İş Paketi 3).
+///
+/// Callable sunucuda TAMAMLANIP istemciye cevap ulaşmayabilir (timeout,
+/// bağlantı kopması). O durumda "silindi mi?" sorusunun tek güvenilir
+/// cevabı Auth'un kendisidir.
+enum AccountExistenceCheck {
+  /// Auth açıkça "böyle kullanıcı yok" dedi → sunucu silmesi TAMAMLANDI.
+  deleted,
+
+  /// Kullanıcı hâlâ duruyor → silme tamamlanmadı, tekrar denenmeli.
+  stillPresent,
+
+  /// Doğrulama da başarısız (ağ vb.) → BAŞARI VARSAYILMAZ.
+  unknown,
+}
+
 /// Oturum yaşam döngüsünün silme akışının ihtiyaç duyduğu dar dilimi.
 ///
 /// AuthRepository'nin tamamı yerine bu dar port kullanılır: silme akışı
@@ -64,4 +93,8 @@ abstract interface class AccountSession {
 
   /// Silme sonrası YENİ ve BOŞ misafir oturumu açar.
   Future<void> signInAnonymously();
+
+  /// Mevcut kullanıcıyı sunucudan TAZELEYEREK hesabın hâlâ var olup
+  /// olmadığını sorar. Belirsiz kalırsa [AccountExistenceCheck.unknown].
+  Future<AccountExistenceCheck> verifyAccountDeleted();
 }

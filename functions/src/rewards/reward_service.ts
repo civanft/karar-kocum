@@ -21,6 +21,10 @@ import {
 
 import { AppError } from "../core/errors.js";
 import {
+  accountDeletingError,
+  barrierRef,
+} from "../privacy/account_deletion_barrier.js";
+import {
   MAX_PENDING_TICKETS,
   MAX_REWARD_CREDITS,
   REWARD_TICKET_TTL_MS,
@@ -32,6 +36,9 @@ export type GrantOutcome =
   | "expired"
   | "unknown"
   | "capped" // ödül tavanı (MAX_REWARD_CREDITS) — kredi verilmez
+  // Hesap silme bariyeri açık (İş Paketi 3): callback 2xx döner ve
+  // idempotent biter, ama kredi YAZILMAZ ve kullanıcı belgesi DİRİLMEZ.
+  | "blocked"
   | "user_mismatch";
 
 export interface TicketStore {
@@ -115,10 +122,18 @@ export class FirestoreTicketStore implements TicketStore {
   }
 
   async create(uid: string, expiresAtMs: number): Promise<string> {
-    const ref = await this.tickets(uid).add({
-      status: "pending",
-      createdAt: FieldValue.serverTimestamp(),
-      expiresAt: Timestamp.fromMillis(expiresAtMs),
+    const ref = this.tickets(uid).doc();
+    // Bariyer kontrolü ve bilet yazımı AYNI transaction'da: aksi hâlde
+    // bariyer araya girerse silinmiş kullanıcı altında bilet doğardı.
+    await this.db.runTransaction(async (tx) => {
+      if ((await tx.get(barrierRef(this.db, uid))).exists) {
+        throw accountDeletingError();
+      }
+      tx.create(ref, {
+        status: "pending",
+        createdAt: FieldValue.serverTimestamp(),
+        expiresAt: Timestamp.fromMillis(expiresAtMs),
+      });
     });
     return ref.id;
   }
@@ -133,6 +148,11 @@ export class FirestoreTicketStore implements TicketStore {
     const userRef = this.db.doc(`users/${uid}`);
 
     return this.db.runTransaction(async (tx) => {
+      // HESAP SİLME BARİYERİ (İş Paketi 3): bariyer açıksa kredi YAZILMAZ
+      // ve kullanıcı belgesi DİRİLTİLMEZ. Okuma transaction'ın çakışma
+      // kümesindedir; bariyer araya girerse transaction yeniden çalışır.
+      if ((await tx.get(barrierRef(this.db, uid))).exists) return "blocked";
+
       const ticket = await tx.get(ticketRef);
       if (!ticket.exists) return "unknown";
 
