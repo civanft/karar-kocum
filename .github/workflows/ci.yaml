@@ -77,6 +77,8 @@ jobs:
       - run: npm audit --audit-level=moderate
       - run: npm run lint
       - run: npm run build
+      - name: Test sözleşmesi tip denetimi (sahte portlar src ile uyumlu mu)
+        run: npm run typecheck
       - run: npm test
       - name: Firestore rules testleri (emulator, Y-5 negatif senaryolar dahil)
         run: npm run test:rules

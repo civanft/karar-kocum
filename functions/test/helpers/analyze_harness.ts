@@ -326,12 +326,15 @@ export class HarnessPorts implements AnalysisPorts {
 
   async finalize(p: {
     requestId: string;
-    expectedFingerprint: string;
     analysis: StoredAnalysis;
     initialCredits: number;
     usage: { inputTokens: number; outputTokens: number };
     costUsd: number;
-  }): Promise<{ outcome: "completed" | "superseded"; analysisId: string }> {
+  }): Promise<{
+    outcome: "completed" | "superseded";
+    analysisId: string;
+    creditCharged: boolean;
+  }> {
     if (this.failOn.finalize) {
       this.failOn.finalize = false;
       throw new Error("finalize başarısız (enjekte)");
@@ -341,10 +344,18 @@ export class HarnessPorts implements AnalysisPorts {
 
     // Terminal durumlar: HİÇBİR muhasebe tekrar uygulanmaz.
     if (r.state === JournalState.completed) {
-      return { outcome: "completed", analysisId: LATEST_ANALYSIS_ID };
+      return {
+        outcome: "completed",
+        analysisId: LATEST_ANALYSIS_ID,
+        creditCharged: false,
+      };
     }
     if (r.state === JournalState.superseded) {
-      return { outcome: "superseded", analysisId: LATEST_ANALYSIS_ID };
+      return {
+        outcome: "superseded",
+        analysisId: LATEST_ANALYSIS_ID,
+        creditCharged: false,
+      };
     }
 
     const actual = {
@@ -356,7 +367,11 @@ export class HarnessPorts implements AnalysisPorts {
       // Kredi YANMAZ ama gerçek maliyet kaydedilir.
       this.release(p.requestId, actual);
       r.state = JournalState.superseded;
-      return { outcome: "superseded", analysisId: LATEST_ANALYSIS_ID };
+      return {
+        outcome: "superseded",
+        analysisId: LATEST_ANALYSIS_ID,
+        creditCharged: false,
+      };
     }
 
     if (this.plan !== "premium") {
@@ -372,7 +387,11 @@ export class HarnessPorts implements AnalysisPorts {
     this.commits++;
     this.lastAnalysis = p.analysis;
     r.state = JournalState.completed;
-    return { outcome: "completed", analysisId: LATEST_ANALYSIS_ID };
+    return {
+      outcome: "completed",
+      analysisId: LATEST_ANALYSIS_ID,
+      creditCharged: this.plan !== "premium",
+    };
   }
 }
 

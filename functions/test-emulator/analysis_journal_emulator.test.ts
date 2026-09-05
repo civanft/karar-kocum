@@ -64,13 +64,15 @@ const ANALYSIS: StoredAnalysis = {
   weaknesses: ["z1"],
   risks: ["r1"],
   recommendation: "Sentetik öneri.",
+  confidence: "medium",
   model: "test-model",
   promptVersion: "v1",
 };
 
 /** Rezervasyon tahmini — üretimdeki formülün aynısı. */
 const ESTIMATE = estimateUsage({
-  promptChars: 2000,
+  systemPrompt: "s".repeat(1000),
+  userPrompt: "u".repeat(1000),
   maxOutputTokens: 800,
   model: ANALYSIS.model,
 });
@@ -199,12 +201,10 @@ describe("gerçek transaction — finalize yarışı", () => {
         ports().finalize({
           requestId: REQUEST_ID,
           decisionId: DECISION_ID,
-          expectedFingerprint: FINGERPRINT,
           analysis: ANALYSIS,
           initialCredits: 5,
           usage: USAGE,
           costUsd: COST_USD,
-          estimate: ESTIMATE,
         }),
       ),
     );
@@ -231,23 +231,19 @@ describe("gerçek transaction — finalize yarışı", () => {
     await ports().finalize({
       requestId: REQUEST_ID,
       decisionId: DECISION_ID,
-      expectedFingerprint: FINGERPRINT,
       analysis: ANALYSIS,
       initialCredits: 5,
       usage: USAGE,
       costUsd: COST_USD,
-      estimate: ESTIMATE,
     });
 
     const again = await ports().finalize({
       requestId: REQUEST_ID,
       decisionId: DECISION_ID,
-      expectedFingerprint: FINGERPRINT,
       analysis: ANALYSIS,
       initialCredits: 5,
       usage: USAGE,
       costUsd: COST_USD,
-      estimate: ESTIMATE,
     });
 
     expect(again.outcome).toBe("completed");
@@ -262,12 +258,10 @@ describe("gerçek transaction — finalize yarışı", () => {
     const result = await ports().finalize({
       requestId: REQUEST_ID,
       decisionId: DECISION_ID,
-      expectedFingerprint: FINGERPRINT,
       analysis: ANALYSIS,
       initialCredits: 5,
       usage: USAGE,
       costUsd: COST_USD,
-      estimate: ESTIMATE,
     });
 
     expect(result.outcome).toBe("superseded");

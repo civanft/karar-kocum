@@ -62,7 +62,8 @@ const ANALYSIS = { ...OUTPUT, model: "gpt-4.1-mini", promptVersion: "mvp-1" };
 const USAGE = { inputTokens: 1500, outputTokens: 600 };
 const COST_USD = computeCostUsd(ANALYSIS.model, USAGE);
 const ESTIMATE = estimateUsage({
-  promptChars: 2000,
+  systemPrompt: "s".repeat(1000),
+  userPrompt: "u".repeat(1000),
   maxOutputTokens: 800,
   model: ANALYSIS.model,
 });
@@ -204,12 +205,10 @@ describe("2C — gün dönümü (midnight)", () => {
     await ports().finalize({
       requestId: id,
       decisionId: DECISION_ID,
-      expectedFingerprint: await decisionFingerprint(),
       analysis: ANALYSIS,
       initialCredits: 5,
       usage: USAGE,
       costUsd: COST_USD,
-      estimate: ESTIMATE,
     });
 
     // Dünün rezervasyonu KAPANDI.
@@ -236,12 +235,10 @@ describe("2C — plan değişimi", () => {
     await ports().finalize({
       requestId: id,
       decisionId: DECISION_ID,
-      expectedFingerprint: await decisionFingerprint(),
       analysis: ANALYSIS,
       initialCredits: 5,
       usage: USAGE,
       costUsd: COST_USD,
-      estimate: ESTIMATE,
     });
 
     // Rezervasyon SIZMADI: kullanıcı kalıcı olarak bir kredi slotu kaybetmedi.
@@ -260,12 +257,10 @@ describe("2C — plan değişimi", () => {
     await ports().finalize({
       requestId: id,
       decisionId: DECISION_ID,
-      expectedFingerprint: await decisionFingerprint(),
       analysis: ANALYSIS,
       initialCredits: 5,
       usage: USAGE,
       costUsd: COST_USD,
-      estimate: ESTIMATE,
     });
 
     expect(await reservedCredits()).toBeGreaterThanOrEqual(0);
@@ -286,7 +281,6 @@ describe("2C — deployment/config değişimi", () => {
     await ports().finalize({
       requestId: rid("d"),
       decisionId: DECISION_ID,
-      expectedFingerprint: fp,
       analysis: ANALYSIS,
       initialCredits: 5,
       usage: USAGE,
@@ -309,12 +303,10 @@ describe("2C — sayaç değişmezleri", () => {
       await ports().finalize({
         requestId: id,
         decisionId: DECISION_ID,
-        expectedFingerprint: await decisionFingerprint(),
         analysis: ANALYSIS,
         initialCredits: 5,
         usage: USAGE,
         costUsd: COST_USD,
-        estimate: ESTIMATE,
       });
       expect(await tokensReserved(today())).toBeGreaterThanOrEqual(0);
       expect(await spendReserved(today())).toBeGreaterThanOrEqual(0);
