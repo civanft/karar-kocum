@@ -15,7 +15,12 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { buildService, ctx, reqId } from "./helpers/analyze_harness";
+import {
+  buildService,
+  ctx,
+  openReservationWithResult,
+  reqId,
+} from "./helpers/analyze_harness";
 import { JournalState } from "../src/ai/analysis_journal";
 
 const decisionId = "d1";
@@ -97,13 +102,9 @@ describe("muhasebe atomikliği — tekrarlanan finalize", () => {
     const h = buildService();
     const rid = reqId("e");
 
-    // Sağlayıcı sonucu dayanıklı yazılana kadar ilerlet, sonra 8 paralel retry.
-    await h.service.run(ctx, payload(rid));
-    h.ports.journal.get(rid)!.state = JournalState.providerSucceeded;
-    h.ports.credits = 5;
-    h.ports.commits = 0;
-    h.spend.records = 0;
-    h.tokens.records = 0;
+    // Rezervasyon AÇIK ve sağlayıcı sonucu dayanıklı: 8 paralel retry tam
+    // olarak bu kurtarma penceresinde yarışır.
+    await openReservationWithResult(h, rid);
 
     await Promise.all(
       Array.from({ length: 8 }, () =>

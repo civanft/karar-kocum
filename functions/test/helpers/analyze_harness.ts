@@ -11,15 +11,23 @@
  * kanıtlanır; burada kanıtlanan şey SÖZLEŞMEDİR.
  */
 import { canTransition, JournalState } from "../../src/ai/analysis_journal";
+import { contentFingerprint } from "../../src/ai/analysis_fingerprint";
+import { decisionContentSchema } from "../../src/ai/schema";
+import { PROMPT_VERSION } from "../../src/ai/prompt";
 import {
   AnalyzeService,
   LATEST_ANALYSIS_ID,
   type AnalysisPorts,
   type JournalRecord,
+  type ReservationProvenance,
   type ReserveOutcome,
   type StoredAnalysis,
 } from "../../src/ai/analyze_service";
 import type { UsageEstimate } from "../../src/ai/usage_estimate";
+import {
+  ANALYSIS_RESERVATION_STALE_MS as STALE_MS,
+  OPENAI_MODEL,
+} from "../../src/config";
 import type { AiGateway, AnalysisCompletion } from "../../src/ai/openai_gateway";
 import type { AnalysisOutput } from "../../src/ai/schema";
 import { AppError } from "../../src/core/errors";
@@ -82,14 +90,27 @@ export class HarnessPorts implements AnalysisPorts {
   lastAnalysis: StoredAnalysis | null = null;
   /** Finalize sırasında karar değişmiş gibi davran (superseded testi). */
   fingerprintOverride: string | null = null;
-  failOn: { recordProviderSuccess?: boolean; finalize?: boolean } = {};
+  failOn: {
+    recordProviderSuccess?: boolean;
+    finalize?: boolean;
+    settleFailure?: boolean;
+  } = {};
   readonly journal = new Map<string, JournalRecord>();
 
   /** Kabul kontrolünü rate ile reddettir. */
   rateReject = false;
 
-  /** Rezerve edilmiş (henüz kesinleşmemiş) miktarlar. */
+  /** Rezerve edilmiş (henüz kesinleşmemiş) miktarlar — GÜN bazında. */
   reserved = { credits: 0, tokens: 0, usd: 0 };
+
+  /**
+   * Sunucu saati — gün dönümü ve stale eşiği testlerinde ileri alınabilir.
+   * Üretimde `Date.now()`; burada testin kontrolünde.
+   */
+  now: () => number = Date.now;
+
+  /** requestId → rezervasyon kökeni (journal'ın taşıdığı gerçekler). */
+  readonly provenance = new Map<string, ReservationProvenance>();
 
   constructor(
     readonly limits: HarnessLimits,
@@ -106,7 +127,9 @@ export class HarnessPorts implements AnalysisPorts {
   }
 
   async readJournal(requestId: string) {
-    return this.journal.get(requestId) ?? null;
+    const r = this.journal.get(requestId);
+    if (!r) return null;
+    return { ...r, reservation: this.provenance.get(requestId) };
   }
 
   /** Kabul + rezervasyon: üretimdeki tek transaction'ın bellek içi ikizi. */
@@ -176,6 +199,16 @@ export class HarnessPorts implements AnalysisPorts {
       contentFingerprint: p.contentFingerprint,
     };
     this.journal.set(p.requestId, record);
+    // KÖKEN: rezervasyon anının gerçeği; kapanış bunu OKUR.
+    this.provenance.set(p.requestId, {
+      accountingVersion: 2,
+      day: new Date(this.now()).toISOString().slice(0, 10),
+      estimate: p.estimate,
+      creditReserved: !free,
+      planAtReservation: this.plan,
+      open: true,
+      expiresAtMs: this.now() + STALE_MS,
+    });
     this.counters.rate.checks++;
     this.counters.daily.slots++;
     this.counters.daily.total++;
@@ -212,9 +245,12 @@ export class HarnessPorts implements AnalysisPorts {
 
   /** Rezervasyonu kapatır; `actual` verilirse gerçek tüketimi yazar. */
   private release(
-    estimate: UsageEstimate,
+    requestId: string,
     actual: { tokens: number; usd: number } | null,
   ): void {
+    const prov = this.provenance.get(requestId);
+    // Köken yoksa ya da rezervasyon zaten kapalıysa DOKUNMA (çift kapanış yok).
+    if (!prov?.open) return;
     if (this.counters.spend.failNext) {
       this.counters.spend.failNext = false;
       throw new Error("spend yazımı başarısız (enjekte)");
@@ -223,9 +259,13 @@ export class HarnessPorts implements AnalysisPorts {
       this.counters.tokens.failNext = false;
       throw new Error("token yazımı başarısız (enjekte)");
     }
-    this.reserved.tokens -= estimate.tokens;
-    this.reserved.usd -= estimate.usd;
-    if (this.plan !== "premium") this.reserved.credits--;
+    this.reserved.tokens = Math.max(0, this.reserved.tokens - prov.estimate.tokens);
+    this.reserved.usd = Math.max(0, this.reserved.usd - prov.estimate.usd);
+    // Kredi YALNIZ rezervasyon anında gerçekten artırıldıysa düşer.
+    if (prov.creditReserved) {
+      this.reserved.credits = Math.max(0, this.reserved.credits - 1);
+    }
+    this.provenance.set(requestId, { ...prov, open: false, expiresAtMs: null });
     if (actual) {
       this.counters.spend.records++;
       this.counters.spend.total += actual.usd;
@@ -237,17 +277,51 @@ export class HarnessPorts implements AnalysisPorts {
   async settleFailure(p: {
     requestId: string;
     state: JournalState;
-    estimate: UsageEstimate;
     billed: boolean;
   }) {
     const r = this.journal.get(p.requestId);
     if (!r || !canTransition(r.state, p.state)) return;
+    if (this.failOn.settleFailure) {
+      this.failOn.settleFailure = false;
+      throw new Error("settleFailure başarısız (enjekte)");
+    }
     r.state = p.state;
+    const prov = this.provenance.get(p.requestId);
     this.release(
-      p.estimate,
+      p.requestId,
       // Sağlayıcıya çağrı yapıldıysa ücretlendirilmiş olabiliriz.
-      p.billed ? { tokens: p.estimate.tokens, usd: p.estimate.usd } : null,
+      p.billed && prov
+        ? { tokens: prov.estimate.tokens, usd: prov.estimate.usd }
+        : null,
     );
+  }
+
+  /** Fırsatçı kurtarma — üretimdeki sözleşmenin bellek içi ikizi. */
+  async reconcileStaleReservations(nowMs: number, limit: number) {
+    let recovered = 0;
+    for (const [id, prov] of this.provenance) {
+      if (recovered >= limit) break;
+      if (!prov.open || prov.expiresAtMs == null) continue;
+      if (prov.expiresAtMs > nowMs) continue; // AKTİF: dokunma
+      const r = this.journal.get(id);
+      if (!r) continue;
+      const target =
+        r.state === JournalState.reserved
+          ? JournalState.terminalFailed
+          : r.state === JournalState.providerCallStarted
+            ? JournalState.uncertain
+            : null;
+      if (target === null && r.state !== JournalState.providerSucceeded) continue;
+      if (target) r.state = target;
+      // `reserved`: sağlayıcı hiç başlamadı → gerçek tüketim YOK.
+      const billed = r.state !== JournalState.terminalFailed || target === null;
+      this.release(
+        id,
+        billed ? { tokens: prov.estimate.tokens, usd: prov.estimate.usd } : null,
+      );
+      recovered++;
+    }
+    return recovered;
   }
 
   async finalize(p: {
@@ -257,7 +331,6 @@ export class HarnessPorts implements AnalysisPorts {
     initialCredits: number;
     usage: { inputTokens: number; outputTokens: number };
     costUsd: number;
-    estimate: UsageEstimate;
   }): Promise<{ outcome: "completed" | "superseded"; analysisId: string }> {
     if (this.failOn.finalize) {
       this.failOn.finalize = false;
@@ -281,7 +354,7 @@ export class HarnessPorts implements AnalysisPorts {
 
     if (this.fingerprintOverride !== null) {
       // Kredi YANMAZ ama gerçek maliyet kaydedilir.
-      this.release(p.estimate, actual);
+      this.release(p.requestId, actual);
       r.state = JournalState.superseded;
       return { outcome: "superseded", analysisId: LATEST_ANALYSIS_ID };
     }
@@ -291,10 +364,10 @@ export class HarnessPorts implements AnalysisPorts {
       if (remaining <= 0) {
         throw new AppError("quota-exceeded", "bitti", { remaining: 0 });
       }
-      this.release(p.estimate, actual);
+      this.release(p.requestId, actual);
       this.credits = remaining - 1;
     } else {
-      this.release(p.estimate, actual);
+      this.release(p.requestId, actual);
     }
     this.commits++;
     this.lastAnalysis = p.analysis;
@@ -321,6 +394,44 @@ export class HarnessGateway implements AiGateway {
       usage: { inputTokens: 1500, outputTokens: 600 },
     };
   }
+}
+
+/**
+ * Rezervasyonu AÇIK bırakarak sağlayıcı sonucuna kadar ilerletir.
+ * 2C: kapanmış bir rezervasyonu `provider_succeeded`'a geri almak üretimde
+ * İMKÂNSIZDIR; fixture'lar o durumu taklit etmez.
+ */
+export async function openReservationWithResult(
+  h: Harness,
+  requestId: string,
+  decisionId = "d1",
+): Promise<void> {
+  const estimate = { tokens: 1467, usd: 0.00147 };
+  // Servisin hesapladığı fingerprint'in AYNISI olmalı; aksi halde
+  // assertSameRequest güvenli conflict fırlatır.
+  const parsed = decisionContentSchema.parse(h.ports.content);
+  const fingerprint = contentFingerprint({
+    content: parsed,
+    model: OPENAI_MODEL,
+    promptVersion: PROMPT_VERSION,
+  });
+  const reserved = await h.ports.reserve({
+    requestId,
+    decisionId,
+    contentFingerprint: fingerprint,
+    estimate,
+  });
+  if (reserved.status !== "created") {
+    throw new Error(`fixture: rezervasyon açılamadı (${reserved.status})`);
+  }
+  if (!(await h.ports.markProviderCallStarted(requestId))) {
+    throw new Error("fixture: provider_call_started reddedildi");
+  }
+  await h.ports.recordProviderSuccess({
+    requestId,
+    analysis: { ...validOutput, model: "gpt-4.1-mini", promptVersion: "mvp-1" },
+    usage: { inputTokens: 1500, outputTokens: 600 },
+  });
 }
 
 export interface Harness {
@@ -354,6 +465,6 @@ export function buildService(overrides?: {
   };
   const ports = new HarnessPorts(limits, { rate, daily, tokens, spend });
   const gateway = new HarnessGateway();
-  const service = new AnalyzeService(ports, gateway);
+  const service = new AnalyzeService(ports, gateway, () => ports.now());
   return { service, ports, gateway, rate, daily, tokens, spend };
 }

@@ -81,6 +81,47 @@ function buildService(gateway: AiGateway): AnalyzeService {
 
 const ports = () => new FirestoreAnalysisPorts(UID);
 
+const ANALYSIS = { ...OUTPUT, model: "gpt-4.1-mini", promptVersion: "mvp-1" };
+const USAGE = { inputTokens: 1500, outputTokens: 600 };
+
+/** Kararın GERÇEK fingerprint'i — finalize bunu bekler. */
+async function decisionFingerprint(): Promise<string> {
+  const { contentFingerprint } = await import("../src/ai/analysis_fingerprint");
+  const snap = await db().doc(`users/${UID}/decisions/${DECISION_ID}`).get();
+  const d = snap.data()!;
+  return contentFingerprint({
+    content: {
+      title: d["title"],
+      options: d["options"],
+      criteria: d["criteria"],
+    } as never,
+    model: ANALYSIS.model,
+    promptVersion: ANALYSIS.promptVersion,
+  });
+}
+
+/**
+ * Rezervasyonu AÇIK bırakarak sağlayıcı sonucuna kadar ilerletir.
+ * 2C: kapanmış bir rezervasyonu `provider_succeeded`'a geri almak üretimde
+ * İMKÂNSIZDIR, bu yüzden fixture o durumu taklit etmez.
+ */
+async function openReservationWithResult(id: string): Promise<void> {
+  const p = ports();
+  const reserved = await p.reserve({
+    requestId: id,
+    decisionId: DECISION_ID,
+    contentFingerprint: await decisionFingerprint(),
+    estimate: ESTIMATE,
+  });
+  if (reserved.status !== "created") {
+    throw new Error(`fixture: rezervasyon açılamadı (${reserved.status})`);
+  }
+  if (!(await p.markProviderCallStarted(id))) {
+    throw new Error("fixture: provider_call_started reddedildi");
+  }
+  await p.recordProviderSuccess({ requestId: id, analysis: ANALYSIS, usage: USAGE });
+}
+
 /** Testlerde kullanılan sabit tahmin (üretimdeki formülün aynısı). */
 const ESTIMATE = estimateUsage({
   promptChars: 2000,
@@ -151,22 +192,9 @@ describe("gerçek transaction — paralel finalize muhasebesi", () => {
     const service = buildService(gateway);
     const id = rid("a");
 
-    // Tek başarılı analiz: sonrasında journal `completed` olur.
-    await service.run(ctx(), { decisionId: DECISION_ID, requestId: id });
-
-    const spendAfterFirst = await spend();
-    const tokensAfterFirst = await tokens();
-    expect(spendAfterFirst).toBeGreaterThan(0);
-    expect(tokensAfterFirst).toBe(2100);
-
-    // Sağlayıcı sonucu var ama finalize edilmemiş duruma geri al: kurtarma
-    // yolundaki PARALEL yarış tam olarak burada oluşur.
-    await db()
-      .doc(`users/${UID}/analysisRequests/${id}`)
-      .update({ state: JournalState.providerSucceeded });
-    await db().doc(`users/${UID}`).update({ freeAnalysisCredits: 5 });
-    await db().doc("ops/dailySpend").set({ [day()]: 0 }, { merge: true });
-    await db().doc("ops/dailyTokens").set({ [day()]: 0 }, { merge: true });
+    // Rezervasyon AÇIK ve sağlayıcı sonucu dayanıklı: kurtarma yolundaki
+    // PARALEL yarış tam olarak bu pencerede oluşur.
+    await openReservationWithResult(id);
 
     await Promise.all(
       Array.from({ length: PARALLEL }, () =>
@@ -178,12 +206,20 @@ describe("gerçek transaction — paralel finalize muhasebesi", () => {
 
     expect(await credits()).toBe(4);
     expect(await tokens()).toBe(2100);
-    expect(await spend()).toBeCloseTo(spendAfterFirst, 10);
+    expect(await spend()).toBeGreaterThan(0);
+    expect(await spend()).toBeLessThan(0.002);
+    // Rezervasyon TAM BİR kez kapandı.
+    expect(await num("ops/dailyTokensReserved", day())).toBe(0);
+    expect(
+      await num(`users/${UID}/analysisReservations/state`, "credits"),
+    ).toBe(0);
 
     const journal = await db()
       .doc(`users/${UID}/analysisRequests/${id}`)
       .get();
     expect(journal.data()!["state"]).toBe(JournalState.completed);
+    // Kapanış işareti: alanın YOKLUĞU rezervasyonun kapandığını gösterir.
+    expect(journal.data()!["reservationExpiresAt"]).toBeUndefined();
   });
 });
 
@@ -296,25 +332,17 @@ describe("gerçek transaction — farklı requestId eşzamanlılığı", () => {
 describe("gerçek transaction — kısmî yazım imkânsızlığı", () => {
   it("finalize transaction'ı çökerse HİÇBİR muhasebe yazımı kalmaz", async () => {
     await seed();
-    const gateway = new FakeGateway();
-    const service = buildService(gateway);
     const id = rid("q");
 
-    // Sağlayıcı sonucu dayanıklı yazılana kadar ilerlet, sonra finalize'ı
-    // transaction İÇİNDEN çökert: kredi biterse `quota-exceeded` fırlar.
-    await db().doc(`users/${UID}/decisions/${DECISION_ID}`).get();
-    await service
-      .run(ctx(), { decisionId: DECISION_ID, requestId: id })
-      .catch(() => undefined);
-    await db()
-      .doc(`users/${UID}/analysisRequests/${id}`)
-      .update({ state: JournalState.providerSucceeded });
+    // Rezervasyon AÇIK, sağlayıcı sonucu dayanıklı.
+    await openReservationWithResult(id);
 
     const spendBefore = await spend();
     const tokensBefore = await tokens();
-    const reservedBefore = await num("ops/dailySpendReserved", day());
+    const reservedBefore = await num("ops/dailyTokensReserved", day());
+    expect(reservedBefore).toBe(ESTIMATE.tokens);
 
-    // Krediyi sıfırla → finalize transaction'ı içeriden fırlatır.
+    // Krediyi sıfırla → finalize transaction'ı İÇERİDEN fırlatır.
     await db().doc(`users/${UID}`).update({
       freeAnalysisCredits: 0,
       rewardCredits: 0,
@@ -324,29 +352,24 @@ describe("gerçek transaction — kısmî yazım imkânsızlığı", () => {
       ports().finalize({
         requestId: id,
         decisionId: DECISION_ID,
-        expectedFingerprint: "fp-uyusmaz",
-        analysis: {
-          ...OUTPUT,
-          model: "gpt-4.1-mini",
-          promptVersion: "mvp-1",
-        },
+        expectedFingerprint: await decisionFingerprint(),
+        analysis: ANALYSIS,
         initialCredits: 0,
-        usage: { inputTokens: 1500, outputTokens: 600 },
-        costUsd: computeCostUsd("gpt-4.1-mini", {
-          inputTokens: 1500,
-          outputTokens: 600,
-        }),
-        estimate: ESTIMATE,
+        usage: USAGE,
+        costUsd: computeCostUsd(ANALYSIS.model, USAGE),
       }),
-    ).resolves.toMatchObject({ outcome: "superseded" });
+    ).rejects.toMatchObject({ code: "quota-exceeded" });
 
-    // Fingerprint uyuşmadı → superseded: kredi düşmedi.
-    expect(await credits()).toBe(0);
-    // Muhasebe TAM BİR kez uygulandı, kısmî yazım yok.
-    expect(await spend()).toBeGreaterThan(spendBefore);
-    expect(await tokens()).toBe(tokensBefore + 2100);
-    expect(await num("ops/dailySpendReserved", day())).toBeLessThan(
-      reservedBefore + 1e-9,
-    );
+    // KISMÎ YAZIM YOK: hiçbir sayaç değişmedi, rezervasyon hâlâ AÇIK.
+    expect(await spend()).toBeCloseTo(spendBefore, 12);
+    expect(await tokens()).toBe(tokensBefore);
+    expect(await num("ops/dailyTokensReserved", day())).toBe(reservedBefore);
+
+    const journal = await db()
+      .doc(`users/${UID}/analysisRequests/${id}`)
+      .get();
+    // Kurtarılabilir durumda kaldı ve rezervasyon işareti duruyor.
+    expect(journal.data()!["state"]).toBe(JournalState.providerSucceeded);
+    expect(journal.data()!["reservationExpiresAt"]).toBeDefined();
   });
 });

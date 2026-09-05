@@ -18,6 +18,7 @@ import { AppError } from "../core/errors.js";
 import { log } from "../core/logger.js";
 import type { RequestContext } from "../core/types.js";
 import {
+  ANALYSIS_RECONCILE_LIMIT,
   INITIAL_FREE_CREDITS,
   MAX_INPUT_CHARS,
   MAX_OUTPUT_TOKENS,
@@ -54,6 +55,32 @@ export interface CreditsSnapshot {
   remaining: number;
 }
 
+/**
+ * REZERVASYON KÖKENİ (İş Paketi 2C) — journal'a rezervasyon anında yazılan
+ * ve BİR DAHA DEĞİŞMEYEN gerçekler.
+ *
+ * Neden gerekli: 2B'de gün anahtarı, kullanıcı planı ve tahmin miktarı
+ * kapanış anında YENİDEN türetiliyordu. Gün dönümü, plan değişimi ve yeniden
+ * deploy bu türetmeleri yanlışlar; sonuç negatif sayaç veya sızmış
+ * rezervasyondur. Artık kapanış bu kaydı OKUR, yeniden hesaplamaz.
+ */
+export interface ReservationProvenance {
+  accountingVersion: number;
+  /** Rezervasyonun açıldığı UTC gün anahtarı — kapanış AYNI günü kullanır. */
+  day: string;
+  estimate: UsageEstimate;
+  /** Rezervasyon anında kredi GERÇEKTEN artırıldı mı. */
+  creditReserved: boolean;
+  planAtReservation: "free" | "premium";
+  /**
+   * Rezervasyon hâlâ AÇIK mı. Sözleşme: `reservationExpiresAt` alanının
+   * VARLIĞI rezervasyonun açık olduğu anlamına gelir; kapanışta silinir.
+   * Böylece bir kaydın muhasebesinin kapanıp kapanmadığı tek bakışta bellidir.
+   */
+  open: boolean;
+  expiresAtMs: number | null;
+}
+
 /** Journal kaydının servise görünen kesiti. */
 export interface JournalRecord {
   state: JournalState;
@@ -64,6 +91,11 @@ export interface JournalRecord {
   usage?: TokenUsage;
   /** terminal_failed durumunda kullanıcıya dönecek sabit hata kodu. */
   failureCode?: string;
+  /**
+   * Rezervasyon kökeni. 2C ÖNCESİ kayıtlarda YOKTUR (undefined): o kayıtlar
+   * için kesin bilgi olmadığından sayaçlara DOKUNULMAZ.
+   */
+  reservation?: ReservationProvenance;
 }
 
 /**
@@ -128,9 +160,18 @@ export interface AnalysisPorts {
     requestId: string;
     state: JournalState;
     failureCode?: string;
-    estimate: UsageEstimate;
     billed: boolean;
   }): Promise<void>;
+
+  /**
+   * FIRSATÇI KURTARMA — yalnız BU kullanıcının asılı kalmış rezervasyonları.
+   *
+   * Sınırlıdır (limit) ve sınırsız koleksiyon taraması YAPMAZ. Her kayıt
+   * kendi transaction'ında, durum kapısıyla idempotent olarak kapatılır.
+   * Yeni bir callable/scheduled function GEREKTİRMEZ: kullanıcı yeni bir
+   * analiz başlattığında çalışır.
+   */
+  reconcileStaleReservations(nowMs: number, limit: number): Promise<number>;
 
   /**
    * ATOMİK FİNALİZE — TEK transaction'da:
@@ -153,7 +194,6 @@ export interface AnalysisPorts {
     initialCredits: number;
     usage: TokenUsage;
     costUsd: number;
-    estimate: UsageEstimate;
   }): Promise<{ outcome: "completed" | "superseded"; analysisId: string }>;
 }
 
@@ -219,6 +259,11 @@ export class AnalyzeService {
       model: OPENAI_MODEL,
     });
 
+    // [2d] FIRSATÇI KURTARMA — kullanıcı yeni bir analiz başlatıyor; bu,
+    // kendi asılı kalmış rezervasyonlarını kapatmak için doğal ve maliyetsiz
+    // andır. Sınırlıdır ve BAŞARISIZ OLURSA analizi engellemez.
+    await this.reconcileQuietly(ctx);
+
     // [3] JOURNAL — aynı requestId daha önce görülmüş mü?
     const existing = await this.ports.readJournal(requestId);
     if (existing) {
@@ -227,7 +272,6 @@ export class AnalyzeService {
         requestId,
         decisionId,
         fingerprint,
-        estimate,
         startedMs,
       });
       if (resolved) return resolved;
@@ -250,7 +294,6 @@ export class AnalyzeService {
         requestId,
         decisionId,
         fingerprint,
-        estimate,
         startedMs,
       });
       if (resolved) return resolved;
@@ -279,10 +322,9 @@ export class AnalyzeService {
         error instanceof AppError && error.code === "ai-uncertain";
       // Sağlayıcıya çağrı YAPILDI: ücretlendirilmiş olabiliriz, bu yüzden
       // token/USD rezervasyonu tahmin değeriyle GERÇEK sayaca yazılır.
-      await this.settle(requestId, {
+      await this.settle(ctx, requestId, {
         state: uncertain ? JournalState.uncertain : JournalState.terminalFailed,
         failureCode: error instanceof AppError ? error.code : undefined,
-        estimate,
         billed: true,
       });
       throw this.terminalProviderError(error);
@@ -307,7 +349,6 @@ export class AnalyzeService {
       fingerprint,
       analysis,
       usage: completion.usage,
-      estimate,
       startedMs,
     });
   }
@@ -323,7 +364,6 @@ export class AnalyzeService {
       requestId: string;
       decisionId: string;
       fingerprint: string;
-      estimate: UsageEstimate;
       startedMs: number;
     },
   ): Promise<{ analysisId: string; analysis: StoredAnalysis } | null> {
@@ -340,7 +380,8 @@ export class AnalyzeService {
         fingerprint: params.fingerprint,
         analysis: record.analysis,
         usage: record.usage,
-        estimate: params.estimate,
+        // TAHMİN BURADA YENİDEN HESAPLANMAZ: rezervasyonun miktarı ve günü
+        // journal'da yazılıdır ve kapanış onu okur (2C).
         startedMs: params.startedMs,
       });
     }
@@ -384,20 +425,52 @@ export class AnalyzeService {
     return error;
   }
 
-  /** İşaretleme başarısızlığı kullanıcıya dönen hatayı DEĞİŞTİRMEZ. */
+  /**
+   * Terminal işaretleme + rezervasyon kapanışı.
+   *
+   * Başarısızlığı kullanıcıya dönen SAĞLAYICI hatasının yerine geçmez —
+   * kullanıcı asıl sorunu görmeli. Ama SESSİZCE de yutulmaz: loglanır ve
+   * journal kurtarılabilir durumda (rezervasyon AÇIK) bırakılır, böylece
+   * kullanıcının bir sonraki analizinde fırsatçı kurtarma onu kapatır.
+   */
   private async settle(
+    ctx: RequestContext,
     requestId: string,
     params: {
       state: JournalState;
       failureCode?: string;
-      estimate: UsageEstimate;
       billed: boolean;
     },
   ): Promise<void> {
     try {
       await this.ports.settleFailure({ requestId, ...params });
-    } catch {
-      // Yutulur: kullanıcı sağlayıcı hatasını görmeli, işaretleme hatasını değil.
+    } catch (error) {
+      // Ham UID/prompt/sağlayıcı metni YOK — yalnız biçim denetimli teşhis.
+      log("error", "reservation_settlement_failed", ctx, {
+        targetState: params.state,
+        billed: params.billed,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
+
+  /**
+   * Fırsatçı kurtarma — asla kullanıcının analizini engellemez. Kurtarma
+   * bir "en iyi çaba" bakımıdır; başarısız olursa bir sonraki istek dener.
+   */
+  private async reconcileQuietly(ctx: RequestContext): Promise<void> {
+    try {
+      const recovered = await this.ports.reconcileStaleReservations(
+        this.now(),
+        ANALYSIS_RECONCILE_LIMIT,
+      );
+      if (recovered > 0) {
+        log("info", "reservations_reconciled", ctx, { recovered });
+      }
+    } catch (error) {
+      log("warn", "reservation_reconcile_failed", ctx, {
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
     }
   }
 
@@ -434,19 +507,17 @@ export class AnalyzeService {
       fingerprint: string;
       analysis: StoredAnalysis;
       usage?: TokenUsage;
-      estimate: UsageEstimate;
       startedMs: number;
     },
   ): Promise<{ analysisId: string; analysis: StoredAnalysis }> {
-    // Kayıp usage yalnız çok eski/eksik journal kayıtlarında olabilir;
-    // muhasebeyi 0 saymak yerine TAHMİNİ kullanmak ihtiyatlı taraftır.
+    // Usage yalnız çok eski/eksik journal kayıtlarında boş olabilir. 0 saymak
+    // maliyeti gizlerdi; sıfır olmayan ihtiyatlı bir taban kullanılır. Gerçek
+    // rezervasyon miktarı journal'dadır ve kapanışı port yapar.
     const usage: TokenUsage = params.usage ?? {
-      inputTokens: params.estimate.tokens,
-      outputTokens: 0,
+      inputTokens: 0,
+      outputTokens: MAX_OUTPUT_TOKENS,
     };
-    const costUsd = params.usage
-      ? computeCostUsd(OPENAI_MODEL, params.usage)
-      : params.estimate.usd;
+    const costUsd = computeCostUsd(OPENAI_MODEL, usage);
 
     const result = await this.ports.finalize({
       requestId: params.requestId,
@@ -456,7 +527,6 @@ export class AnalyzeService {
       initialCredits: INITIAL_FREE_CREDITS,
       usage,
       costUsd,
-      estimate: params.estimate,
     });
 
     this.logOutcome(ctx, {
