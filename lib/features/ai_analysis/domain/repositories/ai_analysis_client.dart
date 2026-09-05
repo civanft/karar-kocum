@@ -1,4 +1,5 @@
 import '../entities/ai_analysis.dart';
+import '../retry_directive.dart';
 
 /// AI analiz sözleşmesi — istemci `analyzeDecision` callable'ını çağırır.
 /// Saf domain: Firebase tipleri data katmanında kalır; başarısızlık
@@ -34,11 +35,15 @@ class AiAnalysisFailure implements Exception {
   const AiAnalysisFailure({
     required this.kind,
     required this.message,
+    required this.retry,
     this.totalCredits,
   });
 
   final AnalysisFailureKind kind;
   final String message;
+
+  /// Bekleyen idempotency anahtarının ne olacağı (İş Paketi 2B).
+  final RetryDirective retry;
 
   /// quotaExceeded için toplam ücretsiz kredi (kart metni için).
   final int? totalCredits;

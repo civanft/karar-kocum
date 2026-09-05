@@ -20,6 +20,10 @@ export type AppErrorCode =
   | "ai-unavailable"
   /** Sağlayıcı çağrısının sonucu BİLİNMİYOR (belirsiz pencere). */
   | "ai-uncertain"
+  /** Sağlayıcı KESİN olarak başarısız (şema/uzunluk/kalıcı ret). */
+  | "ai-failed"
+  /** Analiz üretilirken karar değişti — sonuç bağlanamaz. */
+  | "superseded"
   | "unimplemented"
   | "internal";
 
@@ -34,8 +38,48 @@ const HTTPS_CODE: Record<AppErrorCode, FunctionsErrorCode> = {
   moderated: "failed-precondition",
   "ai-unavailable": "unavailable",
   "ai-uncertain": "unavailable",
+  "ai-failed": "internal",
+  // Eşzamanlı değişiklik nedeniyle iptal — HTTP semantiği `aborted`.
+  superseded: "aborted",
   unimplemented: "unimplemented",
   internal: "internal",
+};
+
+/**
+ * İstemciye gönderilen RETRY YÖNERGESİ (İş Paketi 2B).
+ *
+ * Boolean bir `retryable` yeterli değildi: "tekrar denenebilir" ile "AYNI
+ * idempotency anahtarıyla tekrar denenebilir" farklı şeylerdir. Aynı anahtarla
+ * tekrarlanamayacak bir durumu retryable işaretlemek istemciyi sonsuz döngüye
+ * sokar (denetim bulgusu #2).
+ *
+ *  - "same": iş sunucuda başlamadı ya da tamamlanmayı bekliyor; AYNI
+ *    requestId ile tekrar güvenlidir ve tamamlayıcıdır.
+ *  - "new":  bu requestId tükendi; kullanıcı isterse YENİ bir istek başlatır.
+ *  - "none": tekrar denemek sonucu değiştirmez.
+ */
+export type RetryDirective = "same" | "new" | "none";
+
+/** Her AppErrorCode için sunucunun bildirdiği varsayılan yönerge. */
+const RETRY_DIRECTIVE: Record<AppErrorCode, RetryDirective> = {
+  // İş journal'a ULAŞMADAN reddedildi → aynı anahtar hâlâ kullanılabilir.
+  unauthenticated: "same",
+  "app-check-replay": "same",
+  // Rezervasyon transaction'ı iptal oldu; hiçbir şey tüketilmedi.
+  "rate-limited": "new",
+  "ai-unavailable": "new",
+  // Sonucu değişmeyecek durumlar.
+  "invalid-argument": "none",
+  "quota-exceeded": "none",
+  "daily-limit": "none",
+  moderated: "none",
+  unimplemented: "none",
+  // Bu requestId tükendi.
+  "ai-uncertain": "new",
+  "ai-failed": "new",
+  superseded: "new",
+  // Genel iç hata: finalization bekliyor olabilir → aynı anahtar tamamlar.
+  internal: "same",
 };
 
 export class AppError extends Error {
@@ -44,10 +88,16 @@ export class AppError extends Error {
     message: string,
     /** İstemciye AÇIK detay (retryAfterSeconds vb.) — asla iç bilgi koyma. */
     readonly details?: Record<string, unknown>,
+    /** Koda göre varsayılanı EZER (ör. journal durumu daha kesin bilgi verir). */
+    readonly retry: RetryDirective = RETRY_DIRECTIVE[code],
   ) {
     super(message);
     this.name = "AppError";
   }
+}
+
+export function defaultRetryDirective(code: AppErrorCode): RetryDirective {
+  return RETRY_DIRECTIVE[code];
 }
 
 const SAFE_DIAGNOSTIC_TOKEN = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -88,6 +138,8 @@ export function toHttpsError(error: unknown, ctx: RequestContext): HttpsError {
     });
     return new HttpsError(HTTPS_CODE[error.code], error.message, {
       appCode: error.code,
+      // İstemcinin idempotency anahtarını ne yapacağını sunucu SÖYLER.
+      retry: error.retry,
       ...error.details,
     });
   }
@@ -99,5 +151,8 @@ export function toHttpsError(error: unknown, ctx: RequestContext): HttpsError {
   });
   return new HttpsError("internal", "Beklenmeyen bir hata oluştu.", {
     appCode: "internal",
+    // Sunucu tarafında ne olduğu bilinmiyor: AYNI anahtarla tekrar denemek
+    // güvenli taraftır (iş tamamlanmışsa saklanan sonuç döner).
+    retry: "same" satisfies RetryDirective,
   });
 }

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:karar_veriyorum/features/ai_analysis/data/mock_ai_analysis_client.dart';
 import 'package:karar_veriyorum/features/ai_analysis/domain/entities/ai_analysis.dart';
 import 'package:karar_veriyorum/features/ai_analysis/domain/repositories/ai_analysis_client.dart';
+import 'package:karar_veriyorum/features/ai_analysis/domain/retry_directive.dart';
 import 'package:karar_veriyorum/features/ai_analysis/presentation/providers/analysis_providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -62,6 +63,7 @@ void main() {
         const AiAnalysisFailure(
           kind: AnalysisFailureKind.retryable,
           message: 'servis kesintisi',
+          retry: RetryDirective.sameRequest,
         ),
       ),
     );
@@ -82,6 +84,7 @@ void main() {
         const AiAnalysisFailure(
           kind: AnalysisFailureKind.nonRetryable,
           message: 'Bu içerik analiz edilemiyor.',
+          retry: RetryDirective.none,
         ),
       ),
     );
@@ -100,6 +103,7 @@ void main() {
         const AiAnalysisFailure(
           kind: AnalysisFailureKind.quotaExceeded,
           message: 'bitti',
+          retry: RetryDirective.none,
           totalCredits: 5,
         ),
       ),

@@ -6,267 +6,48 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  canTransition,
-  JournalState,
-} from "../src/ai/analysis_journal";
-import {
-  AnalyzeService,
-  LATEST_ANALYSIS_ID,
-  type AnalysisPorts,
-  type JournalRecord,
-  type StoredAnalysis,
-} from "../src/ai/analyze_service";
-import { CostCircuitBreaker, type SpendStore } from "../src/ai/cost_control";
-import {
-  DailyAnalysisLimiter,
-  type DailyCounterStore,
-} from "../src/ai/daily_limit";
-import {
-  DailyTokenGuard,
-  type TokenCounterStore,
-} from "../src/ai/token_counter";
-import {
-  SELF_HARM_REDIRECT,
-  type AiGateway,
-  type AnalysisCompletion,
-} from "../src/ai/openai_gateway";
-import type { AnalysisOutput } from "../src/ai/schema";
+  buildService,
+  ctx,
+  reqId,
+  validContent,
+  validOutput,
+} from "./helpers/analyze_harness";
+import { LATEST_ANALYSIS_ID } from "../src/ai/analyze_service";
+import { SELF_HARM_REDIRECT } from "../src/ai/openai_gateway";
 import { AppError } from "../src/core/errors";
-import { hashUid } from "../src/core/logger";
-import type { RequestContext } from "../src/core/types";
-
-const ctx: RequestContext = {
-  fn: "analyzeDecision",
-  jobId: "job-1",
-  uid: "u1",
-  uidHash: hashUid("u1"),
-  startedAtMs: Date.now(),
-};
-
-const validContent = {
-  title: "Telefon seçimi",
-  options: [
-    { id: "a", title: "iPhone", pros: ["kamera"], cons: ["fiyat"] },
-    { id: "b", title: "Samsung", pros: [], cons: [] },
-  ],
-  criteria: [{ id: "c1", name: "Fiyat", weight: 8 }],
-};
-
-const validOutput: AnalysisOutput = {
-  summary: "Dengeli bir karşılaştırma.",
-  strengths: ["Kriterler tutarlı"],
-  weaknesses: ["Yaşam maliyeti düşük tartılmış"],
-  risks: ["Kira artışı varsayımı"],
-  recommendation: "Veriler iPhone seçeneğini gösteriyor.",
-  confidence: "medium",
-};
 
 /**
- * İş Paketi 2: portlar artık journal'lı. Sahte, gerçek Firestore
- * implementasyonuyla AYNI sözleşmeyi taşır — bellek içi journal + geçiş
- * kapıları + fingerprint doğrulaması. `commits` artık FİNALİZE sayısıdır.
+ * 2B: sahteler paylaşılan harness'a taşındı. Kabul kontrolü artık ayrı
+ * guard nesnelerinde değil, ports.reserve() kabul transaction'ının
+ * içindedir — bu yüzden limitler `buildService` üzerinden verilir.
  */
-class FakePorts implements AnalysisPorts {
-  content: unknown | null = validContent;
-  plan: "free" | "premium" = "free";
-  /** null = alan hiç yazılmamış (yeni kullanıcı) → sunucu lazy-init. */
-  credits: number | null = null;
-  commits = 0;
-  lastAnalysis: StoredAnalysis | null = null;
-  /** Finalize sırasında karar değişmiş gibi davran (superseded testi). */
-  fingerprintOverride: string | null = null;
-  /** Belirli bir adımda tek seferlik hata enjekte et. */
-  failOn: { recordProviderSuccess?: boolean; finalize?: boolean } = {};
-
-  readonly journal = new Map<string, JournalRecord>();
-
-  async readDecisionContent() {
-    return this.content;
-  }
-
-  async peekCredits() {
-    return { plan: this.plan, remaining: this.credits ?? 5 };
-  }
-
-  async readJournal(requestId: string) {
-    return this.journal.get(requestId) ?? null;
-  }
-
-  async reserve(params: {
-    requestId: string;
-    decisionId: string;
-    contentFingerprint: string;
-  }) {
-    const existing = this.journal.get(params.requestId);
-    if (existing) return { created: false, record: existing };
-    const record: JournalRecord = {
-      state: JournalState.reserved,
-      decisionId: params.decisionId,
-      contentFingerprint: params.contentFingerprint,
-    };
-    this.journal.set(params.requestId, record);
-    return { created: true, record };
-  }
-
-  async markProviderCallStarted(requestId: string) {
-    const r = this.journal.get(requestId);
-    if (!r || !canTransition(r.state, JournalState.providerCallStarted)) {
-      return false;
-    }
-    r.state = JournalState.providerCallStarted;
-    return true;
-  }
-
-  async recordProviderSuccess(params: {
-    requestId: string;
-    analysis: StoredAnalysis;
-    usage: { inputTokens: number; outputTokens: number };
-  }) {
-    if (this.failOn.recordProviderSuccess) {
-      this.failOn.recordProviderSuccess = false;
-      throw new Error("journal yazımı başarısız (enjekte)");
-    }
-    const r = this.journal.get(params.requestId);
-    if (!r || !canTransition(r.state, JournalState.providerSucceeded)) return;
-    r.state = JournalState.providerSucceeded;
-    r.analysis = params.analysis;
-    r.usage = params.usage;
-  }
-
-  async markOutcome(params: { requestId: string; state: JournalState }) {
-    const r = this.journal.get(params.requestId);
-    if (!r || !canTransition(r.state, params.state)) return;
-    r.state = params.state;
-  }
-
-  async finalize(params: {
-    requestId: string;
-    expectedFingerprint: string;
-    analysis: StoredAnalysis;
-    initialCredits: number;
-  }): Promise<{ outcome: "completed" | "superseded"; analysisId: string }> {
-    if (this.failOn.finalize) {
-      this.failOn.finalize = false;
-      throw new Error("finalize başarısız (enjekte)");
-    }
-    const r = this.journal.get(params.requestId);
-    if (!r) throw new AppError("internal", "journal yok");
-
-    // Zaten uygulanmış: kredi/sayaç TEKRAR uygulanmaz.
-    if (r.state === JournalState.completed) {
-      return { outcome: "completed", analysisId: LATEST_ANALYSIS_ID };
-    }
-    if (r.state === JournalState.superseded) {
-      return { outcome: "superseded", analysisId: LATEST_ANALYSIS_ID };
-    }
-    const current = this.fingerprintOverride ?? params.expectedFingerprint;
-    if (current !== params.expectedFingerprint) {
-      r.state = JournalState.superseded;
-      return { outcome: "superseded", analysisId: LATEST_ANALYSIS_ID };
-    }
-    if (this.plan !== "premium") {
-      const remaining = this.credits ?? params.initialCredits;
-      if (remaining <= 0) {
-        throw new AppError("quota-exceeded", "bitti", { remaining: 0 });
-      }
-      this.credits = remaining - 1;
-    }
-    this.commits++;
-    this.lastAnalysis = params.analysis;
-    r.state = JournalState.completed;
-    return { outcome: "completed", analysisId: LATEST_ANALYSIS_ID };
-  }
-}
-
-class FakeGateway implements AiGateway {
-  completions = 0;
-  failWith: AppError | null = null;
-
-  async completeAnalysis(): Promise<AnalysisCompletion> {
-    if (this.failWith) throw this.failWith;
-    this.completions++;
-    return {
-      output: validOutput,
-      usage: { inputTokens: 1500, outputTokens: 600 },
-    };
-  }
-}
-
-class FakeSpend implements SpendStore {
-  total = 0;
-  async todayTotal() {
-    return this.total;
-  }
-  async add(_day: string, usd: number) {
-    this.total += usd;
-  }
-}
-
-class MemoryCounter implements DailyCounterStore {
-  counts = new Map<string, number>();
-  async reserve(dayKey: string, limit: number): Promise<boolean> {
-    const current = this.counts.get(dayKey) ?? 0;
-    if (current >= limit) return false;
-    this.counts.set(dayKey, current + 1);
-    return true;
-  }
-  get total(): number {
-    return [...this.counts.values()].reduce((a, b) => a + b, 0);
-  }
-}
-
-class MemoryTokenStore implements TokenCounterStore {
-  totals = new Map<string, number>();
-  async todayTotal(dayKey: string): Promise<number> {
-    return this.totals.get(dayKey) ?? 0;
-  }
-  async add(dayKey: string, tokens: number): Promise<void> {
-    this.totals.set(dayKey, (this.totals.get(dayKey) ?? 0) + tokens);
-  }
-  get total(): number {
-    return [...this.totals.values()].reduce((a, b) => a + b, 0);
-  }
-}
-
-class FakeRate {
-  calls = 0;
-  shouldReject = false;
-  async check() {
-    this.calls++;
-    if (this.shouldReject) {
-      throw new AppError("rate-limited", "bekle", { retryAfterSeconds: 30 });
-    }
-  }
-}
-
 function make(overrides?: {
   spendTotal?: number;
   dailyLimit?: number;
   tokenLimit?: number;
   tokenTotal?: number;
 }) {
-  const ports = new FakePorts();
-  const gateway = new FakeGateway();
-  const rate = new FakeRate();
-  const spend = new FakeSpend();
-  const counter = new MemoryCounter();
-  const tokens = new MemoryTokenStore();
-  spend.total = overrides?.spendTotal ?? 0;
-  if (overrides?.tokenTotal) {
-    tokens.totals.set(new Date().toISOString().slice(0, 10), overrides.tokenTotal);
-  }
-  const breaker = new CostCircuitBreaker(spend, 0.15);
-  const daily = new DailyAnalysisLimiter(counter, overrides?.dailyLimit ?? 20);
-  const tokenGuard = new DailyTokenGuard(tokens, overrides?.tokenLimit ?? 375_000);
-  const service = new AnalyzeService(
-    ports,
-    gateway,
-    rate,
-    breaker,
-    daily,
-    tokenGuard,
-  );
-  return { service, ports, gateway, rate, spend, counter, tokens };
+  const h = buildService({
+    spendTotal: overrides?.spendTotal,
+    tokenTotal: overrides?.tokenTotal,
+    limits: {
+      ...(overrides?.dailyLimit != null
+        ? { dailyAnalyses: overrides.dailyLimit }
+        : {}),
+      ...(overrides?.tokenLimit != null
+        ? { dailyTokens: overrides.tokenLimit }
+        : {}),
+    },
+  });
+  return {
+    service: h.service,
+    ports: h.ports,
+    gateway: h.gateway,
+    rate: h.rate,
+    spend: h.spend,
+    counter: h.daily,
+    tokens: h.tokens,
+  };
 }
 
 // İş Paketi 2: payload STRICT ve requestId ZORUNLU (idempotency anahtarı).
@@ -378,8 +159,8 @@ describe("kredi adaleti (6C-2 invariant'ları)", () => {
 
 describe("koruma sırası", () => {
   it("rate reddi OpenAI'den önce keser", async () => {
-    const { service, ports, gateway, rate } = make();
-    rate.shouldReject = true;
+    const { service, ports, gateway } = make();
+    ports.rateReject = true;
     const error = await service.run(ctx, request).catch((e: unknown) => e);
     expect((error as AppError).code).toBe("rate-limited");
     expect(gateway.completions).toBe(0);
