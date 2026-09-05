@@ -23,7 +23,7 @@ function makePorts(overrides: Partial<AccountDeletionPorts> = {}) {
   const seen: string[] = [];
   const ports: AccountDeletionPorts = {
     raiseBarrier: vi.fn(async () => {}),
-    drainOpenReservations: vi.fn(async () => ({ open: 0 })),
+    drainOpenReservations: vi.fn(async () => ({ open: 0, exhausted: false })),
     recursiveDeleteUser: vi.fn(async (uid: string) => {
       seen.push(uid);
     }),
@@ -31,6 +31,7 @@ function makePorts(overrides: Partial<AccountDeletionPorts> = {}) {
       seen.push(path);
     }),
     userDataRemains: vi.fn(async () => false),
+    completeBarrier: vi.fn(async () => {}),
     deleteAuthUser: vi.fn(async (uid: string) => {
       seen.push(uid);
     }),

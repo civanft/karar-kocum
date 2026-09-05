@@ -214,13 +214,13 @@ describe("hesap silme kaskadı — gerçek Firestore + Auth emulator", () => {
 
     await expect(
       deleteAccountCascade(TARGET_UID, firestoreAccountDeletionPorts),
-    ).resolves.toEqual({ deleted: true });
+    ).resolves.toMatchObject({ deleted: true });
   });
 
   it("hiç var olmayan kullanıcı için de başarılı biter", async () => {
     await expect(
       deleteAccountCascade("hic-olmayan-uid", firestoreAccountDeletionPorts),
-    ).resolves.toEqual({ deleted: true });
+    ).resolves.toMatchObject({ deleted: true });
   });
 
   it("emulator dışına çıkılmadığı doğrulanır", () => {

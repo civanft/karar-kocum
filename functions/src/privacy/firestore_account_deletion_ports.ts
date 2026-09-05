@@ -13,8 +13,16 @@ import { getFirestore } from "firebase-admin/firestore";
 
 import { ANALYSIS_REQUESTS_COLLECTION } from "../ai/analysis_journal.js";
 import { FirestoreAnalysisPorts } from "../ai/firestore_ports.js";
-import { raiseDeletionBarrier } from "./account_deletion_barrier.js";
-import type { AccountDeletionPorts } from "./delete_account_service.js";
+import {
+  completeDeletionBarrier,
+  raiseDeletionBarrier,
+} from "./account_deletion_barrier.js";
+import {
+  DRAIN_MAX_PAGES_PER_ROUND,
+  DRAIN_PAGE_SIZE,
+  topLevelDeletionPaths,
+  type AccountDeletionPorts,
+} from "./delete_account_service.js";
 
 /** users/{uid} altında veri kaldıysa temizlik BİTMEMİŞTİR. */
 const USER_SUBCOLLECTIONS = [
@@ -45,8 +53,13 @@ export const firestoreAccountDeletionPorts: AccountDeletionPorts = {
     new FirestoreAnalysisPorts(uid).drainReservationsForDeletion({
       nowMs: Date.now(),
       settledAfterMs: olderThanMs,
-      limit: 50,
+      pageSize: DRAIN_PAGE_SIZE,
+      maxPages: DRAIN_MAX_PAGES_PER_ROUND,
     }),
+
+  completeBarrier: async (uid) => {
+    await completeDeletionBarrier(getFirestore(), uid, Date.now());
+  },
 
   recursiveDeleteUser: async (uid) => {
     // BulkWriter tabanlı; alt koleksiyonları kendi gezer ve SINIRLI retry
@@ -65,6 +78,11 @@ export const firestoreAccountDeletionPorts: AccountDeletionPorts = {
     for (const name of USER_SUBCOLLECTIONS) {
       const snap = await db.collection(`users/${uid}/${name}`).limit(1).get();
       if (!snap.empty) return true;
+    }
+    // UID'ye bağlı TOP-LEVEL belgeler de temizlik kapsamındadır (3B):
+    // silinmemişlerse Auth'a geçmek yetim kayıt bırakırdı.
+    for (const path of topLevelDeletionPaths(uid)) {
+      if ((await db.doc(path).get()).exists) return true;
     }
     return false;
   },

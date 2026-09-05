@@ -42,8 +42,21 @@ export async function handleDeleteAccount(
   try {
     ctx = buildContext("deleteAccount", request);
     const result = await deleteAccountCascade(ctx.uid, ports);
-    log("info", "account_deleted", ctx, { deleted: true });
-    return result;
+    log("info", "account_deleted", ctx, {
+      deleted: true,
+      barrierFinalized: result.barrierFinalized,
+    });
+    if (!result.barrierFinalized) {
+      // Veri ve Auth GERÇEKTEN silindi; yalnız bariyerin terminal işareti
+      // yazılamadı. Güvenlik yönünde fail-closed kalınır (bariyer süresiz
+      // durur) ve nadir durumda manuel reconciliation gerekir. Sabit alan;
+      // ham uid/yol/mesaj YOK.
+      log("warn", "account_deletion_barrier_not_finalized", ctx, {
+        reason: "terminal_transition_failed",
+      });
+    }
+    // Dış sözleşme DEĞİŞMEZ: istemci yalnız { deleted: true } görür.
+    return { deleted: true as const };
   } catch (error) {
     const logCtx = ctx ?? contextlessLogContext("deleteAccount");
     const diagnostic = deletionDiagnosticOf(error);

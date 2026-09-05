@@ -31,7 +31,7 @@ export interface AccountDeletionPorts {
   drainOpenReservations(
     uid: string,
     olderThanMs: number,
-  ): Promise<{ open: number }>;
+  ): Promise<{ open: number; exhausted: boolean }>;
 
   /** users/{uid} ağacını alt koleksiyonlarıyla (decisions → aiAnalyses,
    *  rewardTickets, subscriptions, analysisRequests, analysisReservations)
@@ -43,6 +43,11 @@ export interface AccountDeletionPorts {
   userDataRemains(uid: string): Promise<boolean>;
   /** Firebase Auth kullanıcısını siler. */
   deleteAuthUser(uid: string): Promise<void>;
+  /**
+   * [8] TERMİNAL GEÇİŞ — bariyer `deleting` → `deleted` + TTL zaman damgası.
+   * YALNIZ Auth kullanıcısı gerçekten silindikten sonra çağrılır.
+   */
+  completeBarrier(uid: string): Promise<void>;
 }
 
 /** Test edilebilir zaman/bekleme — üretimde gerçek saat ve timer. */
@@ -69,8 +74,17 @@ export const DRAIN_MAX_WAIT_MS = 120_000;
 /** Drain yoklama aralığı. */
 export const DRAIN_POLL_MS = 5_000;
 
+/** Drain'in bir turda okuduğu sayfa boyutu. */
+export const DRAIN_PAGE_SIZE = 50;
+
+/**
+ * Bir turda taranacak EN FAZLA sayfa. Sınırsız tarama yoktur; bütçe
+ * dolarsa drain `exhausted` döner ve tur yeniden çalışır.
+ */
+export const DRAIN_MAX_PAGES_PER_ROUND = 2;
+
 /** UID'e bağlı, users ağacının DIŞINDA kalan top-level belgeler. */
-function topLevelPaths(uid: string): string[] {
+export function topLevelDeletionPaths(uid: string): string[] {
   return [
     `rateLimits/${uid}`, // analyzeDecision limiti
     `rateLimits/${uid}:reward`, // createRewardTicket limiti (ayrı belge)
@@ -181,7 +195,7 @@ export async function deleteAccountCascade(
   uid: string,
   ports: AccountDeletionPorts,
   clock: DeletionClock = systemDeletionClock,
-): Promise<{ deleted: true }> {
+): Promise<{ deleted: true; barrierFinalized: boolean }> {
   // [1] BARİYER — İLK adım. Başarısızsa hiçbir silme yapılmaz.
   try {
     await ports.raiseBarrier(uid);
@@ -196,11 +210,13 @@ export async function deleteAccountCascade(
   try {
     const deadline = clock.now() + DRAIN_MAX_WAIT_MS;
     for (;;) {
-      const { open } = await ports.drainOpenReservations(
+      const { open, exhausted } = await ports.drainOpenReservations(
         uid,
         RESERVATION_SETTLED_AFTER_MS,
       );
-      if (open === 0) break;
+      // `exhausted`: sayfa bütçesi doldu, GÖRÜLMEMİŞ açık kayıt olabilir.
+      // "Kalan yok" iddiası yalnız son sayfanın görüldüğü turda kabul edilir.
+      if (open === 0 && !exhausted) break;
       if (clock.now() >= deadline) {
         // Güvenle kapanamayan iş var: AUTH SİLİNMEZ, veri SİLİNMEZ.
         // Bariyer duruyor, bu yüzden yeni veri de oluşamaz; kullanıcı
@@ -223,7 +239,7 @@ export async function deleteAccountCascade(
   // [3]+[4] Firestore: kullanıcı ağacı ve UID'li top-level belgeler.
   try {
     await ports.recursiveDeleteUser(uid);
-    for (const path of topLevelPaths(uid)) {
+    for (const path of topLevelDeletionPaths(uid)) {
       await ports.deleteDocument(path);
     }
   } catch (cause) {
@@ -259,6 +275,18 @@ export async function deleteAccountCascade(
     // Zaten yok → idempotent başarı.
   }
 
-  // [7] Bariyer KALIR — TTL kaldırır. Burada silinmez.
-  return { deleted: true };
+  /**
+   * [7] TERMİNAL GEÇİŞ — bariyer `deleted` + TTL saati BURADA başlar.
+   *
+   * Bu adım başarısız olursa GÜVENLİK YÖNÜNDE fail-closed kalınır: bariyer
+   * silinmez, sahte başarı/expiry yazılmaz. Veri ve Auth gerçekten
+   * silindiği için kullanıcıya hata DÖNMEZ; bariyer süresiz durur ve nadir
+   * durumda manuel reconciliation gerektirir (runbook).
+   */
+  try {
+    await ports.completeBarrier(uid);
+    return { deleted: true, barrierFinalized: true };
+  } catch {
+    return { deleted: true, barrierFinalized: false };
+  }
 }

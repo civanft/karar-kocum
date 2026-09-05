@@ -23,6 +23,7 @@ import { estimateUsage } from "../src/ai/usage_estimate";
 import { computeCostUsd } from "../src/ai/cost_control";
 import {
   ACCOUNT_DELETION_BLOCKS,
+  completeDeletionBarrier,
   raiseDeletionBarrier,
 } from "../src/privacy/account_deletion_barrier";
 import { deleteAccountCascade } from "../src/privacy/delete_account_service";
@@ -164,30 +165,47 @@ beforeEach(async () => {
 });
 
 describe("bariyer temel davranışı", () => {
-  it("idempotenttir ve retry süreyi İLERİ TAŞIMAZ", async () => {
+  it("idempotenttir ve retry BAŞLANGICI İLERİ TAŞIMAZ", async () => {
     const t0 = Date.now();
     const first = await raiseDeletionBarrier(db(), UID, t0);
     expect(first.created).toBe(true);
-    const before = (await barrierDoc(UID).get()).data()!["expiresAt"] as Timestamp;
+    const before = (await barrierDoc(UID).get()).data()![
+      "startedAt"
+    ] as Timestamp;
 
     const second = await raiseDeletionBarrier(db(), UID, t0 + 3_600_000);
     expect(second.created).toBe(false);
-    const after = (await barrierDoc(UID).get()).data()!["expiresAt"] as Timestamp;
+    const after = (await barrierDoc(UID).get()).data()![
+      "startedAt"
+    ] as Timestamp;
     expect(after.toMillis()).toBe(before.toMillis());
   });
 
-  it("expiresAt en az 48 saat ileridedir ve PII taşımaz", async () => {
-    const t0 = Date.now();
-    await raiseDeletionBarrier(db(), UID, t0);
+  it("`deleting` bariyeri TTL alanı TAŞIMAZ ve PII içermez", async () => {
+    // 3B sözleşme değişikliği: TTL saati ancak silme TAMAMLANINCA başlar.
+    // Oluşturma anında `expiresAt` yazılsaydı, uzun süren bir silmede TTL
+    // bariyeri kaldırır ve Auth hâlâ dururken veri yeniden yazılabilirdi.
+    await raiseDeletionBarrier(db(), UID, Date.now());
     const data = (await barrierDoc(UID).get()).data()!;
-    const expires = (data["expiresAt"] as Timestamp).toMillis();
-    expect(expires - t0).toBeGreaterThanOrEqual(48 * 3600 * 1000);
+    expect(data["expiresAt"]).toBeUndefined();
     expect(Object.keys(data).sort()).toEqual([
-      "expiresAt",
       "schemaVersion",
       "startedAt",
       "state",
     ]);
+    expect(JSON.stringify(data)).not.toContain(UID);
+  });
+
+  it("TERMİNAL bariyer en az 48 saat ileri TTL taşır", async () => {
+    await raiseDeletionBarrier(db(), UID, Date.now());
+    const t = Date.now();
+    await completeDeletionBarrier(db(), UID, t);
+    const data = (await barrierDoc(UID).get()).data()!;
+    expect(data["state"]).toBe("deleted");
+    expect(
+      (data["expiresAt"] as Timestamp).toMillis() -
+        (data["completedAt"] as Timestamp).toMillis(),
+    ).toBeGreaterThanOrEqual(48 * 3600 * 1000);
     expect(JSON.stringify(data)).not.toContain(UID);
   });
 });

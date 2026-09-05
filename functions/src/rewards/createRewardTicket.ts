@@ -39,8 +39,11 @@ export const createRewardTicket = onCall(
     let ctx: RequestContext | undefined;
     try {
       ctx = buildContext("createRewardTicket", request);
-      // Analiz limitiyle çakışmasın diye ayrı anahtar alanı:
-      await limiter().check(`${ctx.uid}:reward`);
+      // Analiz limitiyle çakışmasın diye ayrı anahtar alanı. `accountUid`
+      // TYPED geçilir: anahtar biçiminden UID ayrıştırmaya güvenilmez ve
+      // rate-limit yazımı hesap silme bariyeriyle aynı transaction'da
+      // korunur (İş Paketi 3B).
+      await limiter().check(`${ctx.uid}:reward`, { accountUid: ctx.uid });
       const ticket = await createTicket(new FirestoreTicketStore(), ctx.uid);
       log("info", "reward_ticket_created", ctx, {
         ticketId: ticket.ticketId,

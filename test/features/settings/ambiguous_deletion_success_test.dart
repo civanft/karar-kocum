@@ -123,6 +123,23 @@ void main() {
         _build(client, session, cleaner)(),
         throwsA(isA<AccountDeletionFailure>()),
       );
+      // Yerel temizlik, signOut ve yeni anonim oturum HİÇ çalışmaz.
+      expect(cleaner.calls, 0);
+      expect(session.calls, ['verify']);
+    });
+
+    test('token-expired benzeri belirsizlikte oturum işlemleri çalışmaz',
+        () async {
+      final client = _StubClient(_ambiguous);
+      final session = _StubSession(AccountExistenceCheck.stillPresent);
+      final cleaner = _SpyCleaner();
+
+      await expectLater(
+        _build(client, session, cleaner)(),
+        throwsA(isA<AccountDeletionFailure>()),
+      );
+      expect(session.calls, isNot(contains('signOut')));
+      expect(session.calls, isNot(contains('signIn')));
       expect(cleaner.calls, 0);
     });
 
@@ -176,16 +193,35 @@ void main() {
       );
     });
 
-    test('user-not-found ve user-token-expired → DELETED', () async {
-      for (final code in ['user-not-found', 'user-token-expired']) {
-        expect(
-          await make(() async {
-            throw FirebaseAuthException(code: code);
-          }).verifyAccountDeleted(),
-          AccountExistenceCheck.deleted,
-          reason: code,
-        );
-      }
+    test('YALNIZ user-not-found → DELETED', () async {
+      expect(
+        await make(() async {
+          throw FirebaseAuthException(code: 'user-not-found');
+        }).verifyAccountDeleted(),
+        AccountExistenceCheck.deleted,
+      );
+    });
+
+    // İş Paketi 3B: `user-token-expired` KESİN KANIT DEĞİLDİR. Token
+    // geçersizliği silme dışında oturum/kimlik değişikliklerinden de
+    // kaynaklanabilir; "silindi" saymak yerel veriyi haksız yere sildirirdi.
+    // `user-disabled` ise hesabın VAR olduğunu gösterir.
+    test('user-token-expired → UNKNOWN (silme kanıtı DEĞİL)', () async {
+      expect(
+        await make(() async {
+          throw FirebaseAuthException(code: 'user-token-expired');
+        }).verifyAccountDeleted(),
+        AccountExistenceCheck.unknown,
+      );
+    });
+
+    test('user-disabled → UNKNOWN (hesap duruyor)', () async {
+      expect(
+        await make(() async {
+          throw FirebaseAuthException(code: 'user-disabled');
+        }).verifyAccountDeleted(),
+        AccountExistenceCheck.unknown,
+      );
     });
 
     test('ağ hatası ve bilinmeyen kod → UNKNOWN', () async {

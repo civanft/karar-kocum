@@ -543,13 +543,29 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
   }
 
   /**
-   * HESAP SİLME DRAIN'İ (İş Paketi 3).
+   * HESAP SİLME DRAIN'İ (İş Paketi 3, sayfalama düzeltmesi 3B).
    *
-   * Kullanıcının AÇIK rezervasyonlarını gezer. `settledAfterMs` kadar
-   * YAŞLI olanları — yani onları açan analyzeDecision çağrısının fonksiyon
-   * timeout'u dolduğu için ARTIK çalışamayacağı kayıtları — zorla kapatır.
-   * Daha genç olanlara DOKUNMAZ ve sayarak döndürür: çağıran sınırlı süre
-   * bekleyip tekrar dener.
+   * Kullanıcının AÇIK rezervasyonlarını SAYFA SAYFA gezer. `settledAfterMs`
+   * kadar YAŞLI olanları — yani onları açan analyzeDecision çağrısının
+   * fonksiyon timeout'u dolduğu için ARTIK çalışamayacağı kayıtları — zorla
+   * kapatır. Daha genç olanlara DOKUNMAZ ve sayarak döndürür.
+   *
+   * ═══ NEDEN SAYFALAMA ═══
+   *
+   * 3. Pakette tek bir `limit(50)` sorgusu yapılıyordu ve yalnız o sayfadaki
+   * genç kayıtlar sayılıyordu. İlk 50 kayıt eski olup kapatılırsa 51. ve
+   * sonraki AÇIK kayıtlar HİÇ GÖRÜLMEDEN `{open: 0}` dönüyordu; kaskat da
+   * bunun üzerine recursive delete'e geçiyordu. Artık:
+   *
+   *  - sayfa doluysa (size == pageSize) ARKASINDA kayıt olabileceği
+   *    varsayılır ve bir sonraki tur baştan sorgular;
+   *  - sayfa bütçesi dolarsa `exhausted: true` döner — görülmemiş kayıt
+   *    olabileceği için ASLA 0 denmez;
+   *  - `{open: 0, exhausted: false}` yalnız SON SAYFA görüldüğünde döner,
+   *    yani "kalan yok" iddiası gerçek bir sorgu kanıtına dayanır.
+   *
+   * Bellek taraması yoktur: her tur en fazla `pageSize × maxPages` belge
+   * okur ve çağıran (deleteAccount) turları kendi zaman bütçesiyle sınırlar.
    *
    * Kapanış mantığı KOPYALANMAZ: aynı `reconcileOne` primitive'i kullanılır,
    * dolayısıyla 2C/2D muhasebe değişmezleri aynen geçerlidir.
@@ -561,27 +577,53 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
   async drainReservationsForDeletion(params: {
     nowMs: number;
     settledAfterMs: number;
-    limit: number;
-  }): Promise<{ open: number }> {
-    const snapshot = await this.db
-      .collection(`users/${this.uid}/${ANALYSIS_REQUESTS_COLLECTION}`)
-      .orderBy("reservationExpiresAt")
-      .limit(params.limit)
-      .get();
+    pageSize: number;
+    maxPages: number;
+  }): Promise<{ open: number; exhausted: boolean }> {
+    const collection = this.db.collection(
+      `users/${this.uid}/${ANALYSIS_REQUESTS_COLLECTION}`,
+    );
 
-    let open = 0;
-    for (const doc of snapshot.docs) {
-      const reservedAt = doc.data()["reservedAt"] as Timestamp | undefined;
-      const ageMs = reservedAt
-        ? params.nowMs - reservedAt.toMillis()
-        : Number.POSITIVE_INFINITY;
-      if (ageMs >= params.settledAfterMs) {
-        await this.reconcileOne(doc.id, params.nowMs, { force: true });
-      } else {
-        open++;
+    for (let page = 0; page < params.maxPages; page++) {
+      // İMLEÇ YOK — bilinçli. Kapatılan kayıt `reservationExpiresAt`
+      // alanını kaybettiği için sorgudan DÜŞER; her turda baştan sorgulamak
+      // ilerlemeyi garanti eder. Değer tabanlı `startAfter` güvensizdi:
+      // aynı zaman damgasını paylaşan kayıtların TAMAMI atlanabiliyordu.
+      const snapshot = await collection
+        .orderBy("reservationExpiresAt")
+        .limit(params.pageSize)
+        .get();
+      if (snapshot.empty) return { open: 0, exhausted: false };
+
+      let closed = 0;
+      let young = 0;
+      for (const doc of snapshot.docs) {
+        const reservedAt = doc.data()["reservedAt"] as Timestamp | undefined;
+        const ageMs = reservedAt
+          ? params.nowMs - reservedAt.toMillis()
+          : Number.POSITIVE_INFINITY;
+        if (ageMs >= params.settledAfterMs) {
+          await this.reconcileOne(doc.id, params.nowMs, { force: true });
+          closed++;
+        } else {
+          young++;
+        }
+      }
+
+      // Hiçbiri kapanmadıysa sayfadaki her kayıt GENÇ: ilerleme olmaz.
+      // Sayfa doluysa arkasında daha fazlası olabilir.
+      if (closed === 0) {
+        return { open: young, exhausted: snapshot.size >= params.pageSize };
+      }
+      // Sayfa dolmadıysa arkasında kayıt yoktu; kapananlar düştü, geriye
+      // yalnız bu sayfadaki genç kayıtlar kaldı.
+      if (snapshot.size < params.pageSize) {
+        return { open: young, exhausted: false };
       }
     }
-    return { open };
+
+    // Sayfa bütçesi doldu: GÖRÜLMEMİŞ kayıt olabilir → 0 DENMEZ.
+    return { open: 0, exhausted: true };
   }
 
   /**
