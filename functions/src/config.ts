@@ -66,6 +66,22 @@ export const DAILY_SPEND_LIMIT_USD = envFloat("AI_DAILY_SPEND_LIMIT_USD", 0.08);
  *  UYARI: bu yalnız uygulama içi korumadır, nihai bulut faturası garantisi
  *  DEĞİLDİR. Sağlayıcı tarafında ayrıca hard spend limit gereklidir. */
 export const DAILY_TOKEN_LIMIT = envInt("DAILY_TOKEN_LIMIT", 50_000);
+/**
+ * Bir analiz rezervasyonunun ASILI sayılması için geçmesi gereken süre.
+ *
+ * Fonksiyon timeout'u 60 sn; eşik bundan BÜYÜK olmak zorundadır, aksi halde
+ * hâlâ çalışan bir istek "ölmüş" sanılıp rezervasyonu altından alınırdı.
+ * 10 dakika: timeout'un 10 katı güvenlik payı, ama kullanıcı geri döndüğünde
+ * kilidin çözülmesi için yeterince kısa.
+ */
+export const ANALYSIS_RESERVATION_STALE_MS = envInt(
+  "ANALYSIS_RESERVATION_STALE_MS",
+  10 * 60_000,
+);
+
+/** Bir kullanıcı isteğinde en fazla kaç asılı kayıt kurtarılır (bounded). */
+export const ANALYSIS_RECONCILE_LIMIT = envInt("ANALYSIS_RECONCILE_LIMIT", 5);
+
 /** KULLANICI BAŞINA analiz limitleri — ÜRETİM VARSAYILANI (3/10/3).
  *  Geliştirme/yük testinde env ile gevşetilebilir (USER_ANALYZE_*).
  *  Yalnız per-user rate limiter'ı besler; global kotaları (daily_limit,

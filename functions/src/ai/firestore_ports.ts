@@ -23,7 +23,7 @@
  * koleksiyonlarında cascade yok) — rules DEĞİŞTİRİLMEDİ. Alan yoksa 0
  * kabul edilir; eski revizyon bunları yok sayar, rollback zararsızdır.
  */
-import { FieldValue, getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
 import {
@@ -36,6 +36,7 @@ import {
   type AnalysisPorts,
   type CreditsSnapshot,
   type JournalRecord,
+  type ReservationProvenance,
   type ReserveOutcome,
   type StoredAnalysis,
 } from "./analyze_service.js";
@@ -48,6 +49,7 @@ import {
   type RateLimitState,
 } from "../quota/rate_limiter.js";
 import {
+  ANALYSIS_RESERVATION_STALE_MS,
   DAILY_GLOBAL_ANALYSIS_LIMIT,
   DAILY_SPEND_LIMIT_USD,
   DAILY_TOKEN_LIMIT,
@@ -69,6 +71,9 @@ function dayValue(
 ): number {
   return snapshot.exists ? nonNegative(snapshot.data()?.[day]) : 0;
 }
+
+/** Muhasebe şeması sürümü — köken alanlarının varlığını işaretler. */
+export const ACCOUNTING_VERSION = 2;
 
 function rejected(error: AppError): ReserveOutcome {
   return { status: "rejected", error };
@@ -119,6 +124,36 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
       analysis: data["analysis"] as StoredAnalysis | undefined,
       usage: data["usage"] as TokenUsage | undefined,
       failureCode: data["failureCode"] as string | undefined,
+      reservation: FirestoreAnalysisPorts.toProvenance(data),
+    };
+  }
+
+  /**
+   * Rezervasyon kökenini okur. 2C ÖNCESİ kayıtlarda `accountingVersion`
+   * yoktur → `undefined` döner ve çağıran taraf sayaçlara DOKUNMAZ.
+   * Eksik köken, "kesin bilgi" gibi tamamlanmaz.
+   */
+  private static toProvenance(
+    data: Record<string, unknown>,
+  ): ReservationProvenance | undefined {
+    const version = data["accountingVersion"];
+    const day = data["reservationDay"];
+    if (typeof version !== "number" || typeof day !== "string") return undefined;
+
+    const expiresAt = data["reservationExpiresAt"] as Timestamp | undefined;
+    return {
+      accountingVersion: version,
+      day,
+      estimate: {
+        tokens: nonNegative(data["estimateTokens"]),
+        usd: nonNegative(data["estimateUsd"]),
+      },
+      creditReserved: data["creditReserved"] === true,
+      planAtReservation:
+        data["planAtReservation"] === "premium" ? "premium" : "free",
+      // SÖZLEŞME: alanın VARLIĞI rezervasyonun açık olduğunu gösterir.
+      open: expiresAt != null,
+      expiresAtMs: expiresAt ? expiresAt.toMillis() : null,
     };
   }
 
@@ -257,12 +292,23 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
         decisionId: params.decisionId,
         contentFingerprint: params.contentFingerprint,
       };
+      // KÖKEN: bu alanlar rezervasyon anının GERÇEĞİDİR ve bir daha
+      // değişmez. Kapanış bunları OKUR — yeniden hesaplamaz.
       tx.create(journalRef, {
         state: JournalState.reserved,
         decisionId: params.decisionId,
         contentFingerprint: params.contentFingerprint,
+        accountingVersion: ACCOUNTING_VERSION,
+        reservationDay: day,
         estimateTokens: params.estimate.tokens,
         estimateUsd: params.estimate.usd,
+        creditReserved: plan !== "premium",
+        planAtReservation: plan,
+        reservedAt: FieldValue.serverTimestamp(),
+        // Varlığı = rezervasyon AÇIK. Kapanışta SİLİNİR.
+        reservationExpiresAt: Timestamp.fromMillis(
+          nowMs + ANALYSIS_RESERVATION_STALE_MS,
+        ),
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
@@ -290,50 +336,81 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
   }
 
   /**
-   * Rezervasyon kapanışı — finalize ve settleFailure'ın ORTAK yazımı.
+   * REZERVASYON KAPANIŞI — finalize, settleFailure ve reconciliation'ın
+   * ORTAK yazımı. Miktar ve GÜN journal kökeninden gelir; hiçbir şey
+   * yeniden hesaplanmaz.
+   *
+   * Negatiflik YAZIM tarafında engellenir: sayaçlar transaction içinde
+   * okunup `max(0, mevcut - miktar)` olarak MUTLAK değerle yazılır.
+   * `increment(-x)` kullanılmaz — okumada kırpmak, diskte negatif değer
+   * oluşmasını engellemezdi.
    *
    * `actual` verilirse rezervasyon serbest bırakılıp yerine gerçek tüketim
-   * yazılır; verilmezse yalnız serbest bırakılır. Kredi rezervasyonu her
-   * durumda düşer (premium'da hiç artırılmamıştır → aşağıda 0'a kırpılır).
+   * AYNI güne yazılır; verilmezse yalnız serbest bırakılır.
    */
   private releaseReservation(
     tx: FirebaseFirestore.Transaction,
+    reads: {
+      tokensReserved: FirebaseFirestore.DocumentSnapshot;
+      spendReserved: FirebaseFirestore.DocumentSnapshot;
+      credits: FirebaseFirestore.DocumentSnapshot;
+    },
     params: {
-      day: string;
-      estimate: UsageEstimate;
+      provenance: ReservationProvenance;
       actual?: { tokens: number; usd: number };
-      creditReserved: boolean;
     },
   ): void {
-    tx.set(
-      this.ops("dailyTokensReserved"),
-      { [params.day]: FieldValue.increment(-params.estimate.tokens) },
-      { merge: true },
+    const { day, estimate, creditReserved } = params.provenance;
+
+    const tokensLeft = Math.max(
+      0,
+      dayValue(reads.tokensReserved, day) - estimate.tokens,
     );
-    tx.set(
-      this.ops("dailySpendReserved"),
-      { [params.day]: FieldValue.increment(-params.estimate.usd) },
-      { merge: true },
+    const spendLeft = Math.max(
+      0,
+      dayValue(reads.spendReserved, day) - estimate.usd,
     );
+    tx.set(this.ops("dailyTokensReserved"), { [day]: tokensLeft }, { merge: true });
+    tx.set(this.ops("dailySpendReserved"), { [day]: spendLeft }, { merge: true });
+
     if (params.actual) {
+      // Gerçek tüketim REZERVASYONUN GÜNÜNE yazılır: bir isteğin rezervasyonu
+      // ve gerçekleşmesi aynı günün defterinde kalır.
       tx.set(
         this.ops("dailyTokens"),
-        { [params.day]: FieldValue.increment(params.actual.tokens) },
+        { [day]: FieldValue.increment(params.actual.tokens) },
         { merge: true },
       );
       tx.set(
         this.ops("dailySpend"),
-        { [params.day]: FieldValue.increment(params.actual.usd) },
+        { [day]: FieldValue.increment(params.actual.usd) },
         { merge: true },
       );
     }
-    if (params.creditReserved) {
-      tx.set(
-        this.reservationRef,
-        { credits: FieldValue.increment(-1) },
-        { merge: true },
-      );
+
+    // Kredi YALNIZ gerçekten rezerve edildiyse düşer — güncel plan değil,
+    // rezervasyon anındaki gerçek belirler.
+    if (creditReserved) {
+      const left = Math.max(0, nonNegative(reads.credits.data()?.["credits"]) - 1);
+      tx.set(this.reservationRef, { credits: left }, { merge: true });
     }
+  }
+
+  /** Kapanış için gereken üç sayaç belgesini okur (yazımlardan ÖNCE). */
+  private async readReservationCounters(tx: FirebaseFirestore.Transaction) {
+    return {
+      tokensReserved: await tx.get(this.ops("dailyTokensReserved")),
+      spendReserved: await tx.get(this.ops("dailySpendReserved")),
+      credits: await tx.get(this.reservationRef),
+    };
+  }
+
+  /** Kapanışta rezervasyonu KAPALI işaretler: alanın yokluğu = kapalı. */
+  private static closedMarker() {
+    return {
+      reservationExpiresAt: FieldValue.delete(),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
   }
 
   /** reserved → provider_call_started; yarışta yalnız biri true alır. */
@@ -374,8 +451,8 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
 
   /**
    * TERMİNAL BAŞARISIZLIK — journal geçişi + rezervasyon kapanışı TEK
-   * transaction'da. İdempotent: izin verilmeyen geçişte HİÇBİR yazım olmaz,
-   * dolayısıyla rezervasyon iki kez serbest bırakılamaz.
+   * transaction'da. İdempotent: izin verilmeyen geçişte HİÇBİR yazım olmaz
+   * ve kapanmış (open=false) bir rezervasyon İKİNCİ kez kapatılmaz.
    *
    * Günlük analiz slotu ve rate hakkı serbest BIRAKILMAZ: her deneme
    * sağlayıcıda maliyet üretebilir, iade etmek maliyet korumasını
@@ -385,36 +462,140 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
     requestId: string;
     state: JournalState;
     failureCode?: string;
-    estimate: UsageEstimate;
     billed: boolean;
   }): Promise<void> {
     const ref = this.journalRef(params.requestId);
-    const userRef = this.db.doc(`users/${this.uid}`);
-    const day = utcDayKey();
 
     await this.db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists) return;
-      const from = snap.data()!["state"] as JournalState;
+      const data = snap.data()!;
+      const from = data["state"] as JournalState;
       if (!canTransition(from, params.state)) return;
-      const user = await tx.get(userRef);
-      const premium = user.data()?.["plan"] === "premium";
+
+      const provenance = FirestoreAnalysisPorts.toProvenance(data);
+      const counters =
+        provenance?.open === true
+          ? await this.readReservationCounters(tx)
+          : null;
 
       tx.update(ref, {
         state: params.state,
         ...(params.failureCode ? { failureCode: params.failureCode } : {}),
-        updatedAt: FieldValue.serverTimestamp(),
+        ...FirestoreAnalysisPorts.closedMarker(),
       });
-      this.releaseReservation(tx, {
-        day,
-        estimate: params.estimate,
-        // Sağlayıcıya çağrı yapıldıysa ücretlendirilmiş olabiliriz:
-        // rezervasyon tahmin değeriyle GERÇEK sayaca dönüşür.
-        actual: params.billed
-          ? { tokens: params.estimate.tokens, usd: params.estimate.usd }
-          : undefined,
-        creditReserved: !premium,
+
+      // Köken YOKSA (2C öncesi kayıt) sayaçlara DOKUNULMAZ: miktar ve gün
+      // kesin bilinmediği için tahminle düşmek negatif/yanlış sonuç üretir.
+      if (provenance?.open === true && counters) {
+        this.releaseReservation(tx, counters, {
+          provenance,
+          // Sağlayıcıya çağrı yapıldıysa ücretlendirilmiş olabiliriz:
+          // rezervasyon tahmin değeriyle GERÇEK sayaca dönüşür.
+          actual: params.billed
+            ? { tokens: provenance.estimate.tokens, usd: provenance.estimate.usd }
+            : undefined,
+        });
+      }
+    });
+  }
+
+  /**
+   * FIRSATÇI KURTARMA — bu kullanıcının ASILI kalmış rezervasyonlarını kapatır.
+   *
+   * SORGU: `reservationExpiresAt < now`, limitli. Bu alan yalnız AÇIK
+   * rezervasyonlarda bulunur (kapanışta silinir) ve Firestore alanı olmayan
+   * belgeleri eşitsizlik sorgusundan zaten dışlar. Tek alanlı eşitsizlik
+   * otomatik tek-alan indeksini kullanır: BİLEŞİK İNDEKS GEREKMEZ, bu yüzden
+   * Firestore index deploy'u da gerekmez.
+   *
+   * Tarama SINIRLIDIR ve yalnız `users/{uid}` altındadır — koleksiyon grubu
+   * taraması yapılmaz. Her kayıt kendi transaction'ında kapatılır.
+   */
+  async reconcileStaleReservations(
+    nowMs: number,
+    limit: number,
+  ): Promise<number> {
+    const snapshot = await this.db
+      .collection(`users/${this.uid}/${ANALYSIS_REQUESTS_COLLECTION}`)
+      .where("reservationExpiresAt", "<", Timestamp.fromMillis(nowMs))
+      .limit(limit)
+      .get();
+
+    let recovered = 0;
+    for (const doc of snapshot.docs) {
+      if (await this.reconcileOne(doc.id, nowMs)) recovered++;
+    }
+    return recovered;
+  }
+
+  /**
+   * Tek kaydı kurtarır. Durum kapısı + süre kapısı transaction İÇİNDEDİR:
+   * paralel çağrılardan yalnız biri muhasebeyi uygular.
+   *
+   * Durumlar AYNI ŞEKİLDE ele alınmaz:
+   *  - `reserved`: sağlayıcı hiç BAŞLAMADI (provider_call_started geçişi
+   *    yapılmamış). Para harcanmadı → rezervasyon serbest, GERÇEK sayaç
+   *    ARTIRILMAZ. Kayıt `terminal_failed` olur.
+   *  - `provider_call_started`: sonuç BİLİNMİYOR ve ücretlendirilmiş
+   *    olabiliriz → tahmin bir kez gerçek tüketime çevrilir. Kayıt
+   *    `uncertain` olur. Sağlayıcı ASLA yeniden çağrılmaz.
+   *  - `provider_succeeded`: elde ÖDENMİŞ bir analiz var; kaydı terminal
+   *    yapmak onu çöpe atardı. Bunun yerine YALNIZ rezervasyon kapatılır
+   *    (kredi iade + tahmin→gerçek) ve durum korunur; kullanıcı aynı
+   *    requestId ile dönerse analiz hâlâ finalize edilebilir.
+   */
+  private async reconcileOne(
+    requestId: string,
+    nowMs: number,
+  ): Promise<boolean> {
+    const ref = this.journalRef(requestId);
+    return this.db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return false;
+      const data = snap.data()!;
+      const state = data["state"] as JournalState;
+      const provenance = FirestoreAnalysisPorts.toProvenance(data);
+
+      // SÜRE KAPISI: hâlâ çalışıyor olabilecek bir isteğe DOKUNMA.
+      const expiresAt = data["reservationExpiresAt"] as Timestamp | undefined;
+      if (!expiresAt || expiresAt.toMillis() > nowMs) return false;
+
+      const target =
+        state === JournalState.reserved
+          ? JournalState.terminalFailed
+          : state === JournalState.providerCallStarted
+            ? JournalState.uncertain
+            : null;
+
+      // provider_succeeded: durum KORUNUR, yalnız rezervasyon kapatılır.
+      if (target === null && state !== JournalState.providerSucceeded) {
+        return false;
+      }
+
+      const counters =
+        provenance?.open === true
+          ? await this.readReservationCounters(tx)
+          : null;
+
+      tx.update(ref, {
+        ...(target ? { state: target, failureCode: "reservation-stale" } : {}),
+        ...FirestoreAnalysisPorts.closedMarker(),
       });
+
+      // Köken yoksa (2C öncesi kayıt) sayaçlara DOKUNULMAZ; kayıt yine de
+      // terminal yapılır ki sonsuza kadar taranmasın.
+      if (provenance?.open === true && counters) {
+        // `reserved`: sağlayıcı başlamadı → gerçek tüketim YOK.
+        const billed = state !== JournalState.reserved;
+        this.releaseReservation(tx, counters, {
+          provenance,
+          actual: billed
+            ? { tokens: provenance.estimate.tokens, usd: provenance.estimate.usd }
+            : undefined,
+        });
+      }
+      return true;
     });
   }
 
@@ -431,9 +612,7 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
     initialCredits: number;
     usage: TokenUsage;
     costUsd: number;
-    estimate: UsageEstimate;
   }): Promise<{ outcome: "completed" | "superseded"; analysisId: string }> {
-    const day = utcDayKey();
     const actual = {
       tokens: params.usage.inputTokens + params.usage.outputTokens,
       usd: params.costUsd,
@@ -470,18 +649,28 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
       const data = user.data() ?? {};
       const plan = data["plan"] === "premium" ? "premium" : "free";
 
+      // KÖKEN journal'dan okunur: gün, miktar ve kredi gerçeği rezervasyon
+      // anına aittir. Güncel plan ya da güncel tahmin BURADA KULLANILMAZ.
+      const provenance = FirestoreAnalysisPorts.toProvenance(journal.data()!);
+      const counters =
+        provenance?.open === true
+          ? await this.readReservationCounters(tx)
+          : null;
+
       /**
-       * Her iki dalda da rezervasyon KAPANIR ve GERÇEK tüketim yazılır:
-       * sağlayıcı çağrısı yapıldı, para harcandı. Kullanıcı kredisi ise
-       * yalnız `completed` dalında düşer.
+       * Her iki dalda da rezervasyon KAPANIR ve GERÇEK tüketim rezervasyonun
+       * gününe yazılır: sağlayıcı çağrısı yapıldı, para harcandı. Kullanıcı
+       * kredisi ise yalnız `completed` dalında düşer.
+       *
+       * Köken yoksa (2C öncesi kayıt) veya rezervasyon zaten kapatılmışsa
+       * (fırsatçı kurtarma kapatmış olabilir) sayaçlara DOKUNULMAZ —
+       * çift kapanış imkânsızdır.
        */
-      const settleUsage = () =>
-        this.releaseReservation(tx, {
-          day,
-          estimate: params.estimate,
-          actual,
-          creditReserved: plan !== "premium",
-        });
+      const settleUsage = () => {
+        if (provenance?.open === true && counters) {
+          this.releaseReservation(tx, counters, { provenance, actual });
+        }
+      };
 
       // Karar analiz sürerken DEĞİŞTİ mi (ya da silindi mi)?
       const currentFingerprint = decision.exists
@@ -501,7 +690,7 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
         // kullanıcı kredisi YANMAZ — ama gerçek maliyet kaydedilir.
         tx.update(journalRef, {
           state: JournalState.superseded,
-          updatedAt: FieldValue.serverTimestamp(),
+          ...FirestoreAnalysisPorts.closedMarker(),
         });
         settleUsage();
         return { outcome: "superseded" as const, analysisId: LATEST_ANALYSIS_ID };
@@ -530,7 +719,7 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
       tx.update(decisionRef, { status: "analyzed" });
       tx.update(journalRef, {
         state: JournalState.completed,
-        updatedAt: FieldValue.serverTimestamp(),
+        ...FirestoreAnalysisPorts.closedMarker(),
       });
       settleUsage();
       return { outcome: "completed" as const, analysisId: LATEST_ANALYSIS_ID };
