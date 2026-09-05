@@ -28,7 +28,7 @@ class DeleteAccount {
   final AccountSession session;
 
   Future<AccountDeletionOutcome> call() async {
-    await client.deleteAccount(); // hata → AccountDeletionFailure
+    await _deleteOnServer(); // hata → AccountDeletionFailure
 
     await _ignoringErrors(cleaner.clearAll);
     await _ignoringErrors(session.signOut);
@@ -38,6 +38,33 @@ class DeleteAccount {
       return AccountDeletionOutcome.deletedAndReady;
     } catch (_) {
       return AccountDeletionOutcome.deletedNeedsRestart;
+    }
+  }
+
+  /// Sunucu silmesi + BELİRSİZ SONUÇ doğrulaması (İş Paketi 3).
+  ///
+  /// Callable sunucuda tamamlanıp cevabı istemciye ulaşmayabilir. O zaman
+  /// tek kesin sinyal Auth'un kendisidir: hesap gerçekten yoksa silme
+  /// BAŞARILI sayılır ve yerel temizlik çalışır. Hesap duruyorsa ya da
+  /// doğrulama da belirsiz kalırsa BAŞARI VARSAYILMAZ — yerel veri
+  /// silinmez ve kullanıcıya tekrar denenebilir hata gösterilir.
+  Future<void> _deleteOnServer() async {
+    try {
+      await client.deleteAccount();
+    } on AccountDeletionFailure catch (failure) {
+      if (!failure.ambiguous) rethrow;
+      final check = await _verifyQuietly();
+      if (check != AccountExistenceCheck.deleted) rethrow;
+      // Doğrulandı: sunucu işi bitirmiş, yalnız cevap kaybolmuş.
+    }
+  }
+
+  Future<AccountExistenceCheck> _verifyQuietly() async {
+    try {
+      return await session.verifyAccountDeleted();
+    } catch (_) {
+      // Doğrulama da patladıysa BAŞARI VARSAYILMAZ.
+      return AccountExistenceCheck.unknown;
     }
   }
 

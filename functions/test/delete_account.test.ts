@@ -22,11 +22,22 @@ const OTHER = "baska-kullanici";
 function makePorts(overrides: Partial<AccountDeletionPorts> = {}) {
   const calls: string[] = [];
   const ports: AccountDeletionPorts = {
+    raiseBarrier: vi.fn(async (uid: string) => {
+      calls.push(`barrier:${uid}`);
+    }),
+    drainOpenReservations: vi.fn(async (uid: string) => {
+      calls.push(`drain:${uid}`);
+      return { open: 0 };
+    }),
     recursiveDeleteUser: vi.fn(async (uid: string) => {
       calls.push(`recursiveDelete:${uid}`);
     }),
     deleteDocument: vi.fn(async (path: string) => {
       calls.push(`deleteDoc:${path}`);
+    }),
+    userDataRemains: vi.fn(async (uid: string) => {
+      calls.push(`verify:${uid}`);
+      return false;
     }),
     deleteAuthUser: vi.fn(async (uid: string) => {
       calls.push(`deleteAuth:${uid}`);
@@ -36,10 +47,21 @@ function makePorts(overrides: Partial<AccountDeletionPorts> = {}) {
   return { ports, calls };
 }
 
+/** Testte zaman ilerlemez; drain beklemesi anında biter. */
+const testClock = () => {
+  let now = 0;
+  return {
+    now: () => now,
+    sleep: async (ms: number) => {
+      now += ms;
+    },
+  };
+};
+
 describe("deleteAccountCascade", () => {
   it("1-2) yalnız verilen uid kullanılır; payload uid'i akışa giremez", async () => {
     const { ports, calls } = makePorts();
-    await deleteAccountCascade(UID, ports);
+    await deleteAccountCascade(UID, ports, testClock());
     // Tüm yollar UID'den türetilir:
     expect(calls.every((c) => !c.includes(OTHER))).toBe(true);
     expect(ports.recursiveDeleteUser).toHaveBeenCalledWith(UID);
@@ -48,7 +70,7 @@ describe("deleteAccountCascade", () => {
 
   it("3-5) users/{uid} recursive silinir (decisions/aiAnalyses/rewardTickets/subscriptions dahil)", async () => {
     const { ports, calls } = makePorts();
-    await deleteAccountCascade(UID, ports);
+    await deleteAccountCascade(UID, ports, testClock());
     expect(calls).toContain(`recursiveDelete:${UID}`);
     // Alt koleksiyonlar için AYRI çağrı YOK — recursiveDelete kapsar:
     expect(calls.filter((c) => c.startsWith("recursiveDelete:"))).toHaveLength(1);
@@ -56,26 +78,26 @@ describe("deleteAccountCascade", () => {
 
   it("6-7) rateLimits/{uid} VE rateLimits/{uid}:reward silinir", async () => {
     const { ports, calls } = makePorts();
-    await deleteAccountCascade(UID, ports);
+    await deleteAccountCascade(UID, ports, testClock());
     expect(calls).toContain(`deleteDoc:rateLimits/${UID}`);
     expect(calls).toContain(`deleteDoc:rateLimits/${UID}:reward`);
   });
 
   it("8) başka kullanıcının yolu hiç oluşturulmaz", async () => {
     const { ports, calls } = makePorts();
-    await deleteAccountCascade(UID, ports);
+    await deleteAccountCascade(UID, ports, testClock());
     for (const c of calls) expect(c).not.toContain(OTHER);
   });
 
   it("9) ops/* belgelerine dokunulmaz", async () => {
     const { ports, calls } = makePorts();
-    await deleteAccountCascade(UID, ports);
+    await deleteAccountCascade(UID, ports, testClock());
     expect(calls.some((c) => c.includes("ops/"))).toBe(false);
   });
 
   it("10) Firestore adımları Auth silmeden ÖNCE tamamlanır", async () => {
     const { ports, calls } = makePorts();
-    await deleteAccountCascade(UID, ports);
+    await deleteAccountCascade(UID, ports, testClock());
     const authIndex = calls.findIndex((c) => c.startsWith("deleteAuth:"));
     const firestoreIndexes = calls
       .map((c, i) => (c.startsWith("deleteAuth:") ? -1 : i))
@@ -89,7 +111,7 @@ describe("deleteAccountCascade", () => {
         throw new Error("firestore patladı");
       }),
     });
-    await expect(deleteAccountCascade(UID, ports)).rejects.toBeInstanceOf(
+    await expect(deleteAccountCascade(UID, ports, testClock())).rejects.toBeInstanceOf(
       AppError,
     );
     expect(ports.deleteAuthUser).not.toHaveBeenCalled();
@@ -104,15 +126,15 @@ describe("deleteAccountCascade", () => {
         throw notFound;
       }),
     });
-    await expect(deleteAccountCascade(UID, ports)).resolves.toEqual({
+    await expect(deleteAccountCascade(UID, ports, testClock())).resolves.toEqual({
       deleted: true,
     });
   });
 
   it("13) ikinci çalıştırma idempotenttir (boş ağaç + olmayan belgeler)", async () => {
     const { ports } = makePorts();
-    await deleteAccountCascade(UID, ports);
-    await expect(deleteAccountCascade(UID, ports)).resolves.toEqual({
+    await deleteAccountCascade(UID, ports, testClock());
+    await expect(deleteAccountCascade(UID, ports, testClock())).resolves.toEqual({
       deleted: true,
     });
     expect(ports.recursiveDeleteUser).toHaveBeenCalledTimes(2);
@@ -124,7 +146,7 @@ describe("deleteAccountCascade", () => {
         throw new Error("upstream detay SIZMAMALI");
       }),
     });
-    const err = await deleteAccountCascade(UID, ports).catch((e) => e);
+    const err = await deleteAccountCascade(UID, ports, testClock()).catch((e) => e);
     expect(err).toBeInstanceOf(AppError);
     expect((err as AppError).code).toBe("internal");
     expect((err as AppError).message).not.toContain("upstream detay");
@@ -136,7 +158,7 @@ describe("deleteAccountCascade", () => {
         throw new Error("bir şey oldu");
       }),
     });
-    const err = (await deleteAccountCascade(UID, ports).catch(
+    const err = (await deleteAccountCascade(UID, ports, testClock()).catch(
       (e) => e,
     )) as AppError;
     expect(err.message).not.toContain(UID);
@@ -152,7 +174,7 @@ describe("deleteAccountCascade", () => {
       }),
     });
 
-    const err = (await deleteAccountCascade(UID, ports).catch(
+    const err = (await deleteAccountCascade(UID, ports, testClock()).catch(
       (e) => e,
     )) as AppError;
 
@@ -168,7 +190,7 @@ describe("deleteAccountCascade", () => {
 
   it("başarılı akış { deleted: true } döner", async () => {
     const { ports } = makePorts();
-    await expect(deleteAccountCascade(UID, ports)).resolves.toEqual({
+    await expect(deleteAccountCascade(UID, ports, testClock())).resolves.toEqual({
       deleted: true,
     });
   });

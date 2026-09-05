@@ -24,6 +24,8 @@ export type AppErrorCode =
   | "ai-failed"
   /** Analiz üretilirken karar değişti — sonuç bağlanamaz. */
   | "superseded"
+  /** Hesap silme bariyeri açık: bu UID için yeni veri oluşturulamaz. */
+  | "account-deleting"
   | "unimplemented"
   | "internal";
 
@@ -41,6 +43,8 @@ const HTTPS_CODE: Record<AppErrorCode, FunctionsErrorCode> = {
   "ai-failed": "internal",
   // Eşzamanlı değişiklik nedeniyle iptal — HTTP semantiği `aborted`.
   superseded: "aborted",
+  // Kalıcı ön koşul ihlali: hesap siliniyor, tekrar denemek durumu değiştirmez.
+  "account-deleting": "failed-precondition",
   unimplemented: "unimplemented",
   internal: "internal",
 };
@@ -78,6 +82,8 @@ const RETRY_DIRECTIVE: Record<AppErrorCode, RetryDirective> = {
   "ai-uncertain": "new",
   "ai-failed": "new",
   superseded: "new",
+  // Hesap siliniyor: hiçbir tekrar bunu değiştirmez.
+  "account-deleting": "none",
   // Genel iç hata: finalization bekliyor olabilir → aynı anahtar tamamlar.
   internal: "same",
 };

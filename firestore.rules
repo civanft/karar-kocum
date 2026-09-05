@@ -10,6 +10,26 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == uid;
     }
 
+    // ---- HESAP SİLME BARİYERİ (İş Paketi 3) ----
+    //
+    // Hesap silme kaskadı `users/{uid}` ağacını sildikten SONRA Auth
+    // kullanıcısı silinene kadar eski ID token GEÇERLİ kalır (token ömrü
+    // ~1 saate kadar). O pencerede istemci yazması silinmiş veriyi
+    // DİRİLTİR ve yetim bırakır.
+    //
+    // Bariyer, silme başlarken sunucunun oluşturduğu, İÇERİK TAŞIMAYAN bir
+    // belgedir. Varlığı kullanıcı ağacındaki TÜM istemci erişimini kapatır.
+    // Belge istemciye tamamen kapalıdır (aşağıdaki match bloğu).
+    function deletionBarrierPath(uid) {
+      return /databases/$(db)/documents/accountDeletionBlocks/$(uid);
+    }
+
+    // Sahiplik VE silme başlamamış olması — kullanıcı ağacındaki her
+    // istemci kuralı bunu kullanır; `isOwner` tek başına KULLANILMAZ.
+    function accountActive(uid) {
+      return isOwner(uid) && !exists(deletionBarrierPath(uid));
+    }
+
     // Kullanıcı başına karar üst sınırı — functions/src/config.ts
     // MAX_DECISIONS_PER_USER ile SENKRON tutulmalı (rules TS import edemez).
     function maxDecisions() { return 50; }
@@ -79,13 +99,13 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read: if isOwner(uid);
+      allow read: if accountActive(uid);
 
       // plan / planExpiresAt / quota / freeAnalysisCredits / rewardCredits
       // YALNIZ Functions (admin SDK) yazar — kredi manipülasyonu imkânsız.
       // decisionCount istemci yazabilir AMA yalnız ±1 (sıfırlama hilesi
       // engellenir — karar cap'inin bütünlüğü için).
-      allow update: if isOwner(uid)
+      allow update: if accountActive(uid)
         && !request.resource.data.diff(resource.data)
              .affectedKeys().hasAny([
                'plan', 'planExpiresAt', 'quota',
@@ -98,7 +118,7 @@ service cloud.firestore {
 
       // İlk kayıt: istemci profil oluşturabilir ama kredi alanlarını
       // GÖNDEREMEZ — başlangıç değerlerini sunucu (lazy-init) uygular.
-      allow create: if isOwner(uid)
+      allow create: if accountActive(uid)
         && request.resource.data.plan == 'free'
         && !('freeAnalysisCredits' in request.resource.data)
         && !('rewardCredits' in request.resource.data)
@@ -148,31 +168,31 @@ service cloud.firestore {
                 || resource.data.status == 'analyzed');
         }
 
-        allow read: if isOwner(uid);
+        allow read: if accountActive(uid);
         // SECURITY: silme, user sayacının -1 ilerlemesiyle BAĞLIDIR.
-        allow delete: if isOwner(uid)
+        allow delete: if accountActive(uid)
           && counterBoundToDecision(uid, decisionId, -1);
         // Hotfix madde 5: kullanıcı başına en fazla maxDecisions() karar.
         // SECURITY: create, user sayacının +1 ilerlemesiyle BAĞLIDIR.
-        allow create: if isOwner(uid) && decisionValid()
+        allow create: if accountActive(uid) && decisionValid()
           && !('latestAnalysisId' in request.resource.data)
           && request.resource.data.status != 'analyzed'
           && decisionCount(uid) < maxDecisions()
           && counterBoundToDecision(uid, decisionId, 1);
-        allow update: if isOwner(uid) && decisionValid()
+        allow update: if accountActive(uid) && decisionValid()
           && serverFieldsUntouched()
           && checkInWriteOnce();
 
         // AI analizleri: fiziksel olarak ayrık yazma yolu (AD-9, audit K-2).
         match /aiAnalyses/{analysisId} {
-          allow read: if isOwner(uid);
+          allow read: if accountActive(uid);
           allow write: if false; // yalnız Functions (admin SDK)
         }
       }
 
       // Abonelik olay kayıtları: denetim izi, yalnız webhook yazar.
       match /subscriptions/{eventId} {
-        allow read: if isOwner(uid);
+        allow read: if accountActive(uid);
         allow write: if false; // yalnız revenuecatWebhook (admin SDK)
       }
 
@@ -199,6 +219,13 @@ service cloud.firestore {
     // Ops sayaçları (dailySpend / dailyAnalysisCount / dailyTokens):
     // yalnız Functions admin SDK. Default-deny zaten kapatıyor; niyet açık.
     match /ops/{id} {
+      allow read, write: if false;
+    }
+
+    // Hesap silme bariyeri: yalnız Functions (admin SDK) yazar/okur.
+    // İstemci bariyeri okuyamaz (silme durumu sızmaz) ve SİLEMEZ —
+    // silebilseydi bariyeri kaldırıp veri diriltebilirdi.
+    match /accountDeletionBlocks/{uid} {
       allow read, write: if false;
     }
   }

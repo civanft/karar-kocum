@@ -875,3 +875,188 @@ describe("rezervasyon durumu (İş Paketi 2B)", () => {
     await assertFails(db.doc("rateLimits/u1").get());
   });
 });
+
+/**
+ * İŞ PAKETİ 3 — HESAP SİLME BARİYERİ.
+ *
+ * Sorun: hesap silme kaskadı `users/{uid}` ağacını sildikten sonra Auth
+ * kullanıcısı silinene kadar eski ID token GEÇERLİ kalır (token ömrü ~1
+ * saate kadar). O pencerede istemci yazması veriyi DİRİLTİR ve yetim
+ * kalır. Rules tarafında silme başladıktan sonra istemci yazması
+ * reddedilmelidir.
+ */
+describe("hesap silme bariyeri (İş Paketi 3)", () => {
+  const BLOCKED = "silinen-kullanici";
+  const OTHER = "baska-kullanici";
+
+  /** Admin fixture: bariyer belgesini oluşturur (sunucu-sahipli). */
+  async function raiseBarrier(uid: string): Promise<void> {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx
+        .firestore()
+        .doc(`accountDeletionBlocks/${uid}`)
+        .set({
+          schemaVersion: 1,
+          state: "deleting",
+          startedAt: new Date(),
+          expiresAt: new Date(Date.now() + 48 * 3600 * 1000),
+        });
+    });
+  }
+
+  /** Bariyerden ÖNCE var olan kullanıcı + karar verisi. */
+  async function seedUserData(uid: string): Promise<void> {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await db.doc(`users/${uid}`).set({ plan: "free", decisionCount: 1 });
+      await db.doc(`users/${uid}/decisions/k1`).set({
+        ownerUid: uid,
+        title: "Mevcut karar",
+        status: "draft",
+        options: [],
+        criteria: [],
+      });
+    });
+  }
+
+  it("BARİYER YOKKEN mevcut izinler DEĞİŞMEDEN çalışır", async () => {
+    await seedUserData(BLOCKED);
+    const db = env.authenticatedContext(BLOCKED).firestore();
+    await assertSucceeds(db.doc(`users/${BLOCKED}`).get());
+    await assertSucceeds(db.doc(`users/${BLOCKED}/decisions/k1`).get());
+    await assertSucceeds(
+      db.doc(`users/${BLOCKED}/decisions/k1`).update({ title: "Yeni başlık" }),
+    );
+    // Atomik create batch'i de bariyersiz GEÇERLİDİR.
+    const batch = db.batch();
+    batch.set(db.doc(`users/${BLOCKED}/decisions/k9`), {
+      ownerUid: BLOCKED,
+      title: "Batch karar",
+      status: "draft",
+      options: [],
+      criteria: [],
+    });
+    batch.update(db.doc(`users/${BLOCKED}`), {
+      decisionCount: 2,
+      decisionCountMutationId: "k9",
+    });
+    await assertSucceeds(batch.commit());
+  });
+
+  it("bariyer varken user OKUNAMAZ", async () => {
+    await seedUserData(BLOCKED);
+    await raiseBarrier(BLOCKED);
+    const db = env.authenticatedContext(BLOCKED).firestore();
+    await assertFails(db.doc(`users/${BLOCKED}`).get());
+  });
+
+  it("bariyer varken user OLUŞTURULAMAZ/GÜNCELLENEMEZ", async () => {
+    await seedUserData(BLOCKED);
+    await raiseBarrier(BLOCKED);
+    const db = env.authenticatedContext(BLOCKED).firestore();
+    await assertFails(db.doc(`users/${BLOCKED}`).update({ displayName: "x" }));
+    await assertFails(
+      db.doc(`users/${OTHER}-yeni`).set({ plan: "free" }),
+    );
+  });
+
+  it("bariyer varken decision GET ve LIST reddedilir", async () => {
+    await seedUserData(BLOCKED);
+    await raiseBarrier(BLOCKED);
+    const db = env.authenticatedContext(BLOCKED).firestore();
+    await assertFails(db.doc(`users/${BLOCKED}/decisions/k1`).get());
+    await assertFails(db.collection(`users/${BLOCKED}/decisions`).get());
+  });
+
+  it("bariyer varken decision UPDATE reddedilir", async () => {
+    await seedUserData(BLOCKED);
+    await raiseBarrier(BLOCKED);
+    const db = env.authenticatedContext(BLOCKED).firestore();
+    // Bariyer YOKKEN bu güncelleme GEÇERLİDİR (yukarıdaki taban testi
+    // kanıtlıyor); dolayısıyla reddin tek nedeni bariyerdir.
+    await assertFails(
+      db.doc(`users/${BLOCKED}/decisions/k1`).update({ title: "Yeni" }),
+    );
+  });
+
+  it("bariyer varken ATOMİK decision DELETE batch'i reddedilir", async () => {
+    await seedUserData(BLOCKED);
+    await raiseBarrier(BLOCKED);
+    const db = env.authenticatedContext(BLOCKED).firestore();
+    const batch = db.batch();
+    batch.delete(db.doc(`users/${BLOCKED}/decisions/k1`));
+    batch.update(db.doc(`users/${BLOCKED}`), {
+      decisionCount: 0,
+      decisionCountMutationId: "k1",
+    });
+    await assertFails(batch.commit());
+  });
+
+  it("bariyer varken ATOMİK decision + sayaç BATCH'i reddedilir", async () => {
+    await seedUserData(BLOCKED);
+    await raiseBarrier(BLOCKED);
+    const db = env.authenticatedContext(BLOCKED).firestore();
+    const batch = db.batch();
+    batch.set(db.doc(`users/${BLOCKED}/decisions/k9`), {
+      ownerUid: BLOCKED,
+      title: "Batch karar",
+      status: "draft",
+      options: [],
+      criteria: [],
+    });
+    batch.update(db.doc(`users/${BLOCKED}`), {
+      decisionCount: 2,
+      decisionCountMutationId: "k9",
+    });
+    await assertFails(batch.commit());
+  });
+
+  it("bariyer varken aiAnalyses ve subscriptions OKUNAMAZ", async () => {
+    await seedUserData(BLOCKED);
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx
+        .firestore()
+        .doc(`users/${BLOCKED}/decisions/k1/aiAnalyses/latest`)
+        .set({ summary: "analiz" });
+      await ctx
+        .firestore()
+        .doc(`users/${BLOCKED}/subscriptions/olay-1`)
+        .set({ product: "premium" });
+    });
+    await raiseBarrier(BLOCKED);
+    const db = env.authenticatedContext(BLOCKED).firestore();
+    await assertFails(
+      db.doc(`users/${BLOCKED}/decisions/k1/aiAnalyses/latest`).get(),
+    );
+    await assertFails(db.doc(`users/${BLOCKED}/subscriptions/olay-1`).get());
+  });
+
+  it("BAŞKA kullanıcı bariyerden ETKİLENMEZ", async () => {
+    await seedUserData(BLOCKED);
+    await seedUserData(OTHER);
+    await raiseBarrier(BLOCKED);
+    const db = env.authenticatedContext(OTHER).firestore();
+    await assertSucceeds(db.doc(`users/${OTHER}`).get());
+    await assertSucceeds(db.doc(`users/${OTHER}/decisions/k1`).get());
+    await assertSucceeds(
+      db.doc(`users/${OTHER}/decisions/k1`).update({ title: "Serbest" }),
+    );
+  });
+
+  it("bariyer belgesi istemciye TAMAMEN kapalı", async () => {
+    await raiseBarrier(BLOCKED);
+    const own = env.authenticatedContext(BLOCKED).firestore();
+    await assertFails(own.doc(`accountDeletionBlocks/${BLOCKED}`).get());
+    await assertFails(own.doc(`accountDeletionBlocks/${BLOCKED}`).delete());
+    await assertFails(
+      own.doc(`accountDeletionBlocks/${BLOCKED}`).set({ state: "x" }),
+    );
+    const other = env.authenticatedContext(OTHER).firestore();
+    await assertFails(other.doc(`accountDeletionBlocks/${BLOCKED}`).get());
+    await assertFails(
+      other.doc(`accountDeletionBlocks/${OTHER}`).set({ state: "deleting" }),
+    );
+    const anon = env.unauthenticatedContext().firestore();
+    await assertFails(anon.doc(`accountDeletionBlocks/${BLOCKED}`).get());
+  });
+});

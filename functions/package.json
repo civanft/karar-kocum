@@ -15,7 +15,7 @@
     "serve": "npm run build && firebase emulators:start --only functions,firestore,auth",
     "deploy": "firebase deploy --only functions",
     "test:privacy": "cd .. && npx --yes firebase-tools@15.22.4 emulators:exec --only firestore,auth --project demo-karar \"cd functions && npx vitest run --config vitest.privacy.config.ts\"",
-    "test:emulator": "cd .. && npx --yes firebase-tools@15.22.4 emulators:exec --only firestore --project demo-karar \"cd functions && npx vitest run --config vitest.emulator.config.ts\""
+    "test:emulator": "cd .. && npx --yes firebase-tools@15.22.4 emulators:exec --only firestore,auth --project demo-karar \"cd functions && npx vitest run --config vitest.emulator.config.ts\""
   },
   "dependencies": {
     "firebase-admin": "^13.10.0",

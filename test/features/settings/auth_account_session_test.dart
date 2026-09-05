@@ -10,7 +10,7 @@ import 'package:karar_veriyorum/features/settings/data/auth_account_session.dart
 void main() {
   test('signOut ve signInAnonymously depoya iletilir', () async {
     final repo = _RecordingAuthRepository();
-    final session = AuthAccountSession(repo);
+    final session = AuthAccountSession.withReloader(repo, () => null);
 
     await session.signOut();
     await session.signInAnonymously();
@@ -20,7 +20,7 @@ void main() {
 
   test('depo hatası yutulmaz — kararı çağıran verir', () async {
     final repo = _RecordingAuthRepository(signInThrows: true);
-    final session = AuthAccountSession(repo);
+    final session = AuthAccountSession.withReloader(repo, () => null);
 
     await expectLater(session.signInAnonymously(), throwsStateError);
   });

@@ -26,6 +26,7 @@
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
+import { assertAccountActive } from "../privacy/account_deletion_barrier.js";
 import {
   ANALYSIS_REQUESTS_COLLECTION,
   canTransition,
@@ -202,6 +203,13 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
 
     return this.db.runTransaction<ReserveOutcome>(async (tx) => {
       // ---- OKUMALAR (Firestore: tüm okumalar yazımlardan ÖNCE) ----
+      //
+      // HESAP SİLME BARİYERİ (İş Paketi 3): bariyer okuması transaction'ın
+      // çakışma kümesine girer. Bariyer yazımı araya girerse transaction
+      // yeniden çalışır ve bu kez reddeder — "bariyer ile rezervasyon aynı
+      // anda commit ederse" yarışı böyle kapanır.
+      await assertAccountActive(tx, this.db, this.uid);
+
       const journal = await tx.get(journalRef);
       if (journal.exists) {
         return {
@@ -417,6 +425,11 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
   async markProviderCallStarted(requestId: string): Promise<boolean> {
     const ref = this.journalRef(requestId);
     return this.db.runTransaction(async (tx) => {
+      // SAĞLAYICI ÇAĞRISINDAN ÖNCEKİ SON GÜVENLİ KONTROL: bariyer açıksa
+      // ücretli çağrı BAŞLATILMAZ. Rezervasyon `reserved` kalır ve silme
+      // drain'i onu maliyetsiz kapatır.
+      await assertAccountActive(tx, this.db, this.uid);
+
       const snap = await tx.get(ref);
       if (!snap.exists) return false;
       const from = snap.data()!["state"] as JournalState;
@@ -530,6 +543,48 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
   }
 
   /**
+   * HESAP SİLME DRAIN'İ (İş Paketi 3).
+   *
+   * Kullanıcının AÇIK rezervasyonlarını gezer. `settledAfterMs` kadar
+   * YAŞLI olanları — yani onları açan analyzeDecision çağrısının fonksiyon
+   * timeout'u dolduğu için ARTIK çalışamayacağı kayıtları — zorla kapatır.
+   * Daha genç olanlara DOKUNMAZ ve sayarak döndürür: çağıran sınırlı süre
+   * bekleyip tekrar dener.
+   *
+   * Kapanış mantığı KOPYALANMAZ: aynı `reconcileOne` primitive'i kullanılır,
+   * dolayısıyla 2C/2D muhasebe değişmezleri aynen geçerlidir.
+   *
+   * Sorgu `orderBy("reservationExpiresAt")`: alanı OLMAYAN belgeler (yani
+   * kapanmış rezervasyonlar) sonuçta hiç yer almaz. Tek alanlı sıralama
+   * otomatik indeksi kullanır — bileşik indeks GEREKMEZ.
+   */
+  async drainReservationsForDeletion(params: {
+    nowMs: number;
+    settledAfterMs: number;
+    limit: number;
+  }): Promise<{ open: number }> {
+    const snapshot = await this.db
+      .collection(`users/${this.uid}/${ANALYSIS_REQUESTS_COLLECTION}`)
+      .orderBy("reservationExpiresAt")
+      .limit(params.limit)
+      .get();
+
+    let open = 0;
+    for (const doc of snapshot.docs) {
+      const reservedAt = doc.data()["reservedAt"] as Timestamp | undefined;
+      const ageMs = reservedAt
+        ? params.nowMs - reservedAt.toMillis()
+        : Number.POSITIVE_INFINITY;
+      if (ageMs >= params.settledAfterMs) {
+        await this.reconcileOne(doc.id, params.nowMs, { force: true });
+      } else {
+        open++;
+      }
+    }
+    return { open };
+  }
+
+  /**
    * Tek kaydı kurtarır. Durum kapısı + süre kapısı transaction İÇİNDEDİR:
    * paralel çağrılardan yalnız biri muhasebeyi uygular.
    *
@@ -548,6 +603,7 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
   private async reconcileOne(
     requestId: string,
     nowMs: number,
+    opts: { force?: boolean } = {},
   ): Promise<boolean> {
     const ref = this.journalRef(requestId);
     return this.db.runTransaction(async (tx) => {
@@ -557,9 +613,14 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
       const state = data["state"] as JournalState;
       const provenance = FirestoreAnalysisPorts.toProvenance(data);
 
-      // SÜRE KAPISI: hâlâ çalışıyor olabilecek bir isteğe DOKUNMA.
+      // KAPANIŞ KAPISI: alanın yokluğu rezervasyonun zaten kapandığını
+      // gösterir — `force` bunu ASLA atlamaz (çift kapanış imkânsız kalır).
       const expiresAt = data["reservationExpiresAt"] as Timestamp | undefined;
-      if (!expiresAt || expiresAt.toMillis() > nowMs) return false;
+      if (!expiresAt) return false;
+      // SÜRE KAPISI: hâlâ çalışıyor olabilecek bir isteğe DOKUNMA.
+      // Hesap silme drain'i bu kapıyı AÇIKÇA atlar (`force`), çünkü çağıran
+      // tarafın yaşını kendisi doğrulamıştır.
+      if (!opts.force && expiresAt.toMillis() > nowMs) return false;
 
       const analysis = data["analysis"] as StoredAnalysis | undefined;
 
