@@ -9,6 +9,10 @@
 import { getFirestore } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
+import {
+  accountDeletingError,
+  barrierRef,
+} from "../privacy/account_deletion_barrier.js";
 
 export interface WindowState {
   startMs: number;
@@ -22,11 +26,25 @@ export interface RateLimitState {
   day?: WindowState;
 }
 
+/**
+ * Rate-limit yazımının bağlı olduğu HESAP (İş Paketi 3B).
+ *
+ * Anahtarın `${uid}:reward` biçiminden UID AYRIŞTIRILMAZ — anahtar biçimi
+ * bir gün değişirse sessizce yanlış UID okunurdu. UID typed parametre
+ * olarak geçirilir.
+ */
+export interface RateLimitOptions {
+  /** Verilirse yazım, bu hesabın silme bariyeriyle AYNI transaction'da
+   *  kontrol edilir; bariyer varsa hiçbir yazım yapılmaz. */
+  accountUid?: string;
+}
+
 export interface RateLimitStore {
   /** Atomik oku-değiştir-yaz; Firestore'da transaction'a eşlenir. */
   update(
     key: string,
     mutate: (current: RateLimitState | null) => RateLimitState,
+    options?: RateLimitOptions,
   ): Promise<RateLimitState>;
 }
 
@@ -53,14 +71,18 @@ export class RateLimiter {
    * fırlatır — details.retryAfterSeconds istemcide geri sayım için.
    * Sayaç artışı atomik: yarış durumunda limit delinemez.
    */
-  async check(key: string): Promise<void> {
+  async check(key: string, options?: RateLimitOptions): Promise<void> {
     const nowMs = this.now();
     let decision: RateLimitDecision | null = null;
 
-    await this.store.update(key, (current) => {
-      decision = evaluateRateLimit(current, nowMs, this.limits);
-      return decision.next;
-    });
+    await this.store.update(
+      key,
+      (current) => {
+        decision = evaluateRateLimit(current, nowMs, this.limits);
+        return decision.next;
+      },
+      options,
+    );
 
     if (decision != null && !(decision as RateLimitDecision).allowed) {
       throw new AppError(
@@ -157,9 +179,22 @@ export class FirestoreRateLimitStore implements RateLimitStore {
   async update(
     key: string,
     mutate: (current: RateLimitState | null) => RateLimitState,
+    options?: RateLimitOptions,
   ): Promise<RateLimitState> {
-    const ref = getFirestore().collection("rateLimits").doc(key);
-    return getFirestore().runTransaction(async (tx) => {
+    const db = getFirestore();
+    const ref = db.collection("rateLimits").doc(key);
+    const uid = options?.accountUid;
+    return db.runTransaction(async (tx) => {
+      // HESAP SİLME BARİYERİ (İş Paketi 3B): rate-limit belgesi de UID'ye
+      // bağlı bir kullanıcı kaydıdır. Bariyer okunmazsa, silme sırasında
+      // gelen eski bir istek `rateLimits/{uid}:reward` belgesini YETİM
+      // olarak yeniden yaratırdı. Okuma transaction'ın çakışma kümesine
+      // girer: bariyer aynı anda commit ederse transaction yeniden çalışır.
+      if (uid !== undefined) {
+        if ((await tx.get(barrierRef(db, uid))).exists) {
+          throw accountDeletingError();
+        }
+      }
       const snapshot = await tx.get(ref);
       const next = mutate(
         snapshot.exists ? (snapshot.data() as RateLimitState) : null,

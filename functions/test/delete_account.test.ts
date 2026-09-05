@@ -27,7 +27,7 @@ function makePorts(overrides: Partial<AccountDeletionPorts> = {}) {
     }),
     drainOpenReservations: vi.fn(async (uid: string) => {
       calls.push(`drain:${uid}`);
-      return { open: 0 };
+      return { open: 0, exhausted: false };
     }),
     recursiveDeleteUser: vi.fn(async (uid: string) => {
       calls.push(`recursiveDelete:${uid}`);
@@ -39,6 +39,7 @@ function makePorts(overrides: Partial<AccountDeletionPorts> = {}) {
       calls.push(`verify:${uid}`);
       return false;
     }),
+    completeBarrier: vi.fn(async () => {}),
     deleteAuthUser: vi.fn(async (uid: string) => {
       calls.push(`deleteAuth:${uid}`);
     }),
@@ -126,7 +127,7 @@ describe("deleteAccountCascade", () => {
         throw notFound;
       }),
     });
-    await expect(deleteAccountCascade(UID, ports, testClock())).resolves.toEqual({
+    await expect(deleteAccountCascade(UID, ports, testClock())).resolves.toMatchObject({
       deleted: true,
     });
   });
@@ -134,7 +135,7 @@ describe("deleteAccountCascade", () => {
   it("13) ikinci çalıştırma idempotenttir (boş ağaç + olmayan belgeler)", async () => {
     const { ports } = makePorts();
     await deleteAccountCascade(UID, ports, testClock());
-    await expect(deleteAccountCascade(UID, ports, testClock())).resolves.toEqual({
+    await expect(deleteAccountCascade(UID, ports, testClock())).resolves.toMatchObject({
       deleted: true,
     });
     expect(ports.recursiveDeleteUser).toHaveBeenCalledTimes(2);
@@ -190,7 +191,7 @@ describe("deleteAccountCascade", () => {
 
   it("başarılı akış { deleted: true } döner", async () => {
     const { ports } = makePorts();
-    await expect(deleteAccountCascade(UID, ports, testClock())).resolves.toEqual({
+    await expect(deleteAccountCascade(UID, ports, testClock())).resolves.toMatchObject({
       deleted: true,
     });
   });

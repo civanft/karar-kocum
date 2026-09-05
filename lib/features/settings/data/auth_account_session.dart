@@ -37,10 +37,15 @@ class AuthAccountSession implements AccountSession {
 
   /// BELİRSİZ SONUÇ doğrulaması (İş Paketi 3).
   ///
-  /// `reload()` sunucuya gider: hesap silinmişse Firebase `user-not-found`
-  /// (ya da token'ı geçersizleşmişse `user-token-expired`) döndürür. Bu,
-  /// "callable cevabı gelmedi ama sunucu işi bitirmiş olabilir" durumunda
-  /// elimizdeki TEK kesin sinyaldir.
+  /// `reload()` sunucuya gider ve hesap silinmişse Firebase
+  /// `user-not-found` döndürür. Bu, "callable cevabı gelmedi ama sunucu işi
+  /// bitirmiş olabilir" durumunda elimizdeki TEK KESİN sinyaldir.
+  ///
+  /// YALNIZ `user-not-found` kesin kanıttır (İş Paketi 3B). Özellikle
+  /// `user-token-expired` KANIT DEĞİLDİR: token geçersizliği silme dışında
+  /// oturum/kimlik değişikliklerinden de kaynaklanabilir ve onu "silindi"
+  /// saymak kullanıcının yerel verisini haksız yere sildirirdi. Aynı şekilde
+  /// `user-disabled` de hesabın var olduğunu, silinmediğini gösterir.
   ///
   /// Oturum zaten yoksa bu bir silme KANITI DEĞİLDİR — çağrı en baştan
   /// kimliksiz de olmuş olabilir; o durumda [AccountExistenceCheck.unknown]
@@ -53,9 +58,7 @@ class AuthAccountSession implements AccountSession {
       await pending;
       return AccountExistenceCheck.stillPresent;
     } on FirebaseAuthException catch (e) {
-      if (e.code == 'user-not-found' || e.code == 'user-token-expired') {
-        return AccountExistenceCheck.deleted;
-      }
+      if (e.code == 'user-not-found') return AccountExistenceCheck.deleted;
       return AccountExistenceCheck.unknown;
     } catch (_) {
       return AccountExistenceCheck.unknown;

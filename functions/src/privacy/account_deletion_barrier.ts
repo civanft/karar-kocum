@@ -30,9 +30,24 @@
  * UID yalnız belge KİMLİĞİDİR — doğrudan lookup için zorunludur (sorgu
  * gerektirmez, indeks gerektirmez).
  *
- * `expiresAt` en az 48 saat ileridedir. Gerekçe: eski ID token'lar bir
- * saate kadar yaşayabilir, TTL silmesi anlık değildir ve bariyer, eski
- * kimlik belirteci doğal olarak geçersizleşmeden KALDIRILMAMALIDIR.
+ * ═══ DURUM MAKİNESİ (İş Paketi 3B) ═══
+ *
+ *   deleting  → silme SÜRÜYOR.  `expiresAt` alanı YOKTUR.
+ *   deleted   → silme BİTTİ ve Auth kullanıcısı gerçekten kaldırıldı.
+ *               `completedAt` ve `expiresAt` yazılır.
+ *
+ * NEDEN `deleting` durumunda TTL alanı YOK: Firestore TTL yalnız timestamp
+ * taşıyan `expiresAt` alanını işler. 3. Pakette bariyer oluşturulurken
+ * `expiresAt` yazılıyordu; silme 48 saatten uzun süre tamamlanamazsa TTL
+ * bariyeri kaldırır, Auth hesabı hâlâ dururken eski/yeni oturum tekrar
+ * veri yazabilirdi. Bu FAIL-CLOSED DEĞİLDİ. Artık tamamlanmamış bir silme
+ * bariyeri SÜRESİZ durur — güvenlik yönünde kalıcı bariyer, Auth mevcutken
+ * bariyerin erken silinmesinden daha güvenlidir.
+ *
+ * `expiresAt` yalnız terminal geçişte ve `completedAt`'ten en az 48 saat
+ * sonrasına yazılır. Gerekçe: eski ID token'lar bir saate kadar yaşayabilir,
+ * TTL silmesi anlık değildir ve bariyer, kimlik belirteci doğal olarak
+ * geçersizleşmeden KALDIRILMAMALIDIR.
  */
 import { FieldValue, Timestamp, type Firestore } from "firebase-admin/firestore";
 
@@ -44,10 +59,14 @@ export const ACCOUNT_DELETION_BLOCKS = "accountDeletionBlocks";
 export const BARRIER_SCHEMA_VERSION = 1;
 
 /**
- * Bariyerin yaşam süresi. Eski ID token ömrü (~1 saat) + TTL silmesinin
- * anlık olmaması + güvenlik payı. 48 saat ALT sınırdır.
+ * TERMİNAL bariyerin yaşam süresi. Eski ID token ömrü (~1 saat) + TTL
+ * silmesinin anlık olmaması + güvenlik payı. 48 saat ALT sınırdır.
+ * Yalnız `deleted` durumundaki bariyere uygulanır.
  */
 export const BARRIER_TTL_MS = 48 * 60 * 60 * 1000;
+
+/** Bariyer durumları — `deleted` → `deleting` geçişi YASAKTIR. */
+export type BarrierState = "deleting" | "deleted";
 
 export function barrierRef(db: Firestore, uid: string) {
   return db.doc(`${ACCOUNT_DELETION_BLOCKS}/${uid}`);
@@ -62,28 +81,70 @@ export function accountDeletingError(): AppError {
 }
 
 /**
- * Bariyeri OLUŞTUR — idempotent.
+ * `deleting` bariyerini OLUŞTUR ya da MİGRE ET — idempotent.
  *
- * Tekrar çağrıda `startedAt` ve `expiresAt` İLERİ TAŞINMAZ: her retry
- * süreyi uzatsaydı bariyer hiç sona ermeyebilirdi. Mevcut bariyer olduğu
- * gibi korunur.
+ *  - Yoksa: `deleting` + `startedAt` yazılır. TTL alanı YAZILMAZ.
+ *  - Varsa ve `deleting` ise: `startedAt` İLERİ TAŞINMAZ. Eski (3. Paket)
+ *    biçimde `expiresAt` taşıyorsa GÜVENLİ MİGRASYON olarak kaldırılır —
+ *    aksi hâlde tamamlanmamış bir silme TTL ile açılabilirdi.
+ *  - Varsa ve `deleted` ise: DOKUNULMAZ. Terminal bariyer tekrar
+ *    `deleting` yapılamaz.
  */
 export async function raiseDeletionBarrier(
   db: Firestore,
   uid: string,
-  nowMs: number,
-): Promise<{ created: boolean }> {
+  _nowMs: number,
+): Promise<{ created: boolean; alreadyCompleted: boolean }> {
   const ref = barrierRef(db, uid);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    if (snap.exists) return { created: false };
-    tx.create(ref, {
-      schemaVersion: BARRIER_SCHEMA_VERSION,
-      state: "deleting",
-      startedAt: FieldValue.serverTimestamp(),
+    if (!snap.exists) {
+      tx.create(ref, {
+        schemaVersion: BARRIER_SCHEMA_VERSION,
+        state: "deleting" satisfies BarrierState,
+        startedAt: FieldValue.serverTimestamp(),
+      });
+      return { created: true, alreadyCompleted: false };
+    }
+
+    const data = snap.data()!;
+    if (data["state"] === "deleted") {
+      return { created: false, alreadyCompleted: true };
+    }
+
+    // MİGRASYON: 3. Paket biçimindeki `deleting + expiresAt` kaydından TTL
+    // alanını kaldır. `startedAt` KORUNUR.
+    if (data["expiresAt"] !== undefined) {
+      tx.update(ref, { expiresAt: FieldValue.delete() });
+    }
+    return { created: false, alreadyCompleted: false };
+  });
+}
+
+/**
+ * TERMİNAL GEÇİŞ — `deleting` → `deleted`.
+ *
+ * YALNIZ veri temizliği doğrulandıktan VE Auth kullanıcısı gerçekten
+ * silindikten sonra çağrılır. TTL saati burada başlar.
+ *
+ * İdempotenttir: zaten `deleted` ise `completedAt`/`expiresAt` İLERİ
+ * TAŞINMAZ. Bariyer hiçbir zaman `deleting`'e geri döndürülmez.
+ */
+export async function completeDeletionBarrier(
+  db: Firestore,
+  uid: string,
+  nowMs: number,
+): Promise<void> {
+  const ref = barrierRef(db, uid);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return;
+    if (snap.data()!["state"] === "deleted") return;
+    tx.update(ref, {
+      state: "deleted" satisfies BarrierState,
+      completedAt: Timestamp.fromMillis(nowMs),
       expiresAt: Timestamp.fromMillis(nowMs + BARRIER_TTL_MS),
     });
-    return { created: true };
   });
 }
 

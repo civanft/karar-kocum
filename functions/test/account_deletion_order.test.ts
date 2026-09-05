@@ -34,7 +34,7 @@ function makePorts(overrides: Partial<AccountDeletionPorts> = {}) {
     }),
     drainOpenReservations: vi.fn(async () => {
       calls.push("drain");
-      return { open: 0 };
+      return { open: 0, exhausted: false };
     }),
     recursiveDeleteUser: vi.fn(async () => {
       calls.push("recursiveDelete");
@@ -45,6 +45,9 @@ function makePorts(overrides: Partial<AccountDeletionPorts> = {}) {
     userDataRemains: vi.fn(async () => {
       calls.push("verify");
       return false;
+    }),
+    completeBarrier: vi.fn(async () => {
+      calls.push("completeBarrier");
     }),
     deleteAuthUser: vi.fn(async () => {
       calls.push("deleteAuth");
@@ -72,6 +75,7 @@ describe("silme sırası", () => {
       `deleteDoc:rateLimits/${UID}:reward`,
       "verify",
       "deleteAuth",
+      "completeBarrier",
     ]);
   });
 
@@ -93,7 +97,7 @@ describe("silme sırası", () => {
 
   it("drain TAMAMLANMADAN recursive delete YAPILMAZ", async () => {
     const { ports } = makePorts({
-      drainOpenReservations: vi.fn(async () => ({ open: 1 })), // hiç bitmiyor
+      drainOpenReservations: vi.fn(async () => ({ open: 1, exhausted: false })), // hiç bitmiyor
     });
     await expect(
       deleteAccountCascade(UID, ports, testClock()),
@@ -106,7 +110,7 @@ describe("silme sırası", () => {
   it("drain bounded'dır: sonsuz beklemez", async () => {
     const clock = testClock();
     const { ports } = makePorts({
-      drainOpenReservations: vi.fn(async () => ({ open: 1 })),
+      drainOpenReservations: vi.fn(async () => ({ open: 1, exhausted: false })),
     });
     await expect(
       deleteAccountCascade(UID, ports, clock),
@@ -117,11 +121,11 @@ describe("silme sırası", () => {
   it("drain önce açık, sonra kapanırsa akış DEVAM eder", async () => {
     let n = 0;
     const { ports } = makePorts({
-      drainOpenReservations: vi.fn(async () => ({ open: n++ < 2 ? 1 : 0 })),
+      drainOpenReservations: vi.fn(async () => ({ open: n++ < 2 ? 1 : 0, exhausted: false })),
     });
     await expect(
       deleteAccountCascade(UID, ports, testClock()),
-    ).resolves.toEqual({ deleted: true });
+    ).resolves.toMatchObject({ deleted: true });
     expect(ports.deleteAuthUser).toHaveBeenCalledTimes(1);
   });
 
@@ -155,7 +159,7 @@ describe("failure injection ve retry", () => {
             fail = false;
             throw new Error("geçici hata");
           }
-          if (key === "drainOpenReservations") return { open: 0 };
+          if (key === "drainOpenReservations") return { open: 0, exhausted: false };
           if (key === "userDataRemains") return false;
           return undefined;
         }),
@@ -167,7 +171,7 @@ describe("failure injection ve retry", () => {
       // Retry: aynı akış, bu kez başarılı.
       await expect(
         deleteAccountCascade(UID, ports, testClock()),
-      ).resolves.toEqual({ deleted: true });
+      ).resolves.toMatchObject({ deleted: true });
     },
   );
 
@@ -219,7 +223,9 @@ describe("bariyer idempotency'si", () => {
   it("başarı yolunda bariyer SİLİNMEZ (TTL'ye bırakılır)", async () => {
     const { ports, calls } = makePorts();
     await deleteAccountCascade(UID, ports, testClock());
+    // Bariyer SİLİNMEZ; yalnız TERMİNAL duruma geçirilir.
     expect(calls).not.toContain("deleteBarrier");
+    expect(calls).toContain("completeBarrier");
     expect(calls.filter((c) => c.startsWith("deleteDoc:"))).toEqual([
       `deleteDoc:rateLimits/${UID}`,
       `deleteDoc:rateLimits/${UID}:reward`,
