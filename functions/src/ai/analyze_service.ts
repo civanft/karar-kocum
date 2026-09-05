@@ -30,11 +30,9 @@ import {
   mayCallProvider,
 } from "./analysis_journal.js";
 import { contentFingerprint } from "./analysis_fingerprint.js";
-import type { CostCircuitBreaker } from "./cost_control.js";
 import { computeCostUsd } from "./cost_control.js";
-import type { DailyAnalysisLimiter } from "./daily_limit.js";
 import type { AiGateway, TokenUsage } from "./openai_gateway.js";
-import type { DailyTokenGuard } from "./token_counter.js";
+import { estimateUsage, type UsageEstimate } from "./usage_estimate.js";
 import { buildUserMessage, PROMPT_VERSION, SYSTEM_PROMPT } from "./prompt.js";
 import {
   analyzeRequestSchema,
@@ -68,24 +66,44 @@ export interface JournalRecord {
   failureCode?: string;
 }
 
+/**
+ * REZERVASYON SONUCU (İş Paketi 2B).
+ *
+ * `rejected`, kabul kontrolünün transaction İÇİNDE reddettiği durumdur:
+ * hiçbir sayaç artmamıştır, journal oluşturulmamıştır. Bu yüzden aynı
+ * requestId hâlâ temizdir — yönergeyi hata kodu belirler.
+ */
+export type ReserveOutcome =
+  | { status: "created"; record: JournalRecord }
+  | { status: "existing"; record: JournalRecord }
+  | { status: "rejected"; error: AppError };
+
 export interface AnalysisPorts {
   /** Kararı SUNUCUDAN oku — istemci payload'ına güven yok. */
   readDecisionContent(decisionId: string): Promise<unknown | null>;
-  peekCredits(): Promise<CreditsSnapshot>;
 
   /** requestId ile journal kaydını oku (yoksa null). */
   readJournal(requestId: string): Promise<JournalRecord | null>;
 
   /**
-   * ATOMİK REZERVASYON: journal(reserved) kaydını OLUŞTUR. Kayıt zaten
-   * varsa mevcut kaydı döndürür (çift oluşturma imkânsız) — paralel
-   * duplicate çağrılarda yalnız BİRİ sağlayıcıyı çağırabilir.
+   * ATOMİK KABUL + REZERVASYON — TEK transaction'da:
+   *  - journal(reserved) create-if-absent (idempotency kapısı)
+   *  - kullanıcı rate-limit hakkı
+   *  - kredi uygunluğu ve kredi rezervasyonu
+   *  - günlük analiz slotu
+   *  - konservatif token rezervasyonu
+   *  - konservatif USD rezervasyonu
+   *
+   * Kayıt zaten varsa `existing` döner ve HİÇBİR sayaç artmaz: aynı
+   * requestId ile tekrarlanan çağrı rezervasyonları İKİNCİ kez tüketemez.
+   * Kabul kontrolü reddederse transaction iptal olur; hiçbir yazım kalmaz.
    */
   reserve(params: {
     requestId: string;
     decisionId: string;
     contentFingerprint: string;
-  }): Promise<{ created: boolean; record: JournalRecord }>;
+    estimate: UsageEstimate;
+  }): Promise<ReserveOutcome>;
 
   /** reserved → provider_call_started (yalnız bu geçiş kazanır). */
   markProviderCallStarted(requestId: string): Promise<boolean>;
@@ -97,11 +115,21 @@ export interface AnalysisPorts {
     usage: TokenUsage;
   }): Promise<void>;
 
-  /** Terminal/uncertain durum işaretle; rezervasyonlar serbest bırakılır. */
-  markOutcome(params: {
+  /**
+   * TERMİNAL BAŞARISIZLIK — TEK transaction'da journal durumunu yazar ve
+   * rezervasyonu kapatır.
+   *
+   * `billed: true` ise sağlayıcıya çağrı YAPILMIŞTIR ve büyük olasılıkla
+   * ücretlendirilmişizdir: token/USD rezervasyonu serbest BIRAKILMAZ,
+   * tahmin değeriyle GERÇEK sayaca dönüştürülür. Kredi rezervasyonu her
+   * durumda serbest bırakılır — kullanıcı üretilemeyen analiz için ödemez.
+   */
+  settleFailure(params: {
     requestId: string;
     state: JournalState;
     failureCode?: string;
+    estimate: UsageEstimate;
+    billed: boolean;
   }): Promise<void>;
 
   /**
@@ -109,7 +137,13 @@ export interface AnalysisPorts {
    *  - journal provider_succeeded → completed (yalnız bir kez)
    *  - karar fingerprint'i DEĞİŞMEDİYSE aiAnalyses/latest + status
    *  - kredi bir kez düşer (remaining > 0 şartıyla → negatif imkânsız)
-   * Fingerprint değiştiyse `superseded` döner; kredi DÜŞMEZ.
+   *  - token ve USD rezervasyonu kapatılıp GERÇEK tüketim yazılır
+   * Fingerprint değiştiyse `superseded` döner; kredi DÜŞMEZ ama gerçek
+   * sağlayıcı maliyeti yine bir kez kaydedilir.
+   *
+   * `completed` journal'ı ancak bu muhasebenin TAMAMI başarılıysa yazılır:
+   * transaction çökerse journal `provider_succeeded` kalır ve aynı
+   * requestId ile retry eksik muhasebeyi tamamlar.
    */
   finalize(params: {
     requestId: string;
@@ -117,21 +151,22 @@ export interface AnalysisPorts {
     expectedFingerprint: string;
     analysis: StoredAnalysis;
     initialCredits: number;
+    usage: TokenUsage;
+    costUsd: number;
+    estimate: UsageEstimate;
   }): Promise<{ outcome: "completed" | "superseded"; analysisId: string }>;
 }
 
-export interface RateGuard {
-  check(uid: string): Promise<void>;
-}
-
 export class AnalyzeService {
+  /**
+   * Kabul kontrolü (rate/kredi/günlük slot/token/USD) ARTIK ayrı guard
+   * nesnelerinde değil, [AnalysisPorts.reserve] transaction'ının içindedir.
+   * Nedeni: ayrı kontroller yalnız OKUMA yapıyordu; eşzamanlı istekler
+   * hepsini aynı anda geçip limiti delebiliyordu.
+   */
   constructor(
     private readonly ports: AnalysisPorts,
     private readonly gateway: AiGateway,
-    private readonly rateGuard: RateGuard,
-    private readonly breaker: CostCircuitBreaker,
-    private readonly dailyLimiter: DailyAnalysisLimiter,
-    private readonly tokenGuard: DailyTokenGuard,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -177,110 +212,58 @@ export class AnalyzeService {
       promptVersion: PROMPT_VERSION,
     });
 
+    // Konservatif kullanım tahmini — rezervasyonun temeli (usage_estimate.ts).
+    const estimate = estimateUsage({
+      promptChars: userMessage.length + SYSTEM_PROMPT.length,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      model: OPENAI_MODEL,
+    });
+
     // [3] JOURNAL — aynı requestId daha önce görülmüş mü?
     const existing = await this.ports.readJournal(requestId);
     if (existing) {
       this.assertSameRequest(existing, decisionId, fingerprint);
-
-      // Zaten uygulanmış: sağlayıcı ÇAĞRILMAZ, sayaçlar ARTMAZ.
-      if (isAlreadyApplied(existing.state) && existing.analysis) {
-        return { analysisId: LATEST_ANALYSIS_ID, analysis: existing.analysis };
-      }
-      // Sağlayıcı sonucu var ama finalize edilmemiş → SAĞLAYICISIZ finalize.
-      if (canFinalizeWithoutProvider(existing.state) && existing.analysis) {
-        return this.finalizeStored(ctx, {
-          requestId,
-          decisionId,
-          fingerprint,
-          analysis: existing.analysis,
-          usage: existing.usage,
-          startedMs,
-        });
-      }
-      if (existing.state === JournalState.superseded) {
-        throw new AppError(
-          "invalid-argument",
-          "Karar bu analiz üretilirken değişti — lütfen yeniden analiz et.",
-        );
-      }
-      if (existing.state === JournalState.terminalFailed) {
-        throw new AppError(
-          "internal",
-          "Analiz üretilemedi, lütfen tekrar dene.",
-        );
-      }
-      if (!mayCallProvider(existing.state)) {
-        // provider_call_started / uncertain: sonuç BİLİNMİYOR.
-        throw new AppError(
-          "ai-uncertain",
-          "Analiz sonucu doğrulanamadı, birazdan tekrar dene.",
-          { retryable: true },
-        );
-      }
+      const resolved = await this.resolveExisting(ctx, existing, {
+        requestId,
+        decisionId,
+        fingerprint,
+        estimate,
+        startedMs,
+      });
+      if (resolved) return resolved;
     }
 
-    // [4] REZERVASYON — journal + kotalar. Paralel duplicate'te yalnız biri
-    // `created` alır; diğeri mevcut kaydı görüp sağlayıcıyı ÇAĞIRMAZ.
+    // [4] ATOMİK KABUL + REZERVASYON — tek transaction.
     const reserved = await this.ports.reserve({
       requestId,
       decisionId,
       contentFingerprint: fingerprint,
+      estimate,
     });
-    if (!reserved.created) {
+    if (reserved.status === "rejected") {
+      // Transaction iptal oldu: hiçbir sayaç artmadı, journal oluşmadı.
+      throw reserved.error;
+    }
+    if (reserved.status === "existing") {
       this.assertSameRequest(reserved.record, decisionId, fingerprint);
-      if (isAlreadyApplied(reserved.record.state) && reserved.record.analysis) {
-        return {
-          analysisId: LATEST_ANALYSIS_ID,
-          analysis: reserved.record.analysis,
-        };
-      }
-      if (
-        canFinalizeWithoutProvider(reserved.record.state) &&
-        reserved.record.analysis
-      ) {
-        return this.finalizeStored(ctx, {
-          requestId,
-          decisionId,
-          fingerprint,
-          analysis: reserved.record.analysis,
-          usage: reserved.record.usage,
-          startedMs,
-        });
-      }
-      throw new AppError(
-        "ai-uncertain",
-        "Analiz sonucu doğrulanamadı, birazdan tekrar dene.",
-        { retryable: true },
-      );
+      const resolved = await this.resolveExisting(ctx, reserved.record, {
+        requestId,
+        decisionId,
+        fingerprint,
+        estimate,
+        startedMs,
+      });
+      if (resolved) return resolved;
+      // `reserved` durumundaki kayıt sağlayıcıya ilerleyebilir: yarışın
+      // gerçek hakemi markProviderCallStarted'dır.
     }
 
-    // [5] Kotalar — rezervasyon SONRASI, sağlayıcıdan ÖNCE.
-    try {
-      await this.rateGuard.check(ctx.uid);
-      const credits = await this.ports.peekCredits();
-      if (credits.plan === "free" && credits.remaining <= 0) {
-        throw new AppError("quota-exceeded", "Ücretsiz analiz hakkın bitti.", {
-          remaining: 0,
-          initial: INITIAL_FREE_CREDITS,
-        });
-      }
-      await this.breaker.ensureAllowed(credits.plan);
-      await this.tokenGuard.ensureUnderLimit();
-      await this.dailyLimiter.ensureSlot();
-    } catch (error) {
-      await this.safeMark(requestId, JournalState.terminalFailed);
-      throw error;
-    }
-
-    // [6] Sağlayıcı çağrısı — geçişi ÖNCE dayanıklı olarak işaretle.
+    // [5] Sağlayıcı çağrısı — geçişi ÖNCE dayanıklı olarak işaretle.
     const started = await this.ports.markProviderCallStarted(requestId);
     if (!started) {
-      // Yarışı başka bir çağrı kazandı: sağlayıcıyı ÇAĞIRMA.
-      throw new AppError(
-        "ai-uncertain",
-        "Analiz sonucu doğrulanamadı, birazdan tekrar dene.",
-        { retryable: true },
-      );
+      // Yarışı başka bir çağrı kazandı: sağlayıcıyı ÇAĞIRMA. Rezervasyon
+      // kazananın elindedir; burada serbest BIRAKILMAZ.
+      throw this.uncertain();
     }
 
     let completion;
@@ -294,12 +277,15 @@ export class AnalyzeService {
     } catch (error) {
       const uncertain =
         error instanceof AppError && error.code === "ai-uncertain";
-      await this.safeMark(
-        requestId,
-        uncertain ? JournalState.uncertain : JournalState.terminalFailed,
-        error instanceof AppError ? error.code : undefined,
-      );
-      throw error;
+      // Sağlayıcıya çağrı YAPILDI: ücretlendirilmiş olabiliriz, bu yüzden
+      // token/USD rezervasyonu tahmin değeriyle GERÇEK sayaca yazılır.
+      await this.settle(requestId, {
+        state: uncertain ? JournalState.uncertain : JournalState.terminalFailed,
+        failureCode: error instanceof AppError ? error.code : undefined,
+        estimate,
+        billed: true,
+      });
+      throw this.terminalProviderError(error);
     }
 
     const analysis: StoredAnalysis = {
@@ -308,7 +294,7 @@ export class AnalyzeService {
       promptVersion: PROMPT_VERSION,
     };
 
-    // [7] Sonucu DAYANIKLI yaz: buradan sonra retry sağlayıcıyı ÇAĞIRMAZ.
+    // [6] Sonucu DAYANIKLI yaz: buradan sonra retry sağlayıcıyı ÇAĞIRMAZ.
     await this.ports.recordProviderSuccess({
       requestId,
       analysis,
@@ -321,8 +307,98 @@ export class AnalyzeService {
       fingerprint,
       analysis,
       usage: completion.usage,
+      estimate,
       startedMs,
     });
+  }
+
+  /**
+   * Var olan journal kaydını çözer. Sonuç döndürürse akış BİTMİŞTİR;
+   * `null` dönerse kayıt sağlayıcıya ilerlemeye uygundur.
+   */
+  private async resolveExisting(
+    ctx: RequestContext,
+    record: JournalRecord,
+    params: {
+      requestId: string;
+      decisionId: string;
+      fingerprint: string;
+      estimate: UsageEstimate;
+      startedMs: number;
+    },
+  ): Promise<{ analysisId: string; analysis: StoredAnalysis } | null> {
+    // Zaten uygulanmış: sağlayıcı ÇAĞRILMAZ, muhasebe TEKRAR uygulanmaz.
+    if (isAlreadyApplied(record.state) && record.analysis) {
+      return { analysisId: LATEST_ANALYSIS_ID, analysis: record.analysis };
+    }
+    // Sağlayıcı sonucu var ama finalize edilmemiş → SAĞLAYICISIZ finalize.
+    // Eksik kalan muhasebe burada TAMAMLANIR.
+    if (canFinalizeWithoutProvider(record.state) && record.analysis) {
+      return this.finalizeStored(ctx, {
+        requestId: params.requestId,
+        decisionId: params.decisionId,
+        fingerprint: params.fingerprint,
+        analysis: record.analysis,
+        usage: record.usage,
+        estimate: params.estimate,
+        startedMs: params.startedMs,
+      });
+    }
+    if (record.state === JournalState.superseded) {
+      throw new AppError(
+        "superseded",
+        "Karar bu analiz üretilirken değişti — yeni bir analiz başlatabilirsin.",
+      );
+    }
+    if (record.state === JournalState.terminalFailed) {
+      // Bu requestId TÜKENDİ: aynı anahtarla tekrar denemek aynı sonucu verir.
+      throw new AppError(
+        "ai-failed",
+        "Analiz üretilemedi — yeni bir analiz başlatabilirsin.",
+      );
+    }
+    if (!mayCallProvider(record.state)) {
+      // provider_call_started / uncertain: sonuç BİLİNMİYOR.
+      throw this.uncertain();
+    }
+    return null;
+  }
+
+  /**
+   * Sonucu bilinmeyen pencere. AYNI requestId ile OTOMATİK tekrar YAPILMAZ:
+   * kayıt sağlayıcıya ilerlemişse aynı anahtar sonsuza kadar aynı hatayı
+   * verirdi. İstemciye "yeni istek" yönergesi gider.
+   */
+  private uncertain(): AppError {
+    return new AppError(
+      "ai-uncertain",
+      "Analiz sonucu doğrulanamadı — yeni bir analiz başlatabilirsin.",
+    );
+  }
+
+  /** Sağlayıcı hatasını istemci sözleşmesine çevirir. */
+  private terminalProviderError(error: unknown): unknown {
+    if (error instanceof AppError && error.code === "ai-uncertain") {
+      return this.uncertain();
+    }
+    return error;
+  }
+
+  /** İşaretleme başarısızlığı kullanıcıya dönen hatayı DEĞİŞTİRMEZ. */
+  private async settle(
+    requestId: string,
+    params: {
+      state: JournalState;
+      failureCode?: string;
+      estimate: UsageEstimate;
+      billed: boolean;
+    },
+  ): Promise<void> {
+    try {
+      await this.ports.settleFailure({ requestId, ...params });
+    } catch {
+      // Yutulur: kullanıcı sağlayıcı hatasını görmeli, işaretleme hatasını değil.
+    }
   }
 
   /** Aynı requestId farklı karar/içerikle kullanılamaz. */
@@ -342,21 +418,13 @@ export class AnalyzeService {
     }
   }
 
-  private async safeMark(
-    requestId: string,
-    state: JournalState,
-    failureCode?: string,
-  ): Promise<void> {
-    try {
-      await this.ports.markOutcome({ requestId, state, failureCode });
-    } catch {
-      // İşaretleme başarısızlığı kullanıcıya dönen hatayı DEĞİŞTİRMEZ.
-    }
-  }
-
   /**
-   * Finalize: karar + kredi + gerçek kullanım muhasebesi. Sağlayıcı
-   * ÇAĞRILMAZ. Karar değiştiyse `superseded` → kredi YANMAZ.
+   * Finalize — karar + kredi + GERÇEK kullanım muhasebesi TEK transaction'da
+   * (ports.finalize). Sağlayıcı ÇAĞRILMAZ.
+   *
+   * Muhasebe artık burada AYRI bir side effect DEĞİLDİR: `completed` journal
+   * ancak kredi, spend ve token yazımının tamamı başarılıysa oluşur. Bu
+   * fonksiyon transaction'dan sonra yalnız LOG üretir.
    */
   private async finalizeStored(
     ctx: RequestContext,
@@ -366,49 +434,68 @@ export class AnalyzeService {
       fingerprint: string;
       analysis: StoredAnalysis;
       usage?: TokenUsage;
+      estimate: UsageEstimate;
       startedMs: number;
     },
   ): Promise<{ analysisId: string; analysis: StoredAnalysis }> {
+    // Kayıp usage yalnız çok eski/eksik journal kayıtlarında olabilir;
+    // muhasebeyi 0 saymak yerine TAHMİNİ kullanmak ihtiyatlı taraftır.
+    const usage: TokenUsage = params.usage ?? {
+      inputTokens: params.estimate.tokens,
+      outputTokens: 0,
+    };
+    const costUsd = params.usage
+      ? computeCostUsd(OPENAI_MODEL, params.usage)
+      : params.estimate.usd;
+
     const result = await this.ports.finalize({
       requestId: params.requestId,
       decisionId: params.decisionId,
       expectedFingerprint: params.fingerprint,
       analysis: params.analysis,
       initialCredits: INITIAL_FREE_CREDITS,
+      usage,
+      costUsd,
+      estimate: params.estimate,
+    });
+
+    this.logOutcome(ctx, {
+      superseded: result.outcome === "superseded",
+      usage,
+      costUsd,
+      startedMs: params.startedMs,
     });
 
     if (result.outcome === "superseded") {
-      // GERÇEK sağlayıcı maliyeti yine de bir kez muhasebeleşir; kullanıcı
-      // kredisi düşmez (stale sonuç kullanıcının hakkını yakmaz).
-      await this.recordUsageOnce(ctx, params.usage, params.startedMs, true);
       throw new AppError(
-        "invalid-argument",
-        "Karar bu analiz üretilirken değişti — lütfen yeniden analiz et.",
+        "superseded",
+        "Karar bu analiz üretilirken değişti — yeni bir analiz başlatabilirsin.",
       );
     }
-
-    await this.recordUsageOnce(ctx, params.usage, params.startedMs, false);
     return { analysisId: result.analysisId, analysis: params.analysis };
   }
 
-  /** Gerçek kullanım/maliyet — finalize'ın kazandığı çağrıda BİR kez. */
-  private async recordUsageOnce(
+  private logOutcome(
     ctx: RequestContext,
-    usage: TokenUsage | undefined,
-    startedMs: number,
-    superseded: boolean,
-  ): Promise<void> {
-    if (!usage) return;
-    const costUsd = computeCostUsd(OPENAI_MODEL, usage);
-    await this.breaker.record(costUsd);
-    await this.tokenGuard.record(usage.inputTokens, usage.outputTokens);
-    log("info", superseded ? "analysis_superseded" : "analysis_completed", ctx, {
-      model: OPENAI_MODEL,
-      promptVersion: PROMPT_VERSION,
-      tokensIn: usage.inputTokens,
-      tokensOut: usage.outputTokens,
-      costUsd,
-      durationMs: this.now() - startedMs,
-    });
+    params: {
+      superseded: boolean;
+      usage: TokenUsage;
+      costUsd: number;
+      startedMs: number;
+    },
+  ): void {
+    log(
+      "info",
+      params.superseded ? "analysis_superseded" : "analysis_completed",
+      ctx,
+      {
+        model: OPENAI_MODEL,
+        promptVersion: PROMPT_VERSION,
+        tokensIn: params.usage.inputTokens,
+        tokensOut: params.usage.outputTokens,
+        costUsd: params.costUsd,
+        durationMs: this.now() - params.startedMs,
+      },
+    );
   }
 }

@@ -2,6 +2,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 
 import '../domain/entities/ai_analysis.dart';
 import '../domain/repositories/ai_analysis_client.dart';
+import '../domain/retry_directive.dart';
 
 /// `analyzeDecision` callable'ını çağırır ve Firebase hatalarını
 /// ürün-anlamlı [AiAnalysisFailure]'a eşler (Firebase tipleri burada kalır).
@@ -29,9 +30,12 @@ class FirebaseAiAnalysisClient implements AiAnalysisClient {
       );
       final analysis = result.data['analysis'];
       if (analysis is! Map) {
+        // Sunucu 200 döndü ama gövde beklenen biçimde değil: iş büyük
+        // olasılıkla TAMAMLANDI, aynı anahtar saklanan sonucu getirir.
         throw const AiAnalysisFailure(
           kind: AnalysisFailureKind.retryable,
           message: 'Analiz alınamadı, lütfen tekrar dene.',
+          retry: RetryDirective.sameRequest,
         );
       }
       return AiAnalysis.fromMap(analysis);
@@ -41,47 +45,39 @@ class FirebaseAiAnalysisClient implements AiAnalysisClient {
   }
 
   /// Backend hata taksonomisi → AiAnalysisFailure.
-  /// details.appCode, e.code'dan daha kesindir (quota/rate/daily hepsi
-  /// resource-exhausted döner ama appCode ayırır).
+  ///
+  /// `details.appCode`, `e.code`'dan daha kesindir (quota/rate/daily hepsi
+  /// resource-exhausted döner ama appCode ayırır). `details.retry` ise
+  /// sunucunun AÇIK yönergesidir: journal durumunu yalnız sunucu bilir.
   AiAnalysisFailure _mapError(FirebaseFunctionsException e) {
     final details =
         e.details is Map ? e.details as Map : const <Object?, Object?>{};
     final appCode = details['appCode'] as String? ?? e.code;
+    final retry = retryDirectiveFor(
+      appCode,
+      serverDirective: details['retry'] as String?,
+    );
     // Backend mesajı kullanıcı-dostu ve TR (errors.ts); güvenle gösterilir.
     final message = e.message?.isNotEmpty == true
         ? e.message!
         : 'Analiz şu an yapılamadı, birazdan tekrar dene.';
 
-    switch (appCode) {
-      case 'quota-exceeded':
-        return AiAnalysisFailure(
-          kind: AnalysisFailureKind.quotaExceeded,
-          message: message,
-          totalCredits: (details['initial'] as num?)?.toInt() ?? 5,
-        );
-      case 'moderated':
-      case 'invalid-argument':
-      case 'daily-limit':
-        // Bugün tekrar denemek işe yaramaz.
-        return AiAnalysisFailure(
-          kind: AnalysisFailureKind.nonRetryable,
-          message: message,
-        );
-      case 'rate-limited':
-      case 'ai-unavailable':
-      // Sağlayıcı sonucu belirsiz: AYNI requestId ile tekrar denemek
-      // güvenlidir — sunucu sağlayıcıyı yeniden ÇAĞIRMAZ.
-      case 'ai-uncertain':
-      // Tüketilmiş App Check token'ı: istemci yeni bir limited-use token
-      // alıp AYNI requestId ile tekrar dener.
-      case 'app-check-replay':
-      case 'unauthenticated':
-      case 'internal':
-      default:
-        return AiAnalysisFailure(
-          kind: AnalysisFailureKind.retryable,
-          message: message,
-        );
+    if (appCode == 'quota-exceeded') {
+      return AiAnalysisFailure(
+        kind: AnalysisFailureKind.quotaExceeded,
+        message: message,
+        retry: retry,
+        totalCredits: (details['initial'] as num?)?.toInt() ?? 5,
+      );
     }
+
+    return AiAnalysisFailure(
+      // Retry SUNULUP sunulmayacağı artık tek kaynaktan gelir: yönerge.
+      kind: retry == RetryDirective.none
+          ? AnalysisFailureKind.nonRetryable
+          : AnalysisFailureKind.retryable,
+      message: message,
+      retry: retry,
+    );
   }
 }

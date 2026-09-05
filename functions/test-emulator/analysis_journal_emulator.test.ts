@@ -24,6 +24,8 @@ import { getFirestore } from "firebase-admin/firestore";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { contentFingerprint } from "../src/ai/analysis_fingerprint";
+import { computeCostUsd } from "../src/ai/cost_control";
+import { estimateUsage } from "../src/ai/usage_estimate";
 import { JournalState } from "../src/ai/analysis_journal";
 import { FirestoreAnalysisPorts } from "../src/ai/firestore_ports";
 import { LATEST_ANALYSIS_ID, type StoredAnalysis } from "../src/ai/analyze_service";
@@ -66,6 +68,16 @@ const ANALYSIS: StoredAnalysis = {
   promptVersion: "v1",
 };
 
+/** Rezervasyon tahmini — üretimdeki formülün aynısı. */
+const ESTIMATE = estimateUsage({
+  promptChars: 2000,
+  maxOutputTokens: 800,
+  model: ANALYSIS.model,
+});
+
+const USAGE = { inputTokens: 1500, outputTokens: 600 };
+const COST_USD = computeCostUsd(ANALYSIS.model, USAGE);
+
 const FINGERPRINT = contentFingerprint({
   content: DECISION_CONTENT as never,
   model: ANALYSIS.model,
@@ -94,6 +106,16 @@ const journalRef = () =>
 
 async function wipe(): Promise<void> {
   await db().recursiveDelete(userRef());
+  for (const id of [
+    "dailySpend",
+    "dailyTokens",
+    "dailyAnalysisCount",
+    "dailySpendReserved",
+    "dailyTokensReserved",
+  ]) {
+    await db().doc(`ops/${id}`).delete();
+  }
+  await db().doc(`rateLimits/${UID}`).delete();
 }
 
 /** Kredi düşümünün gözlemlenebilmesi için havuz AÇIKÇA yazılır. */
@@ -108,6 +130,7 @@ async function seedProviderSucceeded(): Promise<void> {
     requestId: REQUEST_ID,
     decisionId: DECISION_ID,
     contentFingerprint: FINGERPRINT,
+    estimate: ESTIMATE,
   });
   // Üretim sırası: reserved → provider_call_started → provider_succeeded.
   // Ara adım ATLANAMAZ; journal geçiş kapısı buna izin vermez.
@@ -135,11 +158,12 @@ describe("gerçek transaction — reserve yarışı", () => {
           requestId: REQUEST_ID,
           decisionId: DECISION_ID,
           contentFingerprint: FINGERPRINT,
+          estimate: ESTIMATE,
         }),
       ),
     );
 
-    expect(results.filter((r) => r.created)).toHaveLength(1);
+    expect(results.filter((r) => r.status === "created")).toHaveLength(1);
     const snap = await journalRef().get();
     expect(snap.exists).toBe(true);
     expect(snap.data()!["state"]).toBe(JournalState.reserved);
@@ -153,6 +177,7 @@ describe("gerçek transaction — provider çağrısı yarışı", () => {
       requestId: REQUEST_ID,
       decisionId: DECISION_ID,
       contentFingerprint: FINGERPRINT,
+      estimate: ESTIMATE,
     });
 
     const results = await Promise.all(
@@ -177,6 +202,9 @@ describe("gerçek transaction — finalize yarışı", () => {
           expectedFingerprint: FINGERPRINT,
           analysis: ANALYSIS,
           initialCredits: 5,
+          usage: USAGE,
+          costUsd: COST_USD,
+          estimate: ESTIMATE,
         }),
       ),
     );
@@ -206,6 +234,9 @@ describe("gerçek transaction — finalize yarışı", () => {
       expectedFingerprint: FINGERPRINT,
       analysis: ANALYSIS,
       initialCredits: 5,
+      usage: USAGE,
+      costUsd: COST_USD,
+      estimate: ESTIMATE,
     });
 
     const again = await ports().finalize({
@@ -214,6 +245,9 @@ describe("gerçek transaction — finalize yarışı", () => {
       expectedFingerprint: FINGERPRINT,
       analysis: ANALYSIS,
       initialCredits: 5,
+      usage: USAGE,
+      costUsd: COST_USD,
+      estimate: ESTIMATE,
     });
 
     expect(again.outcome).toBe("completed");
@@ -231,6 +265,9 @@ describe("gerçek transaction — finalize yarışı", () => {
       expectedFingerprint: FINGERPRINT,
       analysis: ANALYSIS,
       initialCredits: 5,
+      usage: USAGE,
+      costUsd: COST_USD,
+      estimate: ESTIMATE,
     });
 
     expect(result.outcome).toBe("superseded");

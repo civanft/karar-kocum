@@ -1,5 +1,6 @@
 import '../domain/entities/ai_analysis.dart';
 import '../domain/repositories/ai_analysis_client.dart';
+import '../domain/retry_directive.dart';
 
 /// Release'de servise bağlanılamadığında kullanılan istemci (PR-RELEASE-1).
 ///
@@ -17,9 +18,11 @@ class UnavailableAiAnalysisClient implements AiAnalysisClient {
     required String decisionId,
     required String requestId,
   }) async {
+    // Firebase hiç kurulamadı: istek sunucuya ULAŞMADI, anahtar temiz.
     throw const AiAnalysisFailure(
       kind: AnalysisFailureKind.retryable,
       message: message,
+      retry: RetryDirective.sameRequest,
     );
   }
 }

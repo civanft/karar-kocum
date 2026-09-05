@@ -55,44 +55,82 @@ export class RateLimiter {
    */
   async check(key: string): Promise<void> {
     const nowMs = this.now();
-    let rejectedRetryAfterSec: number | null = null;
+    let decision: RateLimitDecision | null = null;
 
     await this.store.update(key, (current) => {
-      const minute = roll(current?.minute, nowMs, MINUTE_MS);
-      const hour = roll(current?.hour, nowMs, HOUR_MS);
-      const day = roll(current?.day, nowMs, DAY_MS);
-
-      // Red durumunda hiçbir sayaç artmaz (state bozulmaz).
-      if (minute.count >= this.limits.perMinute) {
-        rejectedRetryAfterSec = remainingSec(minute, nowMs, MINUTE_MS);
-        return { minute, hour, day };
-      }
-      if (hour.count >= this.limits.perHour) {
-        rejectedRetryAfterSec = remainingSec(hour, nowMs, HOUR_MS);
-        return { minute, hour, day };
-      }
-      if (
-        this.limits.perDay != null &&
-        day.count >= this.limits.perDay
-      ) {
-        rejectedRetryAfterSec = remainingSec(day, nowMs, DAY_MS);
-        return { minute, hour, day };
-      }
-      return {
-        minute: { ...minute, count: minute.count + 1 },
-        hour: { ...hour, count: hour.count + 1 },
-        day: { ...day, count: day.count + 1 },
-      };
+      decision = evaluateRateLimit(current, nowMs, this.limits);
+      return decision.next;
     });
 
-    if (rejectedRetryAfterSec != null) {
+    if (decision != null && !(decision as RateLimitDecision).allowed) {
       throw new AppError(
         "rate-limited",
         "Çok sık istek — lütfen biraz bekle.",
-        { retryAfterSeconds: rejectedRetryAfterSec },
+        {
+          retryAfterSeconds: (decision as RateLimitDecision).retryAfterSeconds,
+        },
       );
     }
   }
+}
+
+export interface RateLimitDecision {
+  allowed: boolean;
+  /** Kabulde artırılmış, redde DEĞİŞMEMİŞ pencere durumu. */
+  next: RateLimitState;
+  /** Yalnız redde anlamlı. */
+  retryAfterSeconds: number;
+}
+
+/**
+ * Pencere değerlendirmesi — SAF fonksiyon.
+ *
+ * Hem [RateLimiter] hem de analiz rezervasyon transaction'ı bunu kullanır:
+ * rate hakkı, kredi/kota rezervasyonuyla AYNI transaction içinde tüketilsin
+ * diye mantık tek yerde tutulur (kopyalanmaz).
+ *
+ * Red durumunda hiçbir sayaç artmaz — state bozulmaz.
+ */
+export function evaluateRateLimit(
+  current: RateLimitState | null,
+  nowMs: number,
+  limits: RateLimits,
+): RateLimitDecision {
+  const minute = roll(current?.minute, nowMs, MINUTE_MS);
+  const hour = roll(current?.hour, nowMs, HOUR_MS);
+  const day = roll(current?.day, nowMs, DAY_MS);
+  const unchanged = { minute, hour, day };
+
+  if (minute.count >= limits.perMinute) {
+    return {
+      allowed: false,
+      next: unchanged,
+      retryAfterSeconds: remainingSec(minute, nowMs, MINUTE_MS),
+    };
+  }
+  if (hour.count >= limits.perHour) {
+    return {
+      allowed: false,
+      next: unchanged,
+      retryAfterSeconds: remainingSec(hour, nowMs, HOUR_MS),
+    };
+  }
+  if (limits.perDay != null && day.count >= limits.perDay) {
+    return {
+      allowed: false,
+      next: unchanged,
+      retryAfterSeconds: remainingSec(day, nowMs, DAY_MS),
+    };
+  }
+  return {
+    allowed: true,
+    next: {
+      minute: { ...minute, count: minute.count + 1 },
+      hour: { ...hour, count: hour.count + 1 },
+      day: { ...day, count: day.count + 1 },
+    },
+    retryAfterSeconds: 0,
+  };
 }
 
 function roll(

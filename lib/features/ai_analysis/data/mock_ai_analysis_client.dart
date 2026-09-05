@@ -1,5 +1,6 @@
 import '../domain/entities/ai_analysis.dart';
 import '../domain/repositories/ai_analysis_client.dart';
+import '../domain/retry_directive.dart';
 
 /// Yerel mod (Firebase yok) ve testler için sahte istemci.
 /// Gerçek callable deploy edilene dek uygulama yerel modda AI'ı bununla
@@ -27,14 +28,17 @@ class MockAiAnalysisClient implements AiAnalysisClient {
           kind: AnalysisFailureKind.retryable,
           message: 'Analiz şu an yapılamadı. İnternet bağlantını kontrol '
               'edip tekrar deneyebilirsin.',
+          retry: RetryDirective.sameRequest,
         ),
       MockAnalysisScenario.nonRetryable => throw const AiAnalysisFailure(
           kind: AnalysisFailureKind.nonRetryable,
           message: 'Bu içerik analiz edilemiyor.',
+          retry: RetryDirective.none,
         ),
       MockAnalysisScenario.quota => throw const AiAnalysisFailure(
           kind: AnalysisFailureKind.quotaExceeded,
           message: 'Ücretsiz analiz hakkın bitti.',
+          retry: RetryDirective.none,
           totalCredits: 5,
         ),
     };

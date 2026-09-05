@@ -14,6 +14,7 @@ import '../../data/unavailable_ai_analysis_client.dart';
 import '../../domain/analysis_request_id.dart';
 import '../../domain/entities/ai_analysis.dart';
 import '../../domain/repositories/ai_analysis_client.dart';
+import '../../domain/retry_directive.dart';
 
 /// Analiz durum makinesi — kartın 5 durumu (PR #6D-1, UI değişmedi).
 sealed class AnalysisState {
@@ -114,9 +115,10 @@ class AnalysisController
             ),
       );
     } on AiAnalysisFailure catch (f) {
-      // Terminal sonuçta anahtar temizlenir; BELİRSİZ/retryable hatada
-      // KORUNUR ki tekrar deneme aynı anahtarla gitsin.
-      if (f.kind != AnalysisFailureKind.retryable) {
+      // Bekleyen anahtarın kaderini SUNUCUNUN yönergesi belirler (2B).
+      // `sameRequest` DIŞINDAKİ her durumda anahtar temizlenir: aksi halde
+      // sunucuda tükenmiş bir requestId sonsuza kadar tekrar gönderilirdi.
+      if (f.retry != RetryDirective.sameRequest) {
         await clearPending();
       }
       state = switch (f.kind) {
@@ -128,7 +130,9 @@ class AnalysisController
           AnalysisError(message: f.message, retryable: false),
       };
     } catch (_) {
-      // Beklenmedik istisna: güvenli, yeniden denenebilir hata.
+      // Beklenmedik istisna: çağrının sunucuya ulaşıp ulaşmadığı BİLİNMİYOR.
+      // Bekleyen anahtar KORUNUR (sameRequest); iş tamamlanmışsa bir sonraki
+      // deneme saklanan sonucu getirir, hiç başlamamışsa baştan çalışır.
       state = const AnalysisError(
         message: 'Analiz şu an yapılamadı, birazdan tekrar dene.',
         retryable: true,

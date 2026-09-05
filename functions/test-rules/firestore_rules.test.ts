@@ -828,3 +828,50 @@ describe("analysisRequests journal (İş Paketi 2)", () => {
     await assertFails(db.doc(journalPath("u1")).get());
   });
 });
+
+/**
+ * İŞ PAKETİ 2B — rezervasyon durumu istemciye TAMAMEN kapalıdır.
+ *
+ * Bu belgeler kabul kontrolünün girdisidir: istemci yazabilseydi
+ * `credits` alanını negatife çekip kredi kontrolünü delebilirdi.
+ * Production rules DEĞİŞTİRİLMEDİ; default-deny ve `match /ops/{id}`
+ * bunu zaten sağlıyor — burada KANITLANIYOR.
+ */
+describe("rezervasyon durumu (İş Paketi 2B)", () => {
+  const userReservation = (uid: string) =>
+    `users/${uid}/analysisReservations/state`;
+
+  it("SAHİBİ kredi rezervasyonunu OKUYAMAZ", async () => {
+    const db = env.authenticatedContext("u1").firestore();
+    await assertFails(db.doc(userReservation("u1")).get());
+  });
+
+  it("SAHİBİ kredi rezervasyonunu YAZAMAZ (negatife çekme imkânsız)", async () => {
+    const db = env.authenticatedContext("u1").firestore();
+    await assertFails(db.doc(userReservation("u1")).set({ credits: -1000 }));
+    await assertFails(db.doc(userReservation("u1")).update({ credits: -1 }));
+  });
+
+  it("BAŞKA kullanıcı erişemez", async () => {
+    const db = env.authenticatedContext("u2").firestore();
+    await assertFails(db.doc(userReservation("u1")).get());
+    await assertFails(db.doc(userReservation("u1")).set({ credits: 0 }));
+  });
+
+  it("ops rezervasyon sayaçları istemciye kapalı", async () => {
+    const db = env.authenticatedContext("u1").firestore();
+    for (const id of ["dailySpendReserved", "dailyTokensReserved"]) {
+      await assertFails(db.doc(`ops/${id}`).get());
+      await assertFails(db.doc(`ops/${id}`).set({ "2026-01-01": -1 }));
+    }
+  });
+
+  it("mevcut ops sayaçlarının kapalılığı KORUNUYOR", async () => {
+    const db = env.authenticatedContext("u1").firestore();
+    for (const id of ["dailySpend", "dailyTokens", "dailyAnalysisCount"]) {
+      await assertFails(db.doc(`ops/${id}`).get());
+      await assertFails(db.doc(`ops/${id}`).set({ x: 1 }));
+    }
+    await assertFails(db.doc("rateLimits/u1").get());
+  });
+});

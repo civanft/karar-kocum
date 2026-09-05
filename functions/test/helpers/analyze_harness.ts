@@ -1,22 +1,25 @@
 /**
- * İş Paketi 2 test koşumu — journal'lı AnalyzeService için paylaşılan
- * sahteler. Gerçek Firestore implementasyonuyla AYNI sözleşmeyi taşır:
- * geçiş kapıları, create-if-absent rezervasyon, fingerprint doğrulaması.
+ * İş Paketi 2B test koşumu — AnalyzeService için paylaşılan sahteler.
+ *
+ * [HarnessPorts] üretim adaptörüyle AYNI sözleşmeyi taşır:
+ *  - kabul kontrolü + TÜM rezervasyonlar tek atomik adımda (reserve),
+ *  - journal create-if-absent idempotency kapısı,
+ *  - kredi + spend + token muhasebesi finalize'ın İÇİNDE,
+ *  - terminal başarısızlıkta rezervasyon kapanışı (settleFailure).
+ *
+ * Gerçek Firestore transaction semantiği yalnız emulator testleriyle
+ * kanıtlanır; burada kanıtlanan şey SÖZLEŞMEDİR.
  */
-import {
-  canTransition,
-  JournalState,
-} from "../../src/ai/analysis_journal";
+import { canTransition, JournalState } from "../../src/ai/analysis_journal";
 import {
   AnalyzeService,
   LATEST_ANALYSIS_ID,
   type AnalysisPorts,
   type JournalRecord,
+  type ReserveOutcome,
   type StoredAnalysis,
 } from "../../src/ai/analyze_service";
-import { CostCircuitBreaker } from "../../src/ai/cost_control";
-import { DailyAnalysisLimiter } from "../../src/ai/daily_limit";
-import { DailyTokenGuard } from "../../src/ai/token_counter";
+import type { UsageEstimate } from "../../src/ai/usage_estimate";
 import type { AiGateway, AnalysisCompletion } from "../../src/ai/openai_gateway";
 import type { AnalysisOutput } from "../../src/ai/schema";
 import { AppError } from "../../src/core/errors";
@@ -52,40 +55,136 @@ export const validOutput: AnalysisOutput = {
   confidence: "medium",
 };
 
+/** Sayaç + hata enjeksiyonu: muhasebe yazımının çökmesini taklit eder. */
+export interface Counter {
+  /** Kaç kez GERÇEK tüketim yazıldı. */
+  records: number;
+  /** Toplam gerçek tüketim. */
+  total: number;
+  /** Bir sonraki yazımı çökert. */
+  failNext: boolean;
+}
+
+export interface HarnessLimits {
+  dailyAnalyses: number;
+  dailyTokens: number;
+  dailyUsd: number;
+}
+
+const newCounter = (): Counter => ({ records: 0, total: 0, failNext: false });
+
 export class HarnessPorts implements AnalysisPorts {
   content: unknown | null = validContent;
   plan: "free" | "premium" = "free";
+  /** null = alan hiç yazılmamış (yeni kullanıcı) → sunucu lazy-init. */
   credits: number | null = null;
   commits = 0;
   lastAnalysis: StoredAnalysis | null = null;
+  /** Finalize sırasında karar değişmiş gibi davran (superseded testi). */
   fingerprintOverride: string | null = null;
   failOn: { recordProviderSuccess?: boolean; finalize?: boolean } = {};
   readonly journal = new Map<string, JournalRecord>();
 
+  /** Kabul kontrolünü rate ile reddettir. */
+  rateReject = false;
+
+  /** Rezerve edilmiş (henüz kesinleşmemiş) miktarlar. */
+  reserved = { credits: 0, tokens: 0, usd: 0 };
+
+  constructor(
+    readonly limits: HarnessLimits,
+    private readonly counters: {
+      rate: { checks: number };
+      daily: { slots: number; total: number };
+      tokens: Counter;
+      spend: Counter;
+    },
+  ) {}
+
   async readDecisionContent() {
     return this.content;
   }
-  async peekCredits() {
-    return { plan: this.plan, remaining: this.credits ?? 5 };
-  }
+
   async readJournal(requestId: string) {
     return this.journal.get(requestId) ?? null;
   }
+
+  /** Kabul + rezervasyon: üretimdeki tek transaction'ın bellek içi ikizi. */
   async reserve(p: {
     requestId: string;
     decisionId: string;
     contentFingerprint: string;
-  }) {
+    estimate: UsageEstimate;
+  }): Promise<ReserveOutcome> {
+    // IDEMPOTENCY KAPISI — kayıt varsa HİÇBİR sayaç artmaz.
     const existing = this.journal.get(p.requestId);
-    if (existing) return { created: false, record: existing };
+    if (existing) return { status: "existing", record: existing };
+
+    if (this.rateReject) {
+      return {
+        status: "rejected",
+        error: new AppError("rate-limited", "bekle", { retryAfterSeconds: 30 }),
+      };
+    }
+
+    const free = this.plan === "premium";
+    const available = (this.credits ?? 5) - this.reserved.credits;
+    if (!free && available <= 0) {
+      return {
+        status: "rejected",
+        error: new AppError("quota-exceeded", "Ücretsiz analiz hakkın bitti.", {
+          remaining: 0,
+          initial: 5,
+        }),
+      };
+    }
+    if (this.counters.daily.total >= this.limits.dailyAnalyses) {
+      return {
+        status: "rejected",
+        error: new AppError("daily-limit", "Bugünkü analiz limiti doldu.", {
+          dailyLimit: this.limits.dailyAnalyses,
+        }),
+      };
+    }
+    if (
+      this.counters.tokens.total + this.reserved.tokens + p.estimate.tokens >
+      this.limits.dailyTokens
+    ) {
+      return {
+        status: "rejected",
+        error: new AppError("daily-limit", "Bugünkü analiz limiti doldu.", {
+          dailyTokenLimit: this.limits.dailyTokens,
+        }),
+      };
+    }
+    if (
+      !free &&
+      this.counters.spend.total + this.reserved.usd + p.estimate.usd >
+        this.limits.dailyUsd
+    ) {
+      return {
+        status: "rejected",
+        error: new AppError("ai-unavailable", "AI analizi yoğunlukta.", {
+          circuitBreaker: true,
+        }),
+      };
+    }
+
     const record: JournalRecord = {
       state: JournalState.reserved,
       decisionId: p.decisionId,
       contentFingerprint: p.contentFingerprint,
     };
     this.journal.set(p.requestId, record);
-    return { created: true, record };
+    this.counters.rate.checks++;
+    this.counters.daily.slots++;
+    this.counters.daily.total++;
+    this.reserved.tokens += p.estimate.tokens;
+    this.reserved.usd += p.estimate.usd;
+    if (!free) this.reserved.credits++;
+    return { status: "created", record };
   }
+
   async markProviderCallStarted(requestId: string) {
     const r = this.journal.get(requestId);
     if (!r || !canTransition(r.state, JournalState.providerCallStarted)) {
@@ -94,6 +193,7 @@ export class HarnessPorts implements AnalysisPorts {
     r.state = JournalState.providerCallStarted;
     return true;
   }
+
   async recordProviderSuccess(p: {
     requestId: string;
     analysis: StoredAnalysis;
@@ -109,16 +209,55 @@ export class HarnessPorts implements AnalysisPorts {
     r.analysis = p.analysis;
     r.usage = p.usage;
   }
-  async markOutcome(p: { requestId: string; state: JournalState }) {
+
+  /** Rezervasyonu kapatır; `actual` verilirse gerçek tüketimi yazar. */
+  private release(
+    estimate: UsageEstimate,
+    actual: { tokens: number; usd: number } | null,
+  ): void {
+    if (this.counters.spend.failNext) {
+      this.counters.spend.failNext = false;
+      throw new Error("spend yazımı başarısız (enjekte)");
+    }
+    if (this.counters.tokens.failNext) {
+      this.counters.tokens.failNext = false;
+      throw new Error("token yazımı başarısız (enjekte)");
+    }
+    this.reserved.tokens -= estimate.tokens;
+    this.reserved.usd -= estimate.usd;
+    if (this.plan !== "premium") this.reserved.credits--;
+    if (actual) {
+      this.counters.spend.records++;
+      this.counters.spend.total += actual.usd;
+      this.counters.tokens.records++;
+      this.counters.tokens.total += actual.tokens;
+    }
+  }
+
+  async settleFailure(p: {
+    requestId: string;
+    state: JournalState;
+    estimate: UsageEstimate;
+    billed: boolean;
+  }) {
     const r = this.journal.get(p.requestId);
     if (!r || !canTransition(r.state, p.state)) return;
     r.state = p.state;
+    this.release(
+      p.estimate,
+      // Sağlayıcıya çağrı yapıldıysa ücretlendirilmiş olabiliriz.
+      p.billed ? { tokens: p.estimate.tokens, usd: p.estimate.usd } : null,
+    );
   }
+
   async finalize(p: {
     requestId: string;
     expectedFingerprint: string;
     analysis: StoredAnalysis;
     initialCredits: number;
+    usage: { inputTokens: number; outputTokens: number };
+    costUsd: number;
+    estimate: UsageEstimate;
   }): Promise<{ outcome: "completed" | "superseded"; analysisId: string }> {
     if (this.failOn.finalize) {
       this.failOn.finalize = false;
@@ -126,22 +265,36 @@ export class HarnessPorts implements AnalysisPorts {
     }
     const r = this.journal.get(p.requestId);
     if (!r) throw new AppError("internal", "journal yok");
+
+    // Terminal durumlar: HİÇBİR muhasebe tekrar uygulanmaz.
     if (r.state === JournalState.completed) {
       return { outcome: "completed", analysisId: LATEST_ANALYSIS_ID };
     }
     if (r.state === JournalState.superseded) {
       return { outcome: "superseded", analysisId: LATEST_ANALYSIS_ID };
     }
+
+    const actual = {
+      tokens: p.usage.inputTokens + p.usage.outputTokens,
+      usd: p.costUsd,
+    };
+
     if (this.fingerprintOverride !== null) {
+      // Kredi YANMAZ ama gerçek maliyet kaydedilir.
+      this.release(p.estimate, actual);
       r.state = JournalState.superseded;
       return { outcome: "superseded", analysisId: LATEST_ANALYSIS_ID };
     }
+
     if (this.plan !== "premium") {
       const remaining = this.credits ?? p.initialCredits;
       if (remaining <= 0) {
         throw new AppError("quota-exceeded", "bitti", { remaining: 0 });
       }
+      this.release(p.estimate, actual);
       this.credits = remaining - 1;
+    } else {
+      this.release(p.estimate, actual);
     }
     this.commits++;
     this.lastAnalysis = p.analysis;
@@ -163,7 +316,10 @@ export class HarnessGateway implements AiGateway {
     }
     if (this.failWith) throw this.failWith;
     this.completions++;
-    return { output: validOutput, usage: { inputTokens: 1500, outputTokens: 600 } };
+    return {
+      output: validOutput,
+      usage: { inputTokens: 1500, outputTokens: 600 },
+    };
   }
 }
 
@@ -172,49 +328,32 @@ export interface Harness {
   ports: HarnessPorts;
   gateway: HarnessGateway;
   rate: { checks: number };
-  daily: { slots: number };
-  tokens: { records: number };
-  spend: { records: number };
+  daily: { slots: number; total: number };
+  tokens: Counter;
+  spend: Counter;
 }
 
-export function buildService(): Harness {
-  const ports = new HarnessPorts();
-  const gateway = new HarnessGateway();
+export function buildService(overrides?: {
+  limits?: Partial<HarnessLimits>;
+  spendTotal?: number;
+  tokenTotal?: number;
+  dailyTotal?: number;
+}): Harness {
   const rate = { checks: 0 };
-  const daily = { slots: 0 };
-  const tokens = { records: 0 };
-  const spend = { records: 0 };
+  const daily = { slots: 0, total: overrides?.dailyTotal ?? 0 };
+  const tokens = newCounter();
+  const spend = newCounter();
+  tokens.total = overrides?.tokenTotal ?? 0;
+  spend.total = overrides?.spendTotal ?? 0;
 
-  const breaker = new CostCircuitBreaker({
-    todayTotal: async () => 0,
-    add: async () => {
-      spend.records++;
-    },
-  });
-  const dailyLimiter = new DailyAnalysisLimiter({
-    reserve: async () => {
-      daily.slots++;
-      return true;
-    },
-  });
-  const tokenGuard = new DailyTokenGuard({
-    todayTotal: async () => 0,
-    add: async () => {
-      tokens.records++;
-    },
-  });
-
-  const service = new AnalyzeService(
-    ports,
-    gateway,
-    {
-      check: async () => {
-        rate.checks++;
-      },
-    },
-    breaker,
-    dailyLimiter,
-    tokenGuard,
-  );
+  const limits: HarnessLimits = {
+    dailyAnalyses: 20,
+    dailyTokens: 375_000,
+    dailyUsd: 0.15,
+    ...overrides?.limits,
+  };
+  const ports = new HarnessPorts(limits, { rate, daily, tokens, spend });
+  const gateway = new HarnessGateway();
+  const service = new AnalyzeService(ports, gateway);
   return { service, ports, gateway, rate, daily, tokens, spend };
 }

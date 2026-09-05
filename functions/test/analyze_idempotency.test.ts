@@ -142,7 +142,11 @@ describe("14-18: transaction ve kurtarma", () => {
 
     const e = await attempt(h);
     expect(e).toBeInstanceOf(AppError);
-    expect((e as AppError).code).toBe("invalid-argument");
+    // 2B: superseded ARTIK kendi kodudur. Eskiden `invalid-argument` idi ve
+    // istemciye "tekrar deneme" (none) anlamına geliyordu; oysa doğru yönerge
+    // YENİ bir analiz başlatmaktır.
+    expect((e as AppError).code).toBe("superseded");
+    expect((e as AppError).retry).toBe("new");
     expect(h.ports.commits).toBe(0);
     expect(h.ports.credits).toBeNull(); // KULLANICI KREDİSİ YANMADI
     expect(h.ports.journal.get(rid)?.state).toBe(JournalState.superseded);
