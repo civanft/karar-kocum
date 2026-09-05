@@ -212,18 +212,82 @@ hesabın ve tüm verilerinin kalıcı silinmesi. Tek giriş noktası
 **Kimlik:** UID YALNIZ `request.auth.uid`'den okunur. İstemci boş payload
 gönderir; başka bir kullanıcının yolu istemciden etkilenemez.
 
-**Silme kapsamı ve SIRA (sıra güvenlik gereğidir):**
+**Silme kapsamı ve SIRA (sıra güvenlik gereğidir) — İş Paketi 3:**
 
 | # | Hedef | Yöntem | Not |
 |---|-------|--------|-----|
-| 1 | `users/{uid}` ağacı | `getFirestore().recursiveDelete(userRef)` | `decisions` → `aiAnalyses`, `rewardTickets`, `subscriptions` alt koleksiyonları KAPSAM İÇİ; ayrı çağrı gerekmez |
-| 2 | `rateLimits/{uid}` | tek belge silme | `analyzeDecision` limiti; `users` ağacının DIŞINDA |
-| 3 | `rateLimits/{uid}:reward` | tek belge silme | `createRewardTicket` limiti; AYRI belge — 2. adım bunu kapsamaz |
-| 4 | Firebase Auth kullanıcısı | `getAuth().deleteUser(uid)` | EN SON |
+| 1 | `accountDeletionBlocks/{uid}` | create-if-absent | **BARİYER.** İlk adım; bundan sonra yeni kullanıcı verisi oluşturulamaz |
+| 2 | Açık AI rezervasyonları | bounded drain + reconcile | Devam eden analiz veriyi diriltemesin diye; kapanmadan silmeye geçilmez |
+| 3 | `users/{uid}` ağacı | `recursiveDelete(userRef)` | `decisions` → `aiAnalyses`, `analysisRequests`, `analysisReservations`, `rewardTickets`, `subscriptions` KAPSAM İÇİ |
+| 4 | `rateLimits/{uid}` | tek belge silme | `analyzeDecision` limiti; `users` ağacının DIŞINDA |
+| 5 | `rateLimits/{uid}:reward` | tek belge silme | `createRewardTicket` limiti; AYRI belge |
+| 6 | Temizlik doğrulaması | okuma | Auth'a geçmeden önce veri gerçekten gitti mi |
+| 7 | Firebase Auth kullanıcısı | `getAuth().deleteUser(uid)` | EN SON |
+| 8 | Bariyer | **silinmez** | TTL politikası kaldırır (aşağıya bakınız) |
 
 **Neden Auth en son:** Auth önce silinseydi kullanıcının token'ı anında
 geçersizleşir, Firestore adımı yarıda kalırsa veri yetim kalırdı. Firestore
 adımlarından biri hata verirse Auth'a HİÇ geçilmez.
+
+### 8.1 Silme bariyeri — `accountDeletionBlocks/{uid}`
+
+**Çözdüğü sorun:** kaskad `users/{uid}` ağacını sildikten sonra Auth
+kullanıcısı silinene kadar eski Firebase ID token GEÇERLİ kalır (token ömrü
+bir saate kadar çıkabilir). O pencerede istemci yazması, devam eden bir AI
+analizi ya da bir ödül callback'i silinmiş veriyi **diriltir**.
+
+**Belge içeriği (PII YOK):**
+
+| Alan | Anlam |
+|------|-------|
+| `schemaVersion` | şema sürümü (1) |
+| `state` | `"deleting"` |
+| `startedAt` | silme başlangıcı (sunucu zamanı) |
+| `expiresAt` | bariyerin sona ereceği an — en az **48 saat** ileride |
+
+UID yalnız **belge kimliğidir**; gövdede e-posta, isim, karar içeriği veya
+başka hiçbir kişisel veri bulunmaz. Belge istemciye tamamen kapalıdır.
+
+**48 saat neden:** eski ID token'lar bir saate kadar yaşayabilir, TTL silmesi
+anlık değildir ve bariyer, eski kimlik belirteci doğal olarak geçersizleşmeden
+kaldırılmamalıdır.
+
+**İdempotency:** bariyer create-if-absent'tir. Tekrar çağrıda `startedAt` ve
+`expiresAt` **ileri taşınmaz** — her retry süreyi uzatsaydı bariyer hiç sona
+ermeyebilirdi.
+
+**İki katmanlı zorlama:**
+- **Firestore Rules** — `accountActive(uid)` yardımcısı sahiplik VE bariyerin
+  yokluğunu birlikte doğrular; `users/{uid}` ağacındaki her istemci kuralı
+  bunu kullanır (`isOwner` tek başına kullanılmaz).
+- **Admin SDK** — Rules'u bypass ettiği için sunucu yazma yolları bariyeri
+  KENDİ transaction'ları içinde okur: AI rezervasyonu, sağlayıcı çağrısı
+  öncesi son kontrol, ödül bileti oluşturma ve SSV callback'i. Transaction
+  öncesi tek bir `get()` yeterli olmazdı — bariyer ile yazım aynı anda
+  commit ederse okuma çakışma kümesinde olduğu için transaction yeniden
+  çalışır ve reddeder.
+
+**TTL:** `accountDeletionBlocks.expiresAt` alanında Firestore TTL politikası
+etkindir. TTL silmesi **kesin bir süre garantisi vermez**; Google
+dokümantasyonu silmenin süre sonundan sonra gerçekleşeceğini söyler ama
+gecikme olabilir. Bariyerin erken kaldırılmaması güvenlik açısından
+belirleyicidir, geç kaldırılması zararsızdır.
+
+### 8.2 Devam eden AI isteğiyle yarış
+
+Bariyer yeni rezervasyonu ve sağlayıcı çağrısını kapatır, ama bariyerden
+**önce** açılmış bir rezervasyon hâlâ çalışıyor olabilir. Bu yüzden silme,
+recursive delete'e geçmeden önce açık rezervasyonları **drain** eder:
+
+- `reserved` (sağlayıcı hiç başlamadı) → maliyetsiz kapanır;
+- `provider_call_started` (sonuç bilinmiyor) → 2C'nin ihtiyatlı politikası;
+- `provider_succeeded` (sonuç var) → 2D'nin atomik finalizasyonu.
+
+Bir rezervasyonu açan çağrının artık çalışmadığına, `analyzeDecision`'ın
+60 saniyelik fonksiyon timeout'unu aşan bir yaşa ulaşmasıyla karar verilir.
+Daha genç kayıtlar için sınırlı süre beklenir; bu sürede kapanmazlarsa
+**Auth silinmez ve veri silinmez** — kullanıcıya tekrar denenebilir hata
+döner ve bariyer durduğu için yeni veri de oluşamaz.
 
 **Korunanlar:**
 - `ops/*` global sayaçları (günlük harcama/token/analiz limitleri) — kullanıcıya
@@ -233,8 +297,11 @@ adımlarından biri hata verirse Auth'a HİÇ geçilmez.
 **İdempotency:** olmayan belge/kullanıcı no-op'tur; `auth/user-not-found`
 başarı sayılır. İstemci timeout'undan sonra tekrar denemek güvenlidir.
 
-**Rules DEĞİŞMEDİ:** kaskad Admin SDK ile çalışır ve Rules'u bypass eder;
-`firestore.rules` ve `firestore.indexes.json` bu iş kapsamında güncellenmedi.
+**Rules DEĞİŞTİ (İş Paketi 3):** kaskad Admin SDK ile çalışır ve Rules'u
+bypass eder — bu yüzden Rules tek başına yeterli değildi ve iki katmanlı
+zorlama uygulandı (§8.1). `firestore.indexes.json` değişmedi: bariyer
+doğrudan belge kimliğiyle okunur ve drain sorgusu tek alanlı sıralama
+kullanır, ikisi de bileşik indeks gerektirmez.
 
 **Cihaz tarafı:** `journey.followUpOptedIn` (SharedPreferences) silinir ve
 planlı tüm yerel takip bildirimleri iptal edilir. Ardından oturum kapatılır ve
