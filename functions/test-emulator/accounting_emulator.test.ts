@@ -124,7 +124,8 @@ async function openReservationWithResult(id: string): Promise<void> {
 
 /** Testlerde kullanılan sabit tahmin (üretimdeki formülün aynısı). */
 const ESTIMATE = estimateUsage({
-  promptChars: 2000,
+  systemPrompt: "s".repeat(1000),
+  userPrompt: "u".repeat(1000),
   maxOutputTokens: 800,
   model: "gpt-4.1-mini",
 });
@@ -352,7 +353,6 @@ describe("gerçek transaction — kısmî yazım imkânsızlığı", () => {
       ports().finalize({
         requestId: id,
         decisionId: DECISION_ID,
-        expectedFingerprint: await decisionFingerprint(),
         analysis: ANALYSIS,
         initialCredits: 0,
         usage: USAGE,

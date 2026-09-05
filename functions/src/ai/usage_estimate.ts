@@ -1,52 +1,128 @@
 /**
- * Rezervasyon için KONSERVATİF kullanım tahmini (İş Paketi 2B).
+ * Rezervasyon için KANITLANABİLİR kullanım ÜST SINIRI (İş Paketi 2D).
  *
  * NEDEN GEREKLİ: sağlayıcının gerçek token tüketimi ancak çağrı bittikten
  * sonra bilinir. Bütçe kontrolü ise çağrıdan ÖNCE yapılmak zorundadır; aksi
  * halde eşzamanlı istekler kontrolü aynı anda geçip günlük tavanı aşar.
- * Bu yüzden çağrı öncesinde bir ÜST SINIR rezerve edilir, çağrı bitince
+ * Bu yüzden çağrı öncesinde bir üst sınır rezerve edilir, çağrı bitince
  * rezervasyon serbest bırakılıp yerine GERÇEK tüketim yazılır.
  *
- * FORMÜL — girdi tokenleri karakter sayısından tahmin edilir:
+ * ═══ NEDEN `ceil(karakter / 3)` DEĞİL ═══
  *
- *   estimatedInputTokens = ceil(promptChars / CHARS_PER_TOKEN)
- *   estimatedOutputTokens = maxOutputTokens        (modelin tavanı)
- *   estimatedTokens = estimatedInputTokens + estimatedOutputTokens
- *   estimatedUsd = computeCostUsd(model, {input, output})
+ * 2B/2C'de girdi tokenleri `ceil(promptChars / 3)` ile tahmin ediliyor ve
+ * bu "konservatif üst sınır" gibi kullanılıyordu. Bu İDDİA YANLIŞTIR:
+ * karakter sayısı ile token sayısı arasında böyle bir üst sınır ilişkisi
+ * yoktur. Gerçek `o200k_base` tokenizer'ıyla ölçülen karşı örnekler
+ * (testlerde koşuyor):
  *
- * CHARS_PER_TOKEN = 3 seçildi. GPT tokenizer'ı İngilizce'de ~4 karakter/token
- * üretir; Türkçe eklemeli yapısı ve UTF-8 çok baytlı karakterleri nedeniyle
- * token başına DAHA AZ karakter düşer. 3 kullanmak tahmini yukarı çeker —
- * yani rezervasyon gerçekten tüketilenden fazla olur. Yönü bilinçlidir:
- * bütçe kontrolünde fazla rezerve etmek erken durdurur, az rezerve etmek
- * tavanı deldirir.
+ *   emoji dizisi      : 11 tahmin < 27 gerçek token
+ *   birleşik Unicode  :  8 tahmin < 15 gerçek token
+ *   CJK               :  9 tahmin < 20 gerçek token
+ *   tekrarlı "ı" ×300 : 100 tahmin < 300 gerçek token
  *
- * SINIR — BU BİR TAHMİNDİR, ÖLÇÜM DEĞİLDİR. "Yaklaşık" bir üst sınır sert
- * bütçe garantisi olarak sunulamaz: tokenizer davranışı modele göre değişir.
- * Garanti ettiği şey şudur ve yalnız budur: eşzamanlı istekler bütçe
- * kontrolünü AYNI ANDA geçemez, çünkü kontrol ve rezervasyon tek transaction
- * içindedir. Gerçek tüketim finalization'da tahminin YERİNE yazılır, böylece
- * sayaçlar uzun vadede gerçeği izler.
+ * Yani bütçe kontrolü delinebiliyordu.
+ *
+ * ═══ ÜST SINIR KANITI ═══
+ *
+ * GPT modelleri byte-level BPE kullanır. Böyle bir kodlamada:
+ *   1. metin önce UTF-8 baytlarına çevrilir,
+ *   2. her token BOŞ OLMAYAN bir bayt dizisine çözülür,
+ *   3. tokenlerin bayt çözümleri girdiyi tam olarak PARÇALAR (örtüşme ve
+ *      boşluk yok).
+ * Her token en az bir bayt tükettiğine göre:
+ *
+ *   token_sayısı ≤ UTF-8_bayt_sayısı
+ *
+ * Bu eşitsizlik kodlamanın KİMLİĞİNDEN bağımsızdır: o200k_base, cl100k_base
+ * ya da başka bir byte-level BPE için aynı şekilde geçerlidir. Dolayısıyla
+ * `gpt-4.1-mini`'nin hangi kodlamayı kullandığını bilmek gerekmez — üretim
+ * kodunun tokenizer'a bağımlılığı YOKTUR.
+ *
+ * Testler bu sınırı gerçek tokenizer'a (js-tiktoken, YALNIZ devDependency)
+ * karşı hem örnek tablosuyla hem property testiyle doğrular.
+ *
+ * ═══ SINIRIN GEVŞEKLİĞİ VE NEDEN KABUL EDİLEBİLİR ═══
+ *
+ * Bayt sınırı gerçek tüketimin ~3 katı olabilir. Bu, günlük TOPLAMLARI
+ * etkilemez: rezervasyon geçicidir, finalize'da serbest bırakılıp yerine
+ * GERÇEK tüketim yazılır. Yalnız EŞZAMANLI kabul başlığını daraltır —
+ * yani fazla rezerve etmek erken durdurur, az rezerve etmek tavanı
+ * deldirir. Yön bilinçlidir.
  */
+import { AppError } from "../core/errors.js";
 import { computeCostUsd } from "./cost_control.js";
 
-/** Türkçe metin için ihtiyatlı (yukarı yuvarlayan) karakter/token oranı. */
-export const CHARS_PER_TOKEN = 3;
+/**
+ * Sohbet mesajı başına çerçeveleme payı (rol belirteçleri, ayırıcılar).
+ * Kesin değer modele özgüdür ve belgelenmiş tek bir sayı yoktur; bu yüzden
+ * OpenAI cookbook'undaki ~3 token/mesaj gözleminin belirgin şekilde üstünde,
+ * GÜVENLİ bir sabit seçilmiştir.
+ */
+export const FRAMING_TOKENS_PER_MESSAGE = 8;
+
+/** Yanıt hazırlama + istek düzeyi çerçeveleme için ek güvenli pay. */
+export const FRAMING_TOKENS_OVERHEAD = 8;
+
+/** Taşma koruması: bunun üstündeki bir tahmin istek hatası sayılır. */
+export const MAX_ESTIMATE_TOKENS = 5_000_000;
 
 export interface UsageEstimate {
   tokens: number;
   usd: number;
 }
 
+/**
+ * Bir metnin token sayısı için KANITLANABİLİR üst sınır: UTF-8 bayt sayısı.
+ * Yukarıdaki kanıta bakınız.
+ */
+export function utf8UpperBoundTokens(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+function assertSafeCount(value: number, field: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new AppError(
+      "invalid-argument",
+      "Analiz isteği işlenemedi — lütfen tekrar dene.",
+      { field },
+    );
+  }
+}
+
+/**
+ * Sistem + kullanıcı mesajı, çerçeveleme payı ve çıkış tavanının TAMAMINI
+ * kapsayan üst sınır. USD, giriş ve çıkış tokenleri AYRI fiyatlandırılarak
+ * hesaplanır (çıkış tokeni girişten pahalıdır; birleşik sayıyı ucuz giriş
+ * fiyatından hesaplamak maliyeti olduğundan düşük gösterirdi).
+ */
 export function estimateUsage(params: {
-  promptChars: number;
+  systemPrompt: string;
+  userPrompt: string;
   maxOutputTokens: number;
   model: string;
 }): UsageEstimate {
-  const inputTokens = Math.ceil(params.promptChars / CHARS_PER_TOKEN);
+  assertSafeCount(params.maxOutputTokens, "maxOutputTokens");
+
+  const content =
+    utf8UpperBoundTokens(params.systemPrompt) +
+    utf8UpperBoundTokens(params.userPrompt);
+  const framing = 2 * FRAMING_TOKENS_PER_MESSAGE + FRAMING_TOKENS_OVERHEAD;
+  const inputTokens = content + framing;
   const outputTokens = params.maxOutputTokens;
+
+  assertSafeCount(inputTokens, "inputTokens");
+  const total = inputTokens + outputTokens;
+  assertSafeCount(total, "tokens");
+  if (total > MAX_ESTIMATE_TOKENS) {
+    throw new AppError(
+      "invalid-argument",
+      "Analiz isteği işlenemedi — lütfen tekrar dene.",
+      { field: "tokens" },
+    );
+  }
+
   return {
-    tokens: inputTokens + outputTokens,
+    tokens: total,
     usd: computeCostUsd(params.model, { inputTokens, outputTokens }),
   };
 }

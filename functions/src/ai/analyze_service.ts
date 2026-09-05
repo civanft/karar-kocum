@@ -189,12 +189,16 @@ export interface AnalysisPorts {
   finalize(params: {
     requestId: string;
     decisionId: string;
-    expectedFingerprint: string;
     analysis: StoredAnalysis;
     initialCredits: number;
     usage: TokenUsage;
     costUsd: number;
-  }): Promise<{ outcome: "completed" | "superseded"; analysisId: string }>;
+  }): Promise<{
+    outcome: "completed" | "superseded";
+    analysisId: string;
+    /** Kredi gerçekten düşüldü mü (anormal legacy kayıtta false olabilir). */
+    creditCharged: boolean;
+  }>;
 }
 
 export class AnalyzeService {
@@ -254,7 +258,8 @@ export class AnalyzeService {
 
     // Konservatif kullanım tahmini — rezervasyonun temeli (usage_estimate.ts).
     const estimate = estimateUsage({
-      promptChars: userMessage.length + SYSTEM_PROMPT.length,
+      systemPrompt: SYSTEM_PROMPT,
+      userPrompt: userMessage,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       model: OPENAI_MODEL,
     });
@@ -522,12 +527,19 @@ export class AnalyzeService {
     const result = await this.ports.finalize({
       requestId: params.requestId,
       decisionId: params.decisionId,
-      expectedFingerprint: params.fingerprint,
       analysis: params.analysis,
       initialCredits: INITIAL_FREE_CREDITS,
       usage,
       costUsd,
     });
+
+    if (result.outcome === "completed" && !result.creditCharged) {
+      // 2C artığı anormal kayıt: rezervasyon bizim hatamızla zaten serbest
+      // bırakılmıştı. Ödenmiş analiz uygulandı ama kredi düşülemedi.
+      log("warn", "analysis_applied_without_credit", ctx, {
+        reason: "reservation_settled_before_finalize",
+      });
+    }
 
     this.logOutcome(ctx, {
       superseded: result.outcome === "superseded",

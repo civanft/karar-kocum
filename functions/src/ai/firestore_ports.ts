@@ -42,7 +42,7 @@ import {
 } from "./analyze_service.js";
 import { contentFingerprint } from "./analysis_fingerprint.js";
 import type { TokenUsage } from "./openai_gateway.js";
-import { utcDayKey } from "./cost_control.js";
+import { computeCostUsd, utcDayKey } from "./cost_control.js";
 import type { UsageEstimate } from "./usage_estimate.js";
 import {
   evaluateRateLimit,
@@ -561,17 +561,66 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
       const expiresAt = data["reservationExpiresAt"] as Timestamp | undefined;
       if (!expiresAt || expiresAt.toMillis() > nowMs) return false;
 
+      const analysis = data["analysis"] as StoredAnalysis | undefined;
+
+      /**
+       * `provider_succeeded` + SAKLANAN SONUÇ → ATOMİK FİNALİZASYON.
+       *
+       * 2C burada yalnız rezervasyonu kapatıyor, kaydı `provider_succeeded`
+       * bırakıyordu. Bu, kredi rezervasyonunu havuza geri verirken kaydı
+       * hâlâ finalize edilebilir bırakıyor ve AYNI son kredinin ikinci bir
+       * sağlayıcı isteğine dayanak olmasına pencere açıyordu. Artık kayıt
+       * aynı transaction'da terminal duruma (completed/superseded) geçer:
+       * `provider_succeeded && rezervasyon kapalı` ÜRETİLEMEZ.
+       */
+      if (state === JournalState.providerSucceeded && analysis) {
+        const decisionId = String(data["decisionId"] ?? "");
+        const decisionRef = this.decisionRef(decisionId);
+        const analysisRef = decisionRef
+          .collection("aiAnalyses")
+          .doc(LATEST_ANALYSIS_ID);
+        const userRef = this.db.doc(`users/${this.uid}`);
+
+        const decision = await tx.get(decisionRef);
+        const user = await tx.get(userRef);
+        const counters =
+          provenance?.open === true
+            ? await this.readReservationCounters(tx)
+            : null;
+
+        // Gerçek kullanım journal'dan; yoksa rezervasyon tahmini (ihtiyatlı).
+        const usage = data["usage"] as TokenUsage | undefined;
+        const actual = usage
+          ? {
+              tokens: usage.inputTokens + usage.outputTokens,
+              usd: computeCostUsd(analysis.model, usage),
+            }
+          : {
+              tokens: provenance?.estimate.tokens ?? 0,
+              usd: provenance?.estimate.usd ?? 0,
+            };
+
+        this.applyFinalization(
+          tx,
+          { journalRef: ref, decisionRef, analysisRef, userRef },
+          { journalData: data, decision, user, counters },
+          { analysis, actual, initialCredits: INITIAL_FREE_CREDITS },
+        );
+        return true;
+      }
+
       const target =
         state === JournalState.reserved
           ? JournalState.terminalFailed
           : state === JournalState.providerCallStarted
             ? JournalState.uncertain
-            : null;
+            : // `provider_succeeded` fakat SAKLANAN SONUÇ yok: sonuç
+              // doğrulanamaz, analiz uygulanamaz. Kredi TÜKETİLMEZ.
+              state === JournalState.providerSucceeded
+              ? JournalState.uncertain
+              : null;
 
-      // provider_succeeded: durum KORUNUR, yalnız rezervasyon kapatılır.
-      if (target === null && state !== JournalState.providerSucceeded) {
-        return false;
-      }
+      if (target === null) return false;
 
       const counters =
         provenance?.open === true
@@ -579,7 +628,8 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
           : null;
 
       tx.update(ref, {
-        ...(target ? { state: target, failureCode: "reservation-stale" } : {}),
+        state: target,
+        failureCode: "reservation-stale",
         ...FirestoreAnalysisPorts.closedMarker(),
       });
 
@@ -600,19 +650,141 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
   }
 
   /**
+   * ORTAK ATOMİK FİNALİZASYON (İş Paketi 2D).
+   *
+   * Hem normal `finalize()` hem de asılı `provider_succeeded` kurtarması
+   * BU primitive'i kullanır — transaction mantığı iki yerde KOPYALANMAZ.
+   * Tüm okumalar çağıran tarafından yapılıp buraya verilir (Firestore:
+   * okumalar yazımlardan önce).
+   *
+   * Beklenen fingerprint JOURNAL'dan gelir (2C köken ilkesi): kapanış
+   * anındaki hesaplamaya değil, rezervasyon anının gerçeğine dayanır.
+   */
+  private applyFinalization(
+    tx: FirebaseFirestore.Transaction,
+    refs: {
+      journalRef: FirebaseFirestore.DocumentReference;
+      decisionRef: FirebaseFirestore.DocumentReference;
+      analysisRef: FirebaseFirestore.DocumentReference;
+      userRef: FirebaseFirestore.DocumentReference;
+    },
+    reads: {
+      journalData: Record<string, unknown>;
+      decision: FirebaseFirestore.DocumentSnapshot;
+      user: FirebaseFirestore.DocumentSnapshot;
+      counters: {
+        tokensReserved: FirebaseFirestore.DocumentSnapshot;
+        spendReserved: FirebaseFirestore.DocumentSnapshot;
+        credits: FirebaseFirestore.DocumentSnapshot;
+      } | null;
+    },
+    params: {
+      analysis: StoredAnalysis;
+      actual: { tokens: number; usd: number };
+      initialCredits: number;
+    },
+  ): { outcome: "completed" | "superseded"; creditCharged: boolean } {
+    const provenance = FirestoreAnalysisPorts.toProvenance(reads.journalData);
+    const data = reads.user.data() ?? {};
+    const plan = data["plan"] === "premium" ? "premium" : "free";
+
+    /**
+     * Rezervasyon KAPANIR ve GERÇEK tüketim rezervasyonun gününe yazılır.
+     * Köken yoksa (2C öncesi) veya rezervasyon zaten kapatılmışsa
+     * DOKUNULMAZ — çift kapanış imkânsızdır.
+     */
+    const settleUsage = () => {
+      if (provenance?.open === true && reads.counters) {
+        this.releaseReservation(tx, reads.counters, {
+          provenance,
+          actual: params.actual,
+        });
+      }
+    };
+
+    // Karar analiz sürerken DEĞİŞTİ mi (ya da silindi mi)? Beklenen değer
+    // journal'ın rezervasyon anında yazdığı fingerprint'tir.
+    const expected = String(reads.journalData["contentFingerprint"] ?? "");
+    const currentFingerprint = reads.decision.exists
+      ? contentFingerprint({
+          content: {
+            title: reads.decision.data()!["title"],
+            options: reads.decision.data()!["options"],
+            criteria: reads.decision.data()!["criteria"],
+          } as never,
+          model: params.analysis.model,
+          promptVersion: params.analysis.promptVersion,
+        })
+      : null;
+
+    if (currentFingerprint !== expected) {
+      // ESKİ içerik için üretilen analiz YENİ karara BAĞLANMAZ ve kullanıcı
+      // kredisi YANMAZ — ama gerçek maliyet kaydedilir.
+      tx.update(refs.journalRef, {
+        state: JournalState.superseded,
+        ...FirestoreAnalysisPorts.closedMarker(),
+      });
+      settleUsage();
+      return { outcome: "superseded", creditCharged: false };
+    }
+
+    let creditCharged = false;
+    if (plan !== "premium") {
+      const pools = readPools(data, params.initialCredits);
+      // Düşüm sırası (7A): önce ücretsiz, sonra ödül; her iki havuz da
+      // > 0 şartıyla düşer → NEGATİF DEĞER İMKÂNSIZ.
+      if (pools.free > 0) {
+        tx.set(refs.userRef, { freeAnalysisCredits: pools.free - 1 }, { merge: true });
+        creditCharged = true;
+      } else if (pools.reward > 0) {
+        tx.set(refs.userRef, { rewardCredits: pools.reward - 1 }, { merge: true });
+        creditCharged = true;
+      } else if (provenance?.open === true) {
+        // Rezervasyon AÇIKKEN kredi bulunamıyorsa veri tutarsızdır: rezerve
+        // edilmiş bir kredi havuzda olmalıydı. Muhasebeyi zorlamak yerine
+        // transaction iptal edilir.
+        throw new AppError("quota-exceeded", "Ücretsiz analiz hakkın bitti.", {
+          remaining: 0,
+          initial: params.initialCredits,
+        });
+      }
+      // provenance.open === false (2C artığı anormal kayıt): rezervasyon
+      // BİZİM hatamızla zaten serbest bırakılmış ve o sırada başka bir istek
+      // krediyi almış olabilir. Ödenmiş analizi çöpe atmak yerine ücretsiz
+      // uygulanır; çağıran taraf bunu LOGLAR. Bu yol yalnız eski kayıtlar
+      // için erişilebilirdir — yeni kod bu durumu ÜRETEMEZ.
+    }
+
+    tx.set(refs.analysisRef, {
+      ...params.analysis,
+      generatedAt: FieldValue.serverTimestamp(),
+    });
+    tx.update(refs.decisionRef, { status: "analyzed" });
+    tx.update(refs.journalRef, {
+      state: JournalState.completed,
+      ...FirestoreAnalysisPorts.closedMarker(),
+    });
+    settleUsage();
+    return { outcome: "completed", creditCharged };
+  }
+
+  /**
    * TEK transaction: journal→completed + karar fingerprint doğrulaması +
-   * aiAnalyses/latest + status + kredi düşümü. Retry edilse bile kredi ve
-   * sayaçlar İKİ KEZ uygulanmaz (journal durumu geçiş kapısıdır).
+   * aiAnalyses/latest + status + kredi düşümü + rezervasyon kapanışı.
+   * Retry edilse bile kredi ve sayaçlar İKİ KEZ uygulanmaz.
    */
   async finalize(params: {
     requestId: string;
     decisionId: string;
-    expectedFingerprint: string;
     analysis: StoredAnalysis;
     initialCredits: number;
     usage: TokenUsage;
     costUsd: number;
-  }): Promise<{ outcome: "completed" | "superseded"; analysisId: string }> {
+  }): Promise<{
+    outcome: "completed" | "superseded";
+    analysisId: string;
+    creditCharged: boolean;
+  }> {
     const actual = {
       tokens: params.usage.inputTokens + params.usage.outputTokens,
       usd: params.costUsd,
@@ -630,15 +802,24 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
       if (!journal.exists) {
         throw new AppError("internal", "Analiz üretilemedi, lütfen tekrar dene.");
       }
-      const state = journal.data()!["state"] as JournalState;
+      const journalData = journal.data()!;
+      const state = journalData["state"] as JournalState;
 
       // Zaten uygulanmış: kredi ve muhasebe TEKRAR uygulanmaz. Buradan
       // hiçbir yazım yapılmadan çıkılır — tekrarlanan finalize etkisizdir.
       if (state === JournalState.completed) {
-        return { outcome: "completed" as const, analysisId: LATEST_ANALYSIS_ID };
+        return {
+          outcome: "completed" as const,
+          analysisId: LATEST_ANALYSIS_ID,
+          creditCharged: false,
+        };
       }
       if (state === JournalState.superseded) {
-        return { outcome: "superseded" as const, analysisId: LATEST_ANALYSIS_ID };
+        return {
+          outcome: "superseded" as const,
+          analysisId: LATEST_ANALYSIS_ID,
+          creditCharged: false,
+        };
       }
       if (!canTransition(state, JournalState.completed)) {
         throw new AppError("internal", "Analiz üretilemedi, lütfen tekrar dene.");
@@ -646,83 +827,23 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
 
       const decision = await tx.get(decisionRef);
       const user = await tx.get(userRef);
-      const data = user.data() ?? {};
-      const plan = data["plan"] === "premium" ? "premium" : "free";
-
-      // KÖKEN journal'dan okunur: gün, miktar ve kredi gerçeği rezervasyon
-      // anına aittir. Güncel plan ya da güncel tahmin BURADA KULLANILMAZ.
-      const provenance = FirestoreAnalysisPorts.toProvenance(journal.data()!);
+      const provenance = FirestoreAnalysisPorts.toProvenance(journalData);
       const counters =
         provenance?.open === true
           ? await this.readReservationCounters(tx)
           : null;
 
-      /**
-       * Her iki dalda da rezervasyon KAPANIR ve GERÇEK tüketim rezervasyonun
-       * gününe yazılır: sağlayıcı çağrısı yapıldı, para harcandı. Kullanıcı
-       * kredisi ise yalnız `completed` dalında düşer.
-       *
-       * Köken yoksa (2C öncesi kayıt) veya rezervasyon zaten kapatılmışsa
-       * (fırsatçı kurtarma kapatmış olabilir) sayaçlara DOKUNULMAZ —
-       * çift kapanış imkânsızdır.
-       */
-      const settleUsage = () => {
-        if (provenance?.open === true && counters) {
-          this.releaseReservation(tx, counters, { provenance, actual });
-        }
-      };
-
-      // Karar analiz sürerken DEĞİŞTİ mi (ya da silindi mi)?
-      const currentFingerprint = decision.exists
-        ? contentFingerprint({
-            content: {
-              title: decision.data()!["title"],
-              options: decision.data()!["options"],
-              criteria: decision.data()!["criteria"],
-            } as never,
-            model: params.analysis.model,
-            promptVersion: params.analysis.promptVersion,
-          })
-        : null;
-
-      if (currentFingerprint !== params.expectedFingerprint) {
-        // ESKİ içerik için üretilen analiz YENİ karara BAĞLANMAZ ve
-        // kullanıcı kredisi YANMAZ — ama gerçek maliyet kaydedilir.
-        tx.update(journalRef, {
-          state: JournalState.superseded,
-          ...FirestoreAnalysisPorts.closedMarker(),
-        });
-        settleUsage();
-        return { outcome: "superseded" as const, analysisId: LATEST_ANALYSIS_ID };
-      }
-
-      if (plan !== "premium") {
-        const pools = readPools(data, params.initialCredits);
-        // Düşüm sırası (7A): önce ücretsiz, sonra ödül; her iki havuz da
-        // > 0 şartıyla düşer → NEGATİF DEĞER İMKÂNSIZ.
-        if (pools.free > 0) {
-          tx.set(userRef, { freeAnalysisCredits: pools.free - 1 }, { merge: true });
-        } else if (pools.reward > 0) {
-          tx.set(userRef, { rewardCredits: pools.reward - 1 }, { merge: true });
-        } else {
-          throw new AppError("quota-exceeded", "Ücretsiz analiz hakkın bitti.", {
-            remaining: 0,
-            initial: params.initialCredits,
-          });
-        }
-      }
-
-      tx.set(analysisRef, {
-        ...params.analysis,
-        generatedAt: FieldValue.serverTimestamp(),
-      });
-      tx.update(decisionRef, { status: "analyzed" });
-      tx.update(journalRef, {
-        state: JournalState.completed,
-        ...FirestoreAnalysisPorts.closedMarker(),
-      });
-      settleUsage();
-      return { outcome: "completed" as const, analysisId: LATEST_ANALYSIS_ID };
+      const result = this.applyFinalization(
+        tx,
+        { journalRef, decisionRef, analysisRef, userRef },
+        { journalData, decision, user, counters },
+        {
+          analysis: params.analysis,
+          actual,
+          initialCredits: params.initialCredits,
+        },
+      );
+      return { ...result, analysisId: LATEST_ANALYSIS_ID };
     });
   }
 
