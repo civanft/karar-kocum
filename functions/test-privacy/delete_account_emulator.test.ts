@@ -89,6 +89,11 @@ async function seed(): Promise<void> {
   await store
     .doc(`users/${TARGET_UID}/subscriptions/olay-1`)
     .set({ product: "premium" });
+  // İş Paketi 2: analiz journal'ı da kullanıcının ağacındadır ve
+  // hesap silindiğinde ARKADA KALMAMALIDIR.
+  await store
+    .doc(`users/${TARGET_UID}/analysisRequests/${"c".repeat(24)}`)
+    .set({ state: "completed", decisionId: "karar-1" });
 
   // users ağacının DIŞINDAKİ, uid'e bağlı sayaçlar.
   await store.doc(`rateLimits/${TARGET_UID}`).set({ minute: 1 });
@@ -144,6 +149,12 @@ describe("hesap silme kaskadı — gerçek Firestore + Auth emulator", () => {
   });
 
   it("hedef kullanıcının TÜM ağacını (iç içe dahil) siler", async () => {
+    // Fixture gerçekten yazıldı mı? Yazılmadıysa aşağıdaki "silindi"
+    // iddiaları BOŞ YERE geçerdi.
+    expect(
+      await exists(`users/${TARGET_UID}/analysisRequests/${"c".repeat(24)}`),
+    ).toBe(true);
+
     await deleteAccountCascade(TARGET_UID, firestoreAccountDeletionPorts);
 
     expect(await exists(`users/${TARGET_UID}`)).toBe(false);
@@ -158,6 +169,9 @@ describe("hesap silme kaskadı — gerçek Firestore + Auth emulator", () => {
     expect(await exists(`users/${TARGET_UID}/subscriptions/olay-1`)).toBe(
       false,
     );
+    expect(
+      await exists(`users/${TARGET_UID}/analysisRequests/${"c".repeat(24)}`),
+    ).toBe(false);
   });
 
   it("her iki rateLimits belgesini de siler", async () => {
