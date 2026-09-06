@@ -5,9 +5,9 @@
  * deterministik adet sayacı. Varsayılan 50 analiz/gün:
  *   50 × ~$0,0004 ≈ $0,02/gün ≈ $0,6/ay — 10 USD bütçesinin %6'sı.
  *
- * Slot, Gemini çağrısından ÖNCE transaction ile ayrılır
+ * Slot, sağlayıcı çağrısından ÖNCE transaction ile ayrılır
  * (increment-if-below): yarışta bile limit AŞILAMAZ. Başarısız analiz
- * slotu iade etmez (muhafazakâr: her deneme Gemini'de para harcar).
+ * slotu iade etmez (muhafazakâr: her deneme sağlayıcıda para harcar).
  * Kullanıcı KREDİSİ ise yanmaz — limit, commit'ten önce fırlar.
  */
 import { FieldValue, getFirestore } from "firebase-admin/firestore";

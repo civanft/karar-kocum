@@ -53,25 +53,44 @@ export class SsvVerifier {
    * (Örn. "ad_network=..&custom_data=t1&user_id=u1&signature=..&key_id=1")
    */
   async verify(rawQuery: string): Promise<SsvPayload | null> {
+    if (rawQuery.length > 8192) return null;
     const signatureIndex = rawQuery.indexOf("&signature=");
     if (signatureIndex < 0) return null;
 
     const message = rawQuery.slice(0, signatureIndex);
-    const params = new URLSearchParams(rawQuery);
-    const signature = params.get("signature");
-    const keyId = params.get("key_id");
-    if (!signature || !keyId) return null;
+    // Only the prefix is signed. Never read reward/identity fields from
+    // the unsigned suffix: a valid signature must not authenticate appended
+    // user_id/custom_data/transaction_id parameters.
+    const params = new URLSearchParams(message);
+    const trailer = new URLSearchParams(rawQuery.slice(signatureIndex + 1));
+    const trailerKeys = [...trailer.keys()];
+    if (trailerKeys.length !== 2 ||
+        trailer.getAll("signature").length !== 1 ||
+        trailer.getAll("key_id").length !== 1) return null;
+    const signature = trailer.get("signature");
+    const keyId = trailer.get("key_id");
+    if (!signature || !/^[A-Za-z0-9_-]{1,256}={0,2}$/.test(signature) ||
+        !keyId || !/^\d{1,20}$/.test(keyId)) return null;
+    if (params.has("signature") || params.has("key_id")) return null;
+    const required = ["user_id", "custom_data", "transaction_id"];
+    for (const field of required) {
+      const values = params.getAll(field);
+      if (values.length !== 1 || !values[0]?.trim() ||
+          values[0].length > 256 || values[0].includes("/") ||
+          [...values[0]].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
+          values[0] === "." || values[0] === "..") return null;
+    }
 
     const pem = await this.keyProvider(keyId);
     if (!pem) return null;
 
-    const verifier = createVerify("SHA256");
-    verifier.update(message);
-    const valid = verifier.verify(
-      pem,
-      Buffer.from(signature, "base64url"),
-    );
-    if (!valid) return null;
+    try {
+      const verifier = createVerify("SHA256");
+      verifier.update(message);
+      if (!verifier.verify(pem, Buffer.from(signature, "base64url"))) return null;
+    } catch {
+      return null;
+    }
 
     return {
       userId: params.get("user_id") ?? "",

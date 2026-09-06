@@ -1,5 +1,5 @@
 /**
- * Günlük token sayacı testleri (Gemini cost guard).
+ * Günlük token sayacı testleri (OpenAI cost guard).
  */
 import { describe, expect, it } from "vitest";
 

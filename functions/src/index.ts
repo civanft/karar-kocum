@@ -12,7 +12,7 @@ import { initializeApp } from "firebase-admin/app";
 
 initializeApp();
 
-// AI analiz (Gemini) — çekirdek özellik.
+// AI analiz (OpenAI, sunucu tarafı) — çekirdek özellik.
 export { analyzeDecision } from "./ai/analyze.js";
 
 // Ödüllü reklam kredisi (7A): bilet callable'ı + AdMob SSV callback'i.

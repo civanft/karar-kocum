@@ -1,6 +1,6 @@
 /**
  * Sadeleştirilmiş boru hattı testleri (6C-3): doğrulama → rate/kredi/
- * kesici sırası → Gemini → tek commit. Kota adaleti invariant'ları
+ * kesici sırası → AI sağlayıcısı → tek commit. Kota adaleti invariant'ları
  * (6C-2) korunur: hata/moderasyon/rate reddi kredi YAKMAZ.
  */
 import { describe, expect, it } from "vitest";
@@ -179,7 +179,7 @@ describe("koruma sırası", () => {
     expect((error as AppError).message).toContain(
       "Bugünkü analiz limiti doldu",
     );
-    expect(gateway.completions).toBe(1); // ikinci istek Gemini'ye gitmedi
+    expect(gateway.completions).toBe(1); // ikinci istek sağlayıcıya gitmedi
     expect(ports.credits).toBe(4); // yalnız ilk analiz kredi düşürdü
   });
 

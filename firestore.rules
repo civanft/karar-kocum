@@ -120,6 +120,8 @@ service cloud.firestore {
       // GÖNDEREMEZ — başlangıç değerlerini sunucu (lazy-init) uygular.
       allow create: if accountActive(uid)
         && request.resource.data.plan == 'free'
+        && !('planExpiresAt' in request.resource.data)
+        && !('quota' in request.resource.data)
         && !('freeAnalysisCredits' in request.resource.data)
         && !('rewardCredits' in request.resource.data)
         // Sayaç alanları ilk yazımda da yalnız atomik karar create'iyle:

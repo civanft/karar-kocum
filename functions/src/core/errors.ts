@@ -140,7 +140,6 @@ export function toHttpsError(error: unknown, ctx: RequestContext): HttpsError {
   if (error instanceof AppError) {
     log("warn", "request_failed", ctx, {
       errorCode: error.code,
-      errorMessage: error.message,
     });
     return new HttpsError(HTTPS_CODE[error.code], error.message, {
       appCode: error.code,
