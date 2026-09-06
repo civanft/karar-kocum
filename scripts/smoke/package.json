@@ -7,6 +7,6 @@
     "test": "node --test firebase_config.test.mjs"
   },
   "dependencies": {
-    "firebase": "^12.17.1"
+    "firebase": "^12.18.0"
   }
 }
