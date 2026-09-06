@@ -77,6 +77,23 @@ describe("SsvVerifier", () => {
       await new SsvVerifier(keyProvider).verify("user_id=u1&custom_data=t"),
     ).toBeNull();
   });
+
+  it("imzalanmamış son eke eklenen kimlik/bilet alanları reddedilir", async () => {
+    const unsignedIdentity = signedQuery({ ad_network: "5450213213286189855" }) +
+      "&user_id=u1&custom_data=ticket-1&transaction_id=tx-9";
+    expect(await new SsvVerifier(keyProvider).verify(unsignedIdentity)).toBeNull();
+  });
+
+  it("imzalı alanların tekrarları ve yol ayraçları reddedilir", async () => {
+    const duplicate = signedQuery(payload) + "&custom_data=ticket-2";
+    expect(await new SsvVerifier(keyProvider).verify(duplicate)).toBeNull();
+    expect(await new SsvVerifier(keyProvider).verify(
+      signedQuery({ ...payload, custom_data: "a/b" }),
+    )).toBeNull();
+    expect(await new SsvVerifier(keyProvider).verify(
+      signedQuery({ ...payload, transaction_id: "" }),
+    )).toBeNull();
+  });
 });
 
 // ---- Bilet durum makinesi (bellek içi atomik depo) ----

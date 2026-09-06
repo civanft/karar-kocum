@@ -1,5 +1,5 @@
 /**
- * Günlük GLOBAL token tüketim sayacı — Gemini cost guard.
+ * Günlük GLOBAL token tüketim sayacı — OpenAI cost guard.
  *
  * $0,15/gün USD kesici ve 20/gün adet limitine EK üçüncü emniyet:
  * gerçekleşen giriş+çıkış token toplamını gün bazında biriktirir ve

@@ -63,6 +63,19 @@ credentials.json
 .netrc
 .env
 .env.*
+!/.env.example
+# Firebase emulator secret overrides are not ordinary .env files.
+.secret.local
+.secret.*
+!/functions/.secret.local.example
+!/functions/.env.example
+.secrets/
+.gcloud/
+id_rsa
+id_ed25519
+id_ecdsa
+__pycache__/
+*.py[cod]
 
 # --- IDE ---
 .idea/

@@ -35,7 +35,7 @@ Future<void> main() async {
     );
   }, (error, stackTrace) {
     // Zone dışına sızan son savunma hattı — Crashlytics hazırsa oraya.
-    debugPrint('Yakalanmamış hata: $error');
+    if (!kReleaseMode) debugPrint('Yakalanmamış hata: $error');
   });
 }
 

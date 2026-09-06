@@ -44,6 +44,26 @@ describe("toHttpsError", () => {
     });
   });
 
+  it("beklenen AppError mesajı sunucu loguna yazılmaz", () => {
+    const sentinel = "private-decision-title-sentinel";
+    const written: unknown[] = [];
+    vi.spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      written.push(args);
+    });
+
+    const converted = toHttpsError(
+      new AppError("invalid-argument", `Geçersiz içerik: ${sentinel}`),
+      ctx,
+    );
+
+    expect(converted.message).toContain(sentinel);
+    expect(JSON.stringify(written)).not.toContain(sentinel);
+    expect(written[0]).toEqual([
+      "request_failed",
+      expect.objectContaining({ errorCode: "invalid-argument" }),
+    ]);
+  });
+
   it("bilinmeyen hata: iç mesaj istemciye SIZMAZ", () => {
     const e = toHttpsError(
       new Error("OPENAI_API_KEY sk-abc123 ile bağlantı hatası"),
@@ -154,5 +174,25 @@ describe("logger hijyeni", () => {
       tier: "basic",
     });
     expect(clean).toEqual({ tokensIn: 1500, tier: "basic" });
+  });
+
+  it("iç içe credential alanları ve bilinen token biçimleri loglanmaz", () => {
+    const fakeKey = "sk-proj-" + "a".repeat(45);
+    const clean = sanitizeFields({
+      headers: { Authorization: "private-sentinel", Cookie: "private-sentinel" },
+      data: [{ api_key: "private-sentinel", refreshToken: "private-sentinel", tokensIn: 12 }],
+      credentials: { nested: "private-sentinel" },
+      diagnostic: `upstream ${fakeKey}`,
+      private_key: "private-sentinel",
+    });
+    expect(JSON.stringify(clean)).not.toContain("private-sentinel");
+    expect(JSON.stringify(clean)).not.toContain(fakeKey);
+    expect(clean.data).toEqual([{ tokensIn: 12 }]);
+  });
+
+  it("döngüsel nesneler loglamayı çökertmez", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() => JSON.stringify(sanitizeFields(cyclic))).not.toThrow();
   });
 });

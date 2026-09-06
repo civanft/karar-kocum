@@ -136,6 +136,15 @@ describe("users belgesi", () => {
     );
   });
 
+  it("NEGATİF: ilk profilde sunucu quota/planExpiresAt alanları reddedilir", async () => {
+    await assertFails(db("ali").doc("users/ali").set({
+      plan: "free", quota: { used: 0, limit: 999999 },
+    }));
+    await assertFails(db("ali").doc("users/ali").set({
+      plan: "free", planExpiresAt: "2099-12-31",
+    }));
+  });
+
   it("NEGATİF: plan/quota alanları istemciden değiştirilemez", async () => {
     await env.withSecurityRulesDisabled(async (admin) => {
       await admin

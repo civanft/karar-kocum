@@ -1,2 +1,0 @@
-functions/src/core/secrets.ts: *   npx firebase-tools functions:secrets:set GEMINI_API_KEY
-functions/src/core/secrets.ts:export const geminiApiKey = defineSecret("GEMINI_API_KEY");

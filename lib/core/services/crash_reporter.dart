@@ -16,12 +16,25 @@ abstract interface class CrashReporter {
   });
 }
 
+/// Never send arbitrary exception messages, reasons or diagnostic collectors
+/// to a third party: SDK errors can embed request data or credentials.
+Object safeCrashError(Object error) =>
+    StateError('Application error (${error.runtimeType})');
+
+FlutterErrorDetails safeFlutterErrorDetails(FlutterErrorDetails details) =>
+    FlutterErrorDetails(
+      exception: safeCrashError(details.exception),
+      stack: details.stack,
+      library: 'application',
+    );
+
 class FirebaseCrashReporter implements CrashReporter {
   const FirebaseCrashReporter();
 
   @override
   Future<void> recordFlutterError(FlutterErrorDetails details) =>
-      FirebaseCrashlytics.instance.recordFlutterFatalError(details);
+      FirebaseCrashlytics.instance
+          .recordFlutterFatalError(safeFlutterErrorDetails(details));
 
   @override
   Future<void> recordError(
@@ -31,7 +44,7 @@ class FirebaseCrashReporter implements CrashReporter {
     String? reason,
   }) =>
       FirebaseCrashlytics.instance
-          .recordError(error, stackTrace, fatal: fatal, reason: reason);
+          .recordError(safeCrashError(error), stackTrace, fatal: fatal);
 }
 
 class NoopCrashReporter implements CrashReporter {
@@ -39,7 +52,7 @@ class NoopCrashReporter implements CrashReporter {
 
   @override
   Future<void> recordFlutterError(FlutterErrorDetails details) async {
-    FlutterError.presentError(details); // geliştirmede konsola düşsün
+    if (!kReleaseMode) FlutterError.presentError(details);
   }
 
   @override
@@ -49,7 +62,7 @@ class NoopCrashReporter implements CrashReporter {
     bool fatal = false,
     String? reason,
   }) async {
-    debugPrint('CrashReporter(noop): $reason $error');
+    if (!kReleaseMode) debugPrint('CrashReporter(noop): $reason $error');
   }
 }
 
