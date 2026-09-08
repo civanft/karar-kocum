@@ -80,9 +80,31 @@ class _ResultScreenState extends ConsumerState<ResultScreen> {
           appBar: widget.returnHomeOnBack ? AppBar(leading: _leading) : null,
           body: const Center(child: CircularProgressIndicator()),
         ),
-        error: (e, _) => Scaffold(
+        // Ham exception ASLA gösterilmez (İş Paketi 4 / Dilim D).
+        error: (_, __) => Scaffold(
           appBar: AppBar(leading: _leading),
-          body: Center(child: Text('Yüklenemedi: $e')),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off_outlined, size: 40),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Sonuç yüklenemedi. Bağlantını kontrol edip tekrar dene.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: () => ref
+                        .invalidate(decisionEditorProvider(widget.decisionId)),
+                    child: const Text('Tekrar Dene'),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
         data: (decision) {
           if (!decision.isScoreMatrixComplete) {

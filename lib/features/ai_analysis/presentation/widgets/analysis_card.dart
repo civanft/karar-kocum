@@ -75,6 +75,7 @@ class AnalysisStateView extends StatelessWidget {
     this.onRetry,
     this.onReanalyze,
     this.onFeedback,
+    this.onRetryRestore,
   });
 
   final AnalysisState state;
@@ -86,6 +87,9 @@ class AnalysisStateView extends StatelessWidget {
   final VoidCallback? onReanalyze;
   final ValueChanged<bool>? onFeedback;
 
+  /// Kalıcı analiz okuması başarısızsa YALNIZ okumayı tekrarlar.
+  final VoidCallback? onRetryRestore;
+
   @override
   Widget build(BuildContext context) {
     return AnimatedSwitcher(
@@ -94,14 +98,35 @@ class AnalysisStateView extends StatelessWidget {
       child: switch (state) {
         AnalysisIdle() =>
           _IdleCard(onAnalyze: onAnalyze, remainingCredits: remainingCredits),
+        // Kalıcı analiz okunuyor: CTA GÖSTERİLMEZ. Aksi hâlde daha önce
+        // ödenmiş bir sonuç varken bir an "Analizi Başlat" parlar ve
+        // kullanıcı gereksiz yere yeni bir analiz başlatabilirdi.
+        AnalysisRestoring() => const _RestoringCard(),
+        // Yarım kalan analiz: CTA metni farklıdır ki kullanıcı yeni bir
+        // analiz başlatmadığını, asılı kalanı sürdürdüğünü anlasın.
+        AnalysisResumable() => _IdleCard(
+            onAnalyze: onAnalyze,
+            remainingCredits: remainingCredits,
+            resumable: true,
+          ),
+        AnalysisRestoreError(:final message) => _ErrorCard(
+            message: message,
+            retryable: true,
+            onRetry: onRetryRestore,
+          ),
         AnalysisLoading() => const _LoadingCard(),
-        AnalysisSuccess(:final analysis) => _SuccessCard(
+        AnalysisSuccess(:final analysis, :final lastFailureMessage) =>
+          _SuccessCard(
             analysis: analysis,
             onReanalyze: onReanalyze,
             onFeedback: onFeedback,
+            lastFailureMessage: lastFailureMessage,
           ),
-        AnalysisError(:final message, :final retryable) =>
-          _ErrorCard(message: message, retryable: retryable, onRetry: onRetry),
+        AnalysisError(:final message, :final retryable) => _ErrorCard(
+            message: message,
+            retryable: retryable,
+            onRetry: onRetry,
+          ),
         AnalysisQuotaExceeded(:final totalCredits) =>
           _QuotaCard(totalCredits: totalCredits),
       },
@@ -112,9 +137,17 @@ class AnalysisStateView extends StatelessWidget {
 // ---- 1. Boş durum: CTA ----
 
 class _IdleCard extends StatelessWidget {
-  const _IdleCard({this.onAnalyze, this.remainingCredits});
+  const _IdleCard({
+    this.onAnalyze,
+    this.remainingCredits,
+    this.resumable = false,
+  });
   final VoidCallback? onAnalyze;
   final int? remainingCredits;
+
+  /// Yarım kalan bir analiz sürdürülüyor: kullanıcı YENİ bir analiz
+  /// başlatmadığını, asılı kalanı devam ettirdiğini anlamalı.
+  final bool resumable;
 
   @override
   Widget build(BuildContext context) {
@@ -133,16 +166,21 @@ class _IdleCard extends StatelessWidget {
           ),
           const SizedBox(height: AppTokens.s2),
           Text(
-            'Kararını tarafsız gözle değerlendirt: güçlü ve zayıf yönler, '
-            'gözden kaçan riskler ve net bir öneri.',
+            resumable
+                ? 'Önceki analiz tamamlanmadı. Kaldığı yerden sürdürebilirsin; '
+                    'bu yeni bir analiz başlatmaz.'
+                : 'Kararını tarafsız gözle değerlendirt: güçlü ve zayıf yönler, '
+                    'gözden kaçan riskler ve net bir öneri.',
             style: theme.textTheme.bodyMedium
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: AppTokens.s4),
           FilledButton.icon(
             onPressed: onAnalyze,
-            icon: const Icon(Icons.auto_awesome),
-            label: const Text('AI Analizini Başlat'),
+            icon: Icon(resumable ? Icons.play_arrow : Icons.auto_awesome),
+            label: Text(
+              resumable ? 'Yarım kalan analizi sürdür' : 'AI Analizini Başlat',
+            ),
           ),
           if (remainingCredits != null) ...[
             const SizedBox(height: AppTokens.s2),
@@ -160,6 +198,43 @@ class _IdleCard extends StatelessWidget {
 }
 
 // ---- 2. Loading: iskelet + nabız ----
+
+/// Kalıcı analiz okunurken gösterilen SAKİN yer tutucu.
+///
+/// Ücretli analiz sırasındaki [_LoadingCard] ile kasıtlı olarak farklıdır:
+/// burada hiçbir şey harcanmıyor, yalnız mevcut sonuç getiriliyor.
+class _RestoringCard extends StatelessWidget {
+  const _RestoringCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      label: 'Analiz yükleniyor',
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Row(
+            children: [
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  'Analiz yükleniyor…',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _LoadingCard extends StatefulWidget {
   const _LoadingCard();
@@ -250,11 +325,16 @@ class _SuccessCard extends StatelessWidget {
     required this.analysis,
     this.onReanalyze,
     this.onFeedback,
+    this.lastFailureMessage,
   });
 
   final AiAnalysis analysis;
   final VoidCallback? onReanalyze;
   final ValueChanged<bool>? onFeedback;
+
+  /// Son yeniden-analiz denemesi başarısızsa güvenli mesaj. Mevcut analiz
+  /// EKRANDA KALIR; hata ayrı bir satırda gösterilir.
+  final String? lastFailureMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -274,6 +354,30 @@ class _SuccessCard extends StatelessWidget {
               _ConfidenceBadge(analysis.confidence),
             ],
           ),
+          if (lastFailureMessage != null) ...[
+            const SizedBox(height: AppTokens.s2),
+            Semantics(
+              liveRegion: true,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 18,
+                    color: theme.colorScheme.error,
+                  ),
+                  const SizedBox(width: AppTokens.s2),
+                  Expanded(
+                    child: Text(
+                      lastFailureMessage!,
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.error),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: AppTokens.s3),
 
           // Öneri bandı

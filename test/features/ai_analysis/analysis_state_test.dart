@@ -34,7 +34,10 @@ void main() {
     return container;
   }
 
-  test('başlangıç durumu Idle (boş durum)', () {
+  // İŞ PAKETİ 4: kalıcı analiz restore'u YALNIZ Firebase hazırken çalışır.
+  // Bu süit Firebase'siz koşar, dolayısıyla açılış durumu Idle KALIR —
+  // localMode/test akışı değişmedi.
+  test('başlangıç durumu Idle (Firebase hazır değil → restore yok)', () {
     final c = make(_StubClient(AiAnalysis.mock()));
     expect(c.read(analysisControllerProvider('d1')), isA<AnalysisIdle>());
   });
