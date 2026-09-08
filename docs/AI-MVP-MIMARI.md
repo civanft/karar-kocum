@@ -133,3 +133,142 @@ TEKNIK-MIMARI.md      ← §5 fonksiyon envanteri güncellenir (2 fonksiyon MVP-
 1. **Çift istek = çift kota/maliyet** (cache yok) — UI koruması + rate limit + $0,35 tavan üçlüsü zararı sınırlar; kota adaleti kuralı (hatada yanmaz) korunur.
 2. **Analiz geçmişi yok** (`latest` üzerine yazar) — karşılaştırma UI'ı (v1.2) gelirse alt koleksiyon zaten hazır, yalnız kimlik üretimi değişir.
 3. **Prompt rollback = deploy** — MVP hızında kabul; kalite regresyon seti (20 senaryo) deploy öncesi elle koşulur.
+
+---
+
+## İstemci Dayanıklılığı (İş Paketi 4)
+
+### Kalıcı analizin geri yüklenmesi
+
+Backend, üretilen analizi `users/{uid}/decisions/{id}/aiAnalyses/latest`
+altında saklar. İstemci bunu **okumuyordu**: uygulama kapanıp açıldığında
+kullanıcı ödediği analizi kaybediyor ve karşısında yeniden
+"AI Analizini Başlat" CTA'sı buluyordu — tekrar basmak yeni bir requestId
+ve **yeni bir kredi** harcaması demekti.
+
+`StoredAnalysisRepository` salt okunur bir porttur; Firestore tipleri
+adaptörün arkasında kalır. Durum makinesi:
+
+| Durum | Anlamı |
+|---|---|
+| `AnalysisRestoring` | Kalıcı sonuç okunuyor. **Kredi harcanmaz.** CTA gösterilmez (flicker yok). |
+| `AnalysisSuccess` | Sonuç var. `lastFailureMessage` doluysa son yeniden-analiz denemesi başarısız olmuş demektir; **önceki sonuç ekranda kalır**. |
+| `AnalysisResumable` | Bekleyen requestId var ama kalıcı sonuç yok. **Otomatik ücretli çağrı yapılmaz**; sürdürmek kullanıcının açık eylemidir ve **aynı requestId** ile devam eder. |
+| `AnalysisRestoreError` | Okuma başarısız. "Tekrar dene" **yalnız okumayı** yeniden başlatır, `analyzeDecision` çağırmaz. |
+
+**Fail-closed:** restore yalnız `FirebaseStatus.ready` **ve** oturum varken
+çalışır. `unavailable`, `localMode` ya da UID yokken Firestore yolu
+kurulmaz — boş UID veya `local-user` ile kullanıcı yolu oluşturulmaz.
+
+#### `localMode` neden kalıcı geri yükleme yapmaz
+
+Bilinçli bir karardır, eksik değil:
+
+1. **Okunacak belge yok.** `localMode` Firebase'in kurulamadığı (ya da
+   kasten kurulmadığı) geliştirme/test modudur; oturum ve Firestore
+   yoktur, dolayısıyla `aiAnalyses/latest` de yoktur.
+2. **Kalıcılaştırılacak sonuç gerçek değil.** Bu modda analizi
+   `MockAiAnalysisClient` üretir. Onu saklayıp geri getirmek, uydurma bir
+   analizi "kaydedilmiş sonucun" yerine koyardı — sahte üretim fallback'i
+   yasağının aynısı.
+3. **Testi zayıflatırdı.** `localMode` için ayrı bir kalıcılık taklidi
+   yazmak, üretimdeki Firestore yolunun yerine test edilen ikinci bir yol
+   doğurur: süit yeşil kalırken üretim yolu kanıtsız kalırdı. Bunun yerine
+   gerçek yol `ready` modunda, sınırdaki sahte depo ile test edilir.
+
+Sözleşme `test/features/ai_analysis/restore_mode_boundaries_test.dart`
+ile kilitlidir: `localMode` ve `unavailable` modlarında depo **hiç
+dinlenmez** ve **hiçbir modda** açılış/geri yükleme sırasında ücretli
+callable çağrılmaz. Ücretli çağrı yalnız kullanıcının açık eylemiyle
+başlar.
+
+Kalıcı belge **katı** eşlenir (`AiAnalysisMapper.fromStored`): eksik ya da
+yanlış tipli belge sessizce "boş ama başarılı" bir analize dönüşmez, güvenli
+bir okuma hatasına yansır. Ham Firestore/Firebase exception'ı UI'a çıkmaz.
+
+### Kayıt durum makinesi
+
+Global `autosaveFailureProvider` kaldırıldı; yerine **karar başına**
+`decisionSaveStateProvider` geldi (`SaveIdle` / `SaveInProgress` /
+`SaveFailed` / `SaveRetrying`). Bir karardaki hata başka kararda görünmez.
+
+- `flushPendingWrites()` artık **sonucu döndürür** (`Failure?`), böylece
+  çağıran başarısızlığı görebilir.
+- Başarısız patch **retry kuyruğunda kalır** ve yeni değişikliklerle
+  birleşir; kullanıcı niyeti sessizce kaybolmaz.
+- Dispose yolundaki eski `silent: true` kaldırıldı: bekleyen yazım
+  gönderilir ve sonucu kayıt defterine yazılabilir.
+- Aynı niyet için eşzamanlı iki flush tek yazım üretir.
+- Kuyrukta yazılacak bir şey kalmadığında durum `SaveIdle`'a oturur;
+  aksi halde boş kuyrukta `retrySave()` `SaveRetrying`de asılı kalırdı.
+
+#### Kayıt durumunun yaşam döngüsü ve sınırı
+
+Durum bir Riverpod ailesinde değil, `SaveStateRegistry` adlı düz bir kayıt
+defterinde tutulur. İki kısıt aynı anda karşılanmak zorundaydı:
+
+- **Yazan taraf dinleyicisiz olabilir.** Editör, kendisini kimse
+  dinlemezken de duruma yazar (dispose yolundaki son yazım, sonuç
+  ekranından gelen taahhüt). `StateProvider.autoDispose.family`'ye
+  dinleyicisiz yazmak arkada bir dispose **zamanlayıcısı** bırakıyor ve
+  widget testlerini "A Timer is still pending" ile düşürüyordu.
+- **Birikim sınırlı olmalı.** `autoDispose` olmayan bir aile ise oturum
+  boyunca açılan **her** karar için kalıcı bir eleman bırakıyordu.
+
+Defter yalnız **idle olmayan** durumları saklar: yazım başarıyla bitince
+girdi silinir. Boyut böylece "şu anda kaydedilememiş karar sayısı" ile
+sınırlıdır, açılmış karar sayısıyla değil. Editör defteri `ref` üzerinden
+değil doğrudan tuttuğu için dispose sonrası son yazımın sonucunu da
+yazabilir; kapanış temizse (bekleyen/uçuşta iş yok) girdi hemen silinir,
+değilse son yazım tamamlandığında silinir — ölü bir editörün durumu bir
+sonraki editöre miras kalmaz. `decisionSaveStateProvider` artık bu
+defterden **türeyen**, yalnız izlenen (hiç yazılmayan) bir provider'dır.
+
+### Tek çıkış kapısı
+
+Düzenleme ekranından çıkan **tüm** yollar — sistem geri hareketi, Android
+geri tuşu, AppBar geri butonu ve "Sonucu Gör" — aynı `_exit` kapısından
+geçer. Paralel ve farklı davranan iki mekanizma yoktur: eskiden yalnız
+"Sonucu Gör" korunuyordu, geri navigasyonu bekleyen yazımı beklemeden
+ekranı kapatıyordu.
+
+Kapı önce bekleyen yazımı flush eder ve **başarısızsa çıkmaz**; mevcut
+`SaveStatusBanner` hata yüzeyi görünür kalır. Meşguliyet bayrağı ilk
+`await`ten önce kurulduğu için çift dokunuş / çift geri hareketi **tek
+flush ve tek navigasyon** üretir. Geri yolu `PopScope(canPop: false)` ile
+yakalanır.
+
+### Uygulama yaşam döngüsünde flush
+
+Ekran `WidgetsBindingObserver`'dır: uygulama `inactive`, `hidden`,
+`paused` ya da `detached` durumuna geçerken bekleyen debounce yazımı
+flush edilir. `flushPendingWrites()` bekleyen yamayı atomik olarak aldığı
+için art arda gelen yaşam döngüsü olayları **ikinci bir yazım üretmez**.
+Hata yutulmaz: durum `SaveFailed`e düşer, niyet kuyrukta kalır ve
+kullanıcı "Tekrar Dene" ile sürdürebilir. Geri çağrıda yakalanmamış async
+exception bırakılmaz.
+
+### Ham hata yüzeyleri
+
+Kullanıcıya ham `$e`, exception sınıfı, backend ayrıntısı veya stack
+gösterilmez. Home listesi yükleme hatası da dahil olmak üzere tüm düşüş
+yolları güvenli Türkçe mesaj + tekrar deneme sunar. Crashlytics sınırına
+giden içerik `safeCrashError` ile `runtimeType`'a indirgenir; `reason`
+alanı sabit teknik koddur (`decision_patch_failed`) ve UI'da gösterilmez.
+
+### Startup timeout / retry
+
+`StartupGate.retryTimeout` (varsayılan 15 sn) başlatmanın sonuçlanması için
+üst sınırdır: Firebase başlatma Future'ı iptal edilemez ve hiç dönmeyebilir,
+bu eskiden spinner'ı sonsuza kadar açık bırakıyordu. Zaman aşımında ekran
+yeniden kullanılabilir olur, **yeni paralel başlatma başlatılmaz** ve geç
+tamamlanan sonuç `attempt` kontrolüyle yok sayılır. `didUpdateWidget` ile
+üst katmanın verdiği yeni durum gate'e yansır. `unavailable` dalında gerçek
+uygulama ağacı **hiç kurulmaz**.
+
+### Gizlilik değişmezleri
+
+- SharedPreferences'ta **yalnız requestId** tutulur; karar başlığı,
+  seçenek, kriter, skor, prompt veya analiz içeriği **yazılmaz**.
+- Kullanıcıya ve loglara ham exception, UID, belge yolu veya provider
+  mesajı **gösterilmez**; Crashlytics'e yalnız sabit `reason` gider.

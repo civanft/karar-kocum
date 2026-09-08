@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/theme/tokens.dart';
+import '../../../../core/widgets/app_empty_hint.dart';
 import '../../../../core/widgets/app_hero_panel.dart';
 import '../../../../core/widgets/app_section_header.dart';
 import '../../../journey/presentation/providers/journey_providers.dart';
@@ -32,10 +33,20 @@ class HomeScreen extends ConsumerWidget {
       body: SafeArea(
         child: decisions.when(
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Center(
+          // Ham exception ASLA gösterilmez (İş Paketi 4): mesajı belge
+          // yolu, UID, karar başlığı veya token taşıyabilir. Güvenli
+          // Türkçe düşüş + tekrar deneme yolu.
+          error: (_, __) => Center(
             child: Padding(
               padding: const EdgeInsets.all(AppTokens.s6),
-              child: Text('Bir şeyler ters gitti: $e'),
+              child: AppEmptyHint(
+                icon: Icons.cloud_off_outlined,
+                title: 'Kararların yüklenemedi',
+                message: 'Bağlantını kontrol edip tekrar dene.',
+                actionLabel: 'Tekrar Dene',
+                actionIcon: Icons.refresh,
+                onAction: () => ref.invalidate(decisionListProvider),
+              ),
             ),
           ),
           data: (list) =>

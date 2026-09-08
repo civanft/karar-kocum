@@ -17,7 +17,19 @@ class StartupGate extends StatefulWidget {
     required this.initialStatus,
     required this.retry,
     required this.appBuilder,
+    this.retryTimeout = defaultRetryTimeout,
   });
+
+  /// Başlatmanın sonuçlanması için beklenen ÜST SINIR (İş Paketi 4 / Dilim E).
+  ///
+  /// Firebase başlatma Future'ı iptal edilemez ve ağ koşullarında hiç
+  /// dönmeyebilir; eskiden bu spinner'ı SONSUZA kadar açık bırakıyor ve
+  /// kullanıcıyı uygulamada mahsur bırakıyordu. 15 saniye, yavaş bir mobil
+  /// bağlantıda başlatmanın tamamlanmasına yetecek kadar uzun, kullanıcıyı
+  /// kaybetmeyecek kadar kısadır. Testler kısa değerle override eder.
+  static const defaultRetryTimeout = Duration(seconds: 15);
+
+  final Duration retryTimeout;
 
   final FirebaseStatus initialStatus;
 
@@ -35,18 +47,36 @@ class _StartupGateState extends State<StartupGate> {
   late FirebaseStatus _status = widget.initialStatus;
   bool _retrying = false;
 
+  /// Zaman aşımına uğramış denemenin GEÇ tamamlanması UI'ı değiştirmemeli.
+  int _attempt = 0;
+
+  @override
+  void didUpdateWidget(StartupGate oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Üst katman yeni bir durum verdiyse gate ESKİ değerde takılı kalmaz.
+    if (widget.initialStatus != oldWidget.initialStatus) {
+      setState(() => _status = widget.initialStatus);
+    }
+  }
+
   Future<void> _onRetry() async {
     // Guard: spinner sürerken ikinci dokunuş ikinci başlatma başlatmasın.
     if (_retrying) return;
+    final attempt = ++_attempt;
     setState(() => _retrying = true);
     FirebaseStatus next;
     try {
-      next = await widget.retry();
+      // Alttaki Future iptal EDİLEMEZ; bu yüzden yeni bir paralel başlatma
+      // BAŞLATILMAZ, yalnız beklemekten vazgeçilir. Geç tamamlanan sonuç
+      // `attempt` kontrolüyle yok sayılır.
+      next = await widget.retry().timeout(widget.retryTimeout);
+    } on TimeoutException {
+      next = FirebaseStatus.unavailable;
     } catch (_) {
-      // Retry'ın kendisi patlarsa da ekran kilitlenmez.
+      // Retry'ın kendisi patlarsa da ekran kilitlenmez; ham hata GÖSTERİLMEZ.
       next = FirebaseStatus.unavailable;
     }
-    if (!mounted) return;
+    if (!mounted || attempt != _attempt) return;
     setState(() {
       _status = next;
       _retrying = false;

@@ -278,7 +278,7 @@ void main() {
       expect(counting.patchCount, 1);
     });
 
-    test('flush hatası: autosaveFailureProvider dolar, state depoyla hizalanır',
+    test('flush hatası: karar bazlı save durumu dolar, state depoyla hizalanır',
         () async {
       final failing = _FailingPatchRepository();
       await failing.upsert(
@@ -304,7 +304,7 @@ void main() {
       e.setCriterionWeight('c1', 9);
       await e.flushPendingWrites();
 
-      expect(fc.read(autosaveFailureProvider), isNotNull);
+      expect(fc.read(decisionSaveStateProvider('d1')), isA<SaveFailed>());
       // otoriter durum: depodaki ağırlık hâlâ 5
       final current = fc.read(decisionEditorProvider('d1')).requireValue;
       expect(current.criteria.single.weight, 5);

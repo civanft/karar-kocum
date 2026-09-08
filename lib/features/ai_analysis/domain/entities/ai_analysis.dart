@@ -69,3 +69,73 @@ class AiAnalysis {
         generatedAt: DateTime(2026, 7, 9, 14, 30),
       );
 }
+
+/// Kalıcı analiz belgesinin KATI eşlemesi (İş Paketi 4 / Dilim A).
+///
+/// [AiAnalysis.fromMap] callable YANITI içindir ve eksik alanları güvenli
+/// varsayılana düşürür — kısmi yanıt UI'ı çökertmesin diye. Kalıcı belge
+/// için bu davranış YANLIŞTIR: bozuk bir belge sessizce "boş ama başarılı"
+/// bir analiz gibi görünür ve kullanıcı ödediği sonucu kaybettiğini
+/// anlamazdı. Bu yüzden okuma katmanı zorunlu alanları DOĞRULAR ve
+/// eksik/yanlış tipli belgeyi reddeder.
+class AiAnalysisMapper {
+  const AiAnalysisMapper._();
+
+  static AiAnalysis fromStored(Map<String, Object?>? data) {
+    if (data == null) throw const StoredAnalysisFormatException();
+
+    final summary = data['summary'];
+    final recommendation = data['recommendation'];
+    if (summary is! String || summary.trim().isEmpty) {
+      throw const StoredAnalysisFormatException();
+    }
+    if (recommendation is! String || recommendation.trim().isEmpty) {
+      throw const StoredAnalysisFormatException();
+    }
+
+    List<String> requireStringList(Object? value) {
+      if (value is! List) throw const StoredAnalysisFormatException();
+      for (final item in value) {
+        if (item is! String) throw const StoredAnalysisFormatException();
+      }
+      return value.cast<String>();
+    }
+
+    final confidence = switch (data['confidence']) {
+      'high' => AnalysisConfidence.high,
+      'medium' => AnalysisConfidence.medium,
+      'low' => AnalysisConfidence.low,
+      _ => throw const StoredAnalysisFormatException(),
+    };
+
+    return AiAnalysis(
+      summary: summary,
+      strengths: requireStringList(data['strengths']),
+      weaknesses: requireStringList(data['weaknesses']),
+      risks: requireStringList(data['risks']),
+      recommendation: recommendation,
+      confidence: confidence,
+      generatedAt: _readTimestamp(data['generatedAt']),
+    );
+  }
+
+  /// Firestore `Timestamp` tipini domain'e sızdırmadan okur. Tanınmayan tip
+  /// belgeyi geçersiz KILMAZ: `generatedAt` zorunlu bir alan değildir.
+  static DateTime? _readTimestamp(Object? value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    try {
+      // Firestore `Timestamp` tipini domain'e IMPORT ETMEDEN okur.
+      // ignore: avoid_dynamic_calls
+      final result = (value as dynamic).toDate();
+      return result is DateTime ? result : null;
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// Kalıcı analiz belgesi okunabilir bir analize dönüştürülemedi.
+class StoredAnalysisFormatException implements Exception {
+  const StoredAnalysisFormatException();
+}

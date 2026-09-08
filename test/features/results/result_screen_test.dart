@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:karar_veriyorum/core/theme/app_theme.dart';
 import 'package:karar_veriyorum/features/ai_analysis/presentation/widgets/analysis_card.dart';
+import 'package:karar_veriyorum/features/decision/domain/entities/decision.dart';
+import 'package:karar_veriyorum/features/decision/domain/repositories/decision_repository.dart';
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_editor.dart';
 import 'package:karar_veriyorum/features/decision/presentation/providers/decision_providers.dart';
 import 'package:karar_veriyorum/features/results/presentation/screens/result_screen.dart';
@@ -13,6 +15,8 @@ import 'package:karar_veriyorum/features/results/presentation/widgets/result_win
 /// Görsel Dilim 3 — ResultScreen sunum hiyerarşisi testleri.
 /// Kural: pumpAndSettle YOK — sınırlı pump.
 void main() {
+  _loadErrorContract();
+
   late ProviderContainer container;
 
   Future<String> pumpScreen(
@@ -178,4 +182,47 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Puan dağılımı'), findsOneWidget);
   });
+}
+
+/// İŞ PAKETİ 4 / DİLİM D — yükleme hatası ham exception SIZDIRMAZ.
+void _loadErrorContract() {
+  testWidgets('load error güvenli mesaj gösterir, raw exception göstermez',
+      (tester) async {
+    // Depo hata fırlatır → editör AsyncError'a düşer → ekran hata dalı.
+    final container = ProviderContainer(
+      overrides: [
+        decisionRepositoryProvider.overrideWithValue(_ThrowingRepository()),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: ResultScreen(decisionId: 'yok')),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('permission-denied'), findsNothing);
+    expect(find.textContaining('StateError'), findsNothing);
+    expect(
+      find.text('Sonuç yüklenemedi. Bağlantını kontrol edip tekrar dene.'),
+      findsOneWidget,
+    );
+    expect(find.text('Tekrar Dene'), findsOneWidget);
+  });
+}
+
+/// Yükleme hatası üreten depo — ham mesaj UI'a SIZMAMALI.
+class _ThrowingRepository implements DecisionRepository {
+  @override
+  Future<Decision?> getById(String id) async =>
+      throw StateError('firestore permission-denied users/u1');
+
+  @override
+  Stream<Decision?> watchById(String id) => const Stream.empty();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

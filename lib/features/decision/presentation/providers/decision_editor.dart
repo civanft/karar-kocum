@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/error/failure.dart';
@@ -15,9 +16,103 @@ import 'decision_providers.dart';
 final autosaveDebounceProvider =
     Provider<Duration>((_) => const Duration(milliseconds: 800));
 
-/// Debounce'lu yazım başarısız olursa buraya düşer (UI snackbar'ı Sprint 3
-/// cilasında bağlanacak); null = son yazım başarılı.
-final autosaveFailureProvider = StateProvider<Failure?>((_) => null);
+/// KARAR BAŞINA kayıt durumu (İş Paketi 4 / Dilim C).
+///
+/// Eskiden tek bir global `autosaveFailureProvider` vardı: bir karardaki
+/// hata teorik olarak başka bir kararda görünebiliyordu ve hiçbir UI onu
+/// izlemediği için kullanıcı niyeti SESSİZCE kayboluyordu.
+sealed class SaveState {
+  const SaveState();
+}
+
+/// Bekleyen yazım yok — her şey kaydedildi.
+class SaveIdle extends SaveState {
+  const SaveIdle();
+}
+
+/// Yazım sürüyor.
+class SaveInProgress extends SaveState {
+  const SaveInProgress();
+}
+
+/// Yazım başarısız. [message] kullanıcıya gösterilebilir; ham exception
+/// ASLA taşınmaz. Bekleyen niyet retry kuyruğunda DURUR.
+class SaveFailed extends SaveState {
+  const SaveFailed(this.message);
+  final String message;
+}
+
+/// Başarısız yazım yeniden deneniyor.
+class SaveRetrying extends SaveState {
+  const SaveRetrying();
+}
+
+/// Kayıt durumlarının SINIRLI kayıt defteri (İş Paketi 4).
+///
+/// İki ayrı kısıt aynı anda karşılanmalıydı:
+///
+/// 1. **Yazan taraf dinleyicisiz olabilir.** Editör, kendisini kimse
+///    dinlemezken de (dispose yolundaki son yazım, sonuç ekranından gelen
+///    taahhüt) duruma yazar. `StateProvider.autoDispose.family`'ye
+///    dinleyicisiz yazmak arkada bir dispose ZAMANLAYICISI bırakıyor ve
+///    widget testlerini "A Timer is still pending" ile düşürüyordu.
+/// 2. **Birikim sınırlı olmalı.** `autoDispose` olmayan bir aile ise
+///    oturum boyunca açılan HER karar için kalıcı bir eleman bırakıyordu.
+///
+/// Çözüm: durum Riverpod ailesinde değil, düz bir kayıt defterinde tutulur.
+/// Editör defteri `ref` üzerinden değil DOĞRUDAN tuttuğu için dispose
+/// sonrası yazım güvenlidir ve hiçbir zamanlayıcı kurulmaz. Defter yalnız
+/// IDLE OLMAYAN durumları saklar: bir yazım başarıyla bittiğinde girdi
+/// SİLİNİR, dolayısıyla boyut "şu anda kaydedilememiş karar sayısı" ile
+/// sınırlıdır — açılmış karar sayısıyla değil.
+class SaveStateRegistry extends ChangeNotifier {
+  final Map<String, SaveState> _states = <String, SaveState>{};
+  bool _disposed = false;
+
+  /// Yalnız IDLE OLMAYAN girdiler — testlerin sınırı kanıtlaması için.
+  int get trackedCount => _states.length;
+
+  SaveState stateOf(String decisionId) =>
+      _states[decisionId] ?? const SaveIdle();
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _states.clear();
+    super.dispose();
+  }
+
+  void write(String decisionId, SaveState next) {
+    // Kapsam kapandıktan sonra (ör. editörün dispose yolundaki son yazımı
+    // konteyner kapanışının ARDINDAN tamamlanır) durum yazılmaz: izleyen
+    // kimse yoktur ve `notifyListeners` atardı.
+    if (_disposed) return;
+    // `SaveState` alt sınıfları const kurulur; aynı değer kanonikleşir.
+    if (stateOf(decisionId) == next) return;
+    if (next is SaveIdle) {
+      _states.remove(decisionId);
+    } else {
+      _states[decisionId] = next;
+    }
+    notifyListeners();
+  }
+
+  /// Ekran/editör kapanırken bekleyen ya da uçuşta iş YOKKEN çağrılır.
+  void clear(String decisionId) => write(decisionId, const SaveIdle());
+}
+
+final saveStateRegistryProvider = ChangeNotifierProvider<SaveStateRegistry>(
+  (_) => SaveStateRegistry(),
+);
+
+/// Karar bazında kayıt durumu — TÜREVDİR, yazılmaz.
+///
+/// `autoDispose` burada güvenli: bu provider'a hiç YAZILMAZ, yalnız
+/// izlenir; dinleyicisiz yazım kaynaklı dispose zamanlayıcısı oluşamaz.
+final decisionSaveStateProvider =
+    Provider.autoDispose.family<SaveState, String>(
+  (ref, decisionId) => ref.watch(saveStateRegistryProvider).stateOf(decisionId),
+);
 
 /// Taslak düzenleme durum makinesi — TEKNIK-MIMARI.md §6.1
 /// Her mutasyon: state güncelle → repository'ye kaydet.
@@ -27,15 +122,34 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
   DecisionPatch? _pendingPatch;
   Timer? _debounceTimer;
 
+  /// Aynı anda tek yazım: iki flush aynı patch'i bağımsız GÖNDEREMEZ.
+  Future<Failure?>? _inFlight;
+
+  /// Kayıt defteri DOĞRUDAN tutulur: dispose sonrası son yazımın sonucu da
+  /// (Idle → girdi silinir) yazılabilsin diye `ref` üzerinden okunmaz.
+  late final SaveStateRegistry _saveStates;
+
+  /// `state`/`ref` erişimi dispose sonrası geçersiz — yerel bayrakla korunur.
+  bool _disposed = false;
+
   @override
   Future<Decision> build(String arg) async {
     final repo = ref.watch(decisionRepositoryProvider);
     _repo = repo;
+    _saveStates = ref.read(saveStateRegistryProvider);
     ref.onDispose(() {
+      _disposed = true;
       _debounceTimer?.cancel();
-      // Ekrandan çıkarken bekleyen yazım kaybolmasın (fire-and-forget;
-      // ref bu noktadan sonra kullanılamaz, repo alan olarak yakalandı).
-      unawaited(_flushPending(silent: true));
+      // Ekrandan çıkarken bekleyen yazım KAYBOLMAZ: yazımın KENDİSİ
+      // gönderilir — eski `silent: true` yolu hatayı da yazımı da görünmeden
+      // yutuyordu. Kayıt defteri `ref`ten bağımsız olduğu için sonucu
+      // (Idle) yazmaya devam edebiliriz.
+      final patch = _takePending();
+      if (patch != null && !patch.isEmpty) {
+        unawaited(
+          _writePatch(patch).then<void>((_) {}, onError: (Object _) {}),
+        );
+      }
     });
 
     // Audit K-2: tek seferlik okuma yerine canlı akış — harici yazımlar
@@ -81,15 +195,26 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
     // Bekleyen debounce patch'ini bu yazıma katla — ayrı zamanlayıcıdan
     // sonra gelip daha yeni alanları ezmesin (state zinciri tek sıralı).
     final merged = _mergePatches(_takePending(), patchOf(updated));
+    _setSaveState(const SaveInProgress());
     try {
       await ref
           .read(decisionRepositoryProvider)
           .applyPatch(previous.id, merged);
       _trackFunnel(previous, updated);
+      _setSaveState(const SaveIdle());
       return null;
     } catch (error, stackTrace) {
       state = AsyncData(previous); // iyimser güncellemeyi geri al
+      // NİYET KAYBOLMAZ: başarısız patch kuyruğa geri konur ve "Tekrar Dene"
+      // ile aynı niyet yeniden uygulanabilir (İş Paketi 4 / Dilim C).
+      _pendingPatch = _mergePatches(merged, _pendingPatch ?? merged);
+      _setSaveState(
+        const SaveFailed(
+          'Değişiklik kaydedilemedi. Bağlantını kontrol edip tekrar dene.',
+        ),
+      );
       unawaited(
+        // Sabit reason; karar içeriği/UID/patch verisi GÖNDERİLMEZ.
         ref.read(crashReporterProvider).recordError(
               error,
               stackTrace,
@@ -143,26 +268,69 @@ class DecisionEditor extends AutoDisposeFamilyAsyncNotifier<Decision, String> {
         Timer(ref.read(autosaveDebounceProvider), flushPendingWrites);
   }
 
-  /// Bekleyen birleşik yazımı hemen gönderir (slider bırakıldığında,
-  /// ekran kapanırken, ya da testlerde deterministik akış için).
-  Future<void> flushPendingWrites() => _flushPending(silent: false);
-
-  Future<void> _flushPending({required bool silent}) async {
+  /// Bekleyen birleşik yazımı hemen gönderir ve SONUCU DÖNDÜRÜR.
+  ///
+  /// `null` = başarılı. Çağıran (ör. "Sonucu Gör") bunu bekleyip
+  /// başarısızlıkta navigasyonu engelleyebilir.
+  Future<Failure?> flushPendingWrites() {
     _debounceTimer?.cancel();
     _debounceTimer = null;
+    final existing = _inFlight;
+    // Aynı anda ikinci flush AYNI işi paylaşır; çift yazım oluşmaz.
+    if (existing != null) return existing;
     final patch = _takePending();
-    if (patch == null || patch.isEmpty) return;
+    if (patch == null || patch.isEmpty) {
+      // Kaydedilmemiş niyet YOK (her başarısızlık yolu patch'i kuyruğa geri
+      // koyar) → durum IDLE. Aksi halde boş kuyrukta `retrySave`
+      // `SaveRetrying`de takılı kalırdı.
+      _setSaveState(const SaveIdle());
+      return Future<Failure?>.value();
+    }
+    final future = _writePatch(patch);
+    _inFlight = future;
+    return future.whenComplete(() => _inFlight = null);
+  }
+
+  /// Başarısız yazımı AYNI niyetle yeniden dener.
+  Future<Failure?> retrySave() {
+    _setSaveState(const SaveRetrying());
+    return flushPendingWrites();
+  }
+
+  Future<Failure?> _writePatch(DecisionPatch patch) async {
+    _setSaveState(const SaveInProgress());
     try {
       await _repo.applyPatch(arg, patch);
+      _setSaveState(const SaveIdle());
+      return null;
     } catch (error, stackTrace) {
-      if (silent) return; // dispose yolu: provider'lara erişilemez
-      ref.read(autosaveFailureProvider.notifier).state =
-          UnexpectedFailure(error, stackTrace);
+      // NİYET KAYBOLMAZ: başarısız patch kuyruğa geri konur ve sonraki
+      // değişikliklerle birleşerek yeniden denenebilir.
+      _pendingPatch = _mergePatches(patch, _pendingPatch ?? patch);
+      final failure = UnexpectedFailure(error, stackTrace);
+      _setSaveState(
+        const SaveFailed(
+          'Değişiklik kaydedilemedi. Bağlantını kontrol edip tekrar dene.',
+        ),
+      );
       // Otoriter duruma yeniden hizalan (iyimser state depoyla ayrışmasın).
-      final fresh = await _repo.getById(arg);
-      if (fresh != null) state = AsyncData(fresh);
+      if (!_disposed) {
+        final fresh = await _repo.getById(arg);
+        if (fresh != null) state = AsyncData(fresh);
+      }
+      return failure;
     }
   }
+
+  /// Kayıt defterinin SINIRI buradan gelir.
+  ///
+  /// Ölü editörün durumu kimseye gösterilemez ve yeniden denenemez (niyet
+  /// editörle birlikte gitti). Bu yüzden dispose SONRASI her sonuç deftere
+  /// IDLE olarak düşer → girdi silinir. Böylece "ekran kapandıktan sonra
+  /// defterde kalan durum" — birikimin tek kaynağı — mümkün değildir ve
+  /// ölü editörün hatası bir sonraki editöre miras kalmaz.
+  void _setSaveState(SaveState next) =>
+      _saveStates.write(arg, _disposed ? const SaveIdle() : next);
 
   DecisionPatch? _takePending() {
     final patch = _pendingPatch;
