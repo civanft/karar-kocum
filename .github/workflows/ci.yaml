@@ -52,15 +52,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      # `cache: true` KULLANILMAZ: flutter-action bu girdiyle içeride
-      # `actions/cache@v5` çağırıyor ve deponun Actions allowlist politikası
-      # (yalnız civanft/GitHub sahipli + tam SHA pinli aksiyonlar) bunu
-      # reddediyor — iş "Set up job" aşamasında 2 sn'de düşüyordu. SDK'nın
-      # yeniden indirilmesi işi bir miktar yavaşlatır; doğruluğu etkilemez.
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          flutter-version: 3.44.5
-          channel: stable
+      # subosito/flutter-action KULLANILMAZ: `action.yml`'i etiketle
+      # pinlenmiş bir `actions/cache@v5` referansı taşıyor ve deponun
+      # `sha_pinning_required` politikası bunu reddediyor — iş girdiler
+      # değerlendirilmeden, "Set up job" aşamasında düşüyordu (`cache: false`
+      # da çare değil). Politikayı GEVŞETMEK yerine SDK doğrudan kurulur:
+      # tedarik zincirinden bir üçüncü taraf aksiyon tamamen kalkar.
+      - name: Flutter SDK kurulumu (3.44.5)
+        run: |
+          git clone --depth 1 --branch 3.44.5 \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/flutter/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
+      - run: flutter --version
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
       - run: dart format --output=none --set-exit-if-changed lib test
