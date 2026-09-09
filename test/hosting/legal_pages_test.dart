@@ -67,10 +67,30 @@ void main() {
       }
     });
 
-    test('yürürlük tarihi 26 Ağustos 2026', () {
+    // İş Paketi 5: gizlilik politikası MADDİ olarak değişti (AI izin
+    // kapısı, OpenAI saklama beyanı, puanların gönderilmediği düzeltmesi)
+    // ve yürürlük tarihi ilerledi. Koşullar metni değişmedi, tarihi durur.
+    // Sözleşme "sabit tarih" değil, "her sayfada AÇIK bir yürürlük tarihi
+    // var ve politikanınki koşullardan eski değil".
+    test('her yasal sayfada AÇIK yürürlük tarihi var', () {
       for (final key in ['privacy', 'terms']) {
-        expect(_read(_pages[key]!), contains('26 Ağustos 2026'), reason: key);
+        expect(
+          RegExp(r'Yürürlük tarihi: \d{1,2} [^\s<]+ \d{4}')
+              .hasMatch(_read(_pages[key]!)),
+          isTrue,
+          reason: key,
+        );
       }
+    });
+
+    test('kullanım koşullarının yürürlük tarihi DEĞİŞMEDİ', () {
+      expect(_read(_pages['terms']!), contains('26 Ağustos 2026'));
+    });
+
+    test('gizlilik politikası SÜRÜMLÜ ve tarihi güncellendi', () {
+      final html = _read(_pages['privacy']!);
+      expect(html, contains('Politika sürümü'));
+      expect(html, contains('9 Eylül 2026'));
     });
 
     test('gizlilik politikası gerçek mimariyi anlatır', () {
