@@ -16,6 +16,10 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { contentFingerprint } from "../src/ai/analysis_fingerprint";
+import {
+  AI_CONSENT_PATH,
+  AI_CONSENT_VERSION,
+} from "../src/privacy/ai_consent.js";
 import { JournalState } from "../src/ai/analysis_journal";
 import { AnalyzeService } from "../src/ai/analyze_service";
 import { computeCostUsd, utcDayKey } from "../src/ai/cost_control";
@@ -125,6 +129,14 @@ async function seed(credits: number): Promise<void> {
   await db()
     .doc(`users/${UID}/decisions/${DECISION_ID}`)
     .set({ ...CONTENT, status: "draft" });
+
+  // İş Paketi 5: analiz akışı AI işleme izni ister. Gerçek kullanıcı
+  // akışında bu belge disclosure kabul edilince yazılır; fixture onu
+  // taklit eder. İzinsiz davranış ayrıca test edilir
+  // (test/ai_consent_enforcement.test.ts).
+  await db()
+    .doc(`users/${UID}/${AI_CONSENT_PATH}`)
+    .set({ granted: true, version: AI_CONSENT_VERSION, updatedAt: new Date() });
 }
 
 const num = async (path: string, field: string): Promise<number> => {
