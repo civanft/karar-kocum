@@ -52,15 +52,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # Flutter sürümünün TEK KAYNAĞI `.flutter-version` dosyasıdır.
+      # İkinci bir sabit tutmak, birinin güncellenip diğerinin unutulduğu
+      # sessiz sürüm kaymasına yol açıyordu; `test/release/toolchain_pin_test.dart`
+      # workflow'da ikinci bir Flutter sürümü kalmadığını zorlar.
+      - name: Flutter sürümünü repodan oku
+        id: flutter_version
+        run: |
+          set -euo pipefail
+          if [ ! -f .flutter-version ]; then
+            echo "::error::.flutter-version bulunamadı"; exit 1
+          fi
+          version="$(tr -d '[:space:]' < .flutter-version)"
+          # FAIL-CLOSED: boş ya da beklenmeyen biçim derlemeyi durdurur.
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::.flutter-version geçersiz veya boş"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Flutter SDK sürümü (.flutter-version): $version"
+
       # subosito/flutter-action KULLANILMAZ: `action.yml`'i etiketle
       # pinlenmiş bir `actions/cache@v5` referansı taşıyor ve deponun
       # `sha_pinning_required` politikası bunu reddediyor — iş girdiler
       # değerlendirilmeden, "Set up job" aşamasında düşüyordu (`cache: false`
       # da çare değil). Politikayı GEVŞETMEK yerine SDK doğrudan kurulur:
       # tedarik zincirinden bir üçüncü taraf aksiyon tamamen kalkar.
-      - name: Flutter SDK kurulumu (3.44.5)
+      #
+      # DÜRÜST SINIR: `--branch <tag>` tam commit değişmezliği SAĞLAMAZ —
+      # bir etiket yeniden işaretlenebilir. Tedarik zinciri sertleştirmesi
+      # (SDK checksum/mirror) ayrı bir iştir; bkz. docs/RELEASE-RUNBOOK.md.
+      - name: Flutter SDK kurulumu
         run: |
-          git clone --depth 1 --branch 3.44.5 \
+          git clone --depth 1 --branch "${{ steps.flutter_version.outputs.version }}" \
             https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/flutter/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
