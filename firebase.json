@@ -45,9 +45,21 @@
           "projectId": "karar-veriyorum-dev",
           "appId": "1:740423241326:ios:55ca85109095becf04a07f",
           "uploadDebugSymbols": true,
-          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+          "fileOutput": "ios/Runner/Firebase/Development/GoogleService-Info.plist"
         },
         "buildConfigurations": {
+          "Debug": {
+            "projectId": "karar-veriyorum-dev",
+            "appId": "1:740423241326:ios:55ca85109095becf04a07f",
+            "uploadDebugSymbols": false,
+            "fileOutput": "ios/Runner/Firebase/Development/GoogleService-Info.plist"
+          },
+          "Profile": {
+            "projectId": "karar-veriyorum-dev",
+            "appId": "1:740423241326:ios:55ca85109095becf04a07f",
+            "uploadDebugSymbols": false,
+            "fileOutput": "ios/Runner/Firebase/Development/GoogleService-Info.plist"
+          },
           "Release": {
             "projectId": "karar-kocum-production",
             "appId": "1:757453999446:ios:9e8d5edd40111a12f61af7",
