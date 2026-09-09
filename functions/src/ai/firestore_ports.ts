@@ -26,6 +26,7 @@
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 
 import { AppError } from "../core/errors.js";
+import { AI_CONSENT_PATH } from "../privacy/ai_consent.js";
 import { assertAccountActive } from "../privacy/account_deletion_barrier.js";
 import {
   ANALYSIS_REQUESTS_COLLECTION,
@@ -89,6 +90,16 @@ export class FirestoreAnalysisPorts implements AnalysisPorts {
 
   private decisionRef(decisionId: string) {
     return this.db.doc(`users/${this.uid}/decisions/${decisionId}`);
+  }
+
+  /** AI izin belgesi — hesap silme kaskadına dahil (`users/{uid}` altında). */
+  private aiConsentRef() {
+    return this.db.doc(`users/${this.uid}/${AI_CONSENT_PATH}`);
+  }
+
+  async readAiConsent(): Promise<unknown | null> {
+    const snapshot = await this.aiConsentRef().get();
+    return snapshot.exists ? (snapshot.data() ?? null) : null;
   }
 
   async readDecisionContent(decisionId: string): Promise<unknown | null> {

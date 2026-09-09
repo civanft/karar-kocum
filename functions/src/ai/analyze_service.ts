@@ -32,6 +32,7 @@ import {
 } from "./analysis_journal.js";
 import { contentFingerprint } from "./analysis_fingerprint.js";
 import { computeCostUsd } from "./cost_control.js";
+import { assertAiConsent } from "../privacy/ai_consent.js";
 import type { AiGateway, TokenUsage } from "./openai_gateway.js";
 import { estimateUsage, type UsageEstimate } from "./usage_estimate.js";
 import { buildUserMessage, PROMPT_VERSION, SYSTEM_PROMPT } from "./prompt.js";
@@ -111,6 +112,12 @@ export type ReserveOutcome =
   | { status: "rejected"; error: AppError };
 
 export interface AnalysisPorts {
+  /**
+   * AI işleme izin belgesini oku (yoksa null). Ham belge döner; doğrulama
+   * `assertAiConsent` içindedir — port yorum YAPMAZ.
+   */
+  readAiConsent(): Promise<unknown | null>;
+
   /** Kararı SUNUCUDAN oku — istemci payload'ına güven yok. */
   readDecisionContent(decisionId: string): Promise<unknown | null>;
 
@@ -226,6 +233,14 @@ export class AnalyzeService {
       throw new AppError("invalid-argument", "Geçersiz istek.");
     }
     const { decisionId, requestId } = request.data;
+
+    // [1b] AI İŞLEME İZNİ — HER ŞEYDEN ÖNCE (İş Paketi 5 / Dilim C).
+    //
+    // İstemcideki kapı atlatılabilir. Bu kontrol karar içeriği OKUNMADAN,
+    // rezervasyon açılmadan, journal yazılmadan ve sağlayıcıya
+    // dokunulmadan çalışır: izin vermemiş kullanıcının içeriği analiz boru
+    // hattına HİÇ girmez ve hiçbir ücretli işlem başlamaz.
+    await assertAiConsent(() => this.ports.readAiConsent());
 
     // [2] Kararı SUNUCUDAN oku ve doğrula.
     const rawContent = await this.ports.readDecisionContent(decisionId);
