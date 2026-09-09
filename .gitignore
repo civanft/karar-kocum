@@ -27,6 +27,12 @@ migrate_working_dir/
 # gevşetilmez — yalnız bu iki KESİN yol istisnadır.
 !android/app/src/release/google-services.json
 !ios/Runner/Firebase/Production/GoogleService-Info.plist
+# İSTİSNA (İş Paketi 6A): development istemci yapılandırması da izlenir.
+# Gerekçe: Debug/Profile build'i bu dosyaya bağlıdır; izlenmezse temiz bir
+# clone simulator build'i ÜRETEMEZ. Dosya production plist'iyle AYNI
+# anahtar kümesini taşır (API_KEY, GOOGLE_APP_ID, PROJECT_ID, BUNDLE_ID …)
+# ve private key / service-account credential İÇERMEZ.
+!ios/Runner/Firebase/Development/GoogleService-Info.plist
 # .firebaserc commit edilir (yalnız proje takma adları)
 firebase-debug.log
 .firebase/
