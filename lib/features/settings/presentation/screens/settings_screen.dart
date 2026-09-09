@@ -9,6 +9,7 @@ import '../../../../core/services/analytics/analytics_service.dart';
 import '../../../../core/services/external_link_launcher.dart';
 import '../../../../core/theme/tokens.dart';
 import '../../../../core/widgets/app_section_header.dart';
+import '../../../privacy/presentation/widgets/ai_consent_tile.dart';
 import '../../domain/account_deletion.dart';
 import '../providers/settings_providers.dart';
 
@@ -35,6 +36,12 @@ class SettingsScreen extends ConsumerWidget {
               isDeleting: isDeleting,
               onPressed: () => _confirmAndDelete(context, ref),
             ),
+            const SizedBox(height: AppTokens.s4),
+            // İş Paketi 5: AI işleme izni GÖRÜNTÜLENEBİLİR ve GERİ ALINABİLİR.
+            // Analytics izniyle KARIŞTIRILMAZ — bu izin yalnız karar
+            // içeriğinin analiz için OpenAI'ye aktarılmasını kapsar.
+            const AppSectionHeader(title: 'Gizlilik'),
+            const AiConsentTile(),
             const SizedBox(height: AppTokens.s4),
             const AppSectionHeader(title: 'Yasal'),
             const _LegalTile(

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/tokens.dart';
+import '../../../privacy/presentation/providers/ai_consent_providers.dart';
+import '../../../privacy/presentation/widgets/ai_consent_sheet.dart';
 import '../../../quota/presentation/providers/credits_providers.dart';
 import '../../../quota/presentation/widgets/reward_cta.dart';
 import '../../domain/entities/ai_analysis.dart';
@@ -10,23 +12,81 @@ import '../providers/analysis_providers.dart';
 /// Sonuç ekranındaki AI bölümü — provider'a bağlı kabuk.
 /// Görsel katman [AnalysisStateView]'da: galeri ve widget testleri
 /// durumu doğrudan enjekte eder.
-class AnalysisSection extends ConsumerWidget {
+class AnalysisSection extends ConsumerStatefulWidget {
   const AnalysisSection({super.key, required this.decisionId});
   final String decisionId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AnalysisSection> createState() => _AnalysisSectionState();
+}
+
+class _AnalysisSectionState extends ConsumerState<AnalysisSection> {
+  /// TEK NİYET KAPISI (İş Paketi 5 / Dilim B).
+  ///
+  /// "Kabul et ve analizi başlat" ile analiz isteği, tek kullanıcı niyetinin
+  /// kontrollü iki aşamasıdır. Bayrak ilk `await`ten ÖNCE kurulur: çift
+  /// dokunma ne ikinci izin kaydı ne ikinci ücretli çağrı üretir.
+  bool _busy = false;
+
+  String get decisionId => widget.decisionId;
+
+  /// İzin YOKSA hiçbir aktarım başlatılmaz; disclosure açılır.
+  ///
+  /// FAIL CLOSED: izin okunamıyorsa (hata/yükleniyor) da kapı kapalıdır —
+  /// kullanıcıya disclosure gösterilir, sessizce aktarım YAPILMAZ.
+  Future<void> _analyzeWithConsent() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final controller =
+          ref.read(analysisControllerProvider(decisionId).notifier);
+      if (ref.read(aiTransferAllowedProvider)) {
+        await controller.analyze();
+        return;
+      }
+      final accepted = await AiConsentSheet.show(context);
+      if (!accepted || !mounted) return;
+      try {
+        await ref.read(aiConsentRepositoryProvider).grant();
+      } on Object {
+        // Ham hata ASLA yüzeye çıkmaz; izin yazılamadıysa aktarım da yok.
+        if (mounted) _showConsentWriteError();
+        return;
+      }
+      if (!mounted) return;
+      await controller.analyze();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _showConsentWriteError() {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+        content: Text(
+          'İzin kaydedilemedi. Bağlantını kontrol edip tekrar dene.',
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(analysisControllerProvider(decisionId));
     final controller =
         ref.read(analysisControllerProvider(decisionId).notifier);
     final remainingCredits = ref.watch(remainingCreditsProvider).valueOrNull;
+    // İzin akışına ABONE OL: yalnız `read` etmek, henüz ilk değeri
+    // gelmemiş bir provider'ı okumak demekti — izin vermiş kullanıcıya da
+    // her seferinde disclosure açılırdı. İzlemek durumu hazır tutar.
+    ref.watch(aiTransferAllowedProvider);
 
     final view = AnalysisStateView(
       state: state,
       remainingCredits: remainingCredits,
-      onAnalyze: controller.analyze,
-      onRetry: controller.analyze,
-      onReanalyze: () => _confirmReanalyze(context, controller),
+      onAnalyze: _analyzeWithConsent,
+      onRetry: _analyzeWithConsent,
+      onReanalyze: () => _confirmReanalyze(controller),
       onFeedback: (up) => controller.sendFeedback(thumbsUp: up),
     );
 
@@ -37,10 +97,7 @@ class AnalysisSection extends ConsumerWidget {
     return view;
   }
 
-  Future<void> _confirmReanalyze(
-    BuildContext context,
-    AnalysisController controller,
-  ) async {
+  Future<void> _confirmReanalyze(AnalysisController controller) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -61,7 +118,20 @@ class AnalysisSection extends ConsumerWidget {
         ],
       ),
     );
-    if (confirmed == true) await controller.reanalyze();
+    if (confirmed != true) return;
+    // Yeniden analiz de YENİ bir aktarımdır: aynı kapıdan geçer.
+    if (!ref.read(aiTransferAllowedProvider)) {
+      if (!mounted) return;
+      final accepted = await AiConsentSheet.show(context);
+      if (!accepted || !mounted) return;
+      try {
+        await ref.read(aiConsentRepositoryProvider).grant();
+      } on Object {
+        if (mounted) _showConsentWriteError();
+        return;
+      }
+    }
+    await controller.reanalyze();
   }
 }
 
@@ -157,11 +227,27 @@ class _IdleCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: AppTokens.s2,
+            runSpacing: AppTokens.s1,
             children: [
-              Icon(Icons.auto_awesome, color: theme.colorScheme.primary),
-              const SizedBox(width: AppTokens.s2),
+              // İkon dekoratiftir; anlamı YANINDAKİ metin taşır.
+              ExcludeSemantics(
+                child: Icon(
+                  Icons.auto_awesome,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
               Text('AI Analizi', style: theme.textTheme.titleMedium),
+              // İş Paketi 5 / Dilim D: içeriğin AI ile üretileceği CTA'da
+              // AÇIKÇA yazar — kullanıcı butona basmadan önce bilir.
+              Text(
+                'AI ile oluşturulur',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: AppTokens.s2),
@@ -344,13 +430,18 @@ class _SuccessCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
+          // Yüksek text scale + dar ekranda Row TAŞIYORDU: başlık ve güven
+          // rozeti artık alt satıra sarar.
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: AppTokens.s2,
+            runSpacing: AppTokens.s2,
             children: [
-              Icon(Icons.auto_awesome, color: theme.colorScheme.primary),
-              const SizedBox(width: AppTokens.s2),
-              Expanded(
-                child: Text('AI Analizi', style: theme.textTheme.titleMedium),
+              ExcludeSemantics(
+                child:
+                    Icon(Icons.auto_awesome, color: theme.colorScheme.primary),
               ),
+              Text('AI Analizi', style: theme.textTheme.titleMedium),
               _ConfidenceBadge(analysis.confidence),
             ],
           ),
@@ -410,6 +501,13 @@ class _SuccessCard extends StatelessWidget {
           ),
           const SizedBox(height: AppTokens.s3),
 
+          // KALICI AI bildirimi (İş Paketi 5 / Dilim D). Gürültüsüz ama
+          // her zaman görünür: sonucun kaynağı ve sınırı burada.
+          // `liveRegion` KULLANILMAZ — durum değişimi değil, sabit bir
+          // künyedir; ekran okuyucuyu her rebuild'de kesmemeli.
+          const _AiGeneratedNotice(),
+          const SizedBox(height: AppTokens.s3),
+
           Text(analysis.summary, style: theme.textTheme.bodyMedium),
           const SizedBox(height: AppTokens.s4),
 
@@ -433,14 +531,17 @@ class _SuccessCard extends StatelessWidget {
           ),
 
           const Divider(height: AppTokens.s6),
-          Row(
+          // Yüksek text scale'de Spacer'lı Row taşıyordu.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: AppTokens.s2,
             children: [
               Text(
                 'Bu analiz yardımcı oldu mu?',
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
-              const Spacer(),
               IconButton(
                 tooltip: 'Evet',
                 icon: const Icon(Icons.thumb_up_outlined, size: 20),
@@ -666,6 +767,51 @@ class _InsightList extends StatelessWidget {
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Sonuç kartının kalıcı AI künyesi — kaynak + sınır.
+///
+/// Metin TEK BAŞINA tamdır: ikon `ExcludeSemantics` ile gizlenir, renk
+/// tek anlam taşıyıcı değildir.
+class _AiGeneratedNotice extends StatelessWidget {
+  const _AiGeneratedNotice();
+
+  static const text =
+      'AI tarafından oluşturuldu; hata içerebilir. Sağlık, hukuk ve finans '
+      'gibi konularda profesyonel tavsiyenin yerine geçmez.';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(AppTokens.s3),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ExcludeSemantics(
+            child: Icon(
+              Icons.smart_toy_outlined,
+              size: 18,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: AppTokens.s2),
+          Expanded(
+            child: Text(
+              text,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
         ],
       ),
     );
