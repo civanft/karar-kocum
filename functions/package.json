@@ -28,7 +28,7 @@
     "@firebase/rules-unit-testing": "^5.0.1",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.1.11",
-    "eslint": "^9.39.5",
+    "eslint": "^10.10.0",
     "js-tiktoken": "^1.0.21",
     "typescript": "^5.5.3",
     "typescript-eslint": "^8.67.0",
