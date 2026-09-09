@@ -98,9 +98,16 @@ async function seed(): Promise<void> {
   // users ağacının DIŞINDAKİ, uid'e bağlı sayaçlar.
   await store.doc(`rateLimits/${TARGET_UID}`).set({ minute: 1 });
   await store.doc(`rateLimits/${TARGET_UID}:reward`).set({ minute: 1 });
+  // İş Paketi 5: AI izin kaydı da kullanıcı verisidir.
+  await store
+    .doc(`users/${TARGET_UID}/privacy/aiConsent`)
+    .set({ granted: true, version: 1, updatedAt: new Date() });
 
   // Korunması gerekenler.
   await store.doc(`users/${OTHER_UID}`).set({ decisionCount: 1 });
+  await store
+    .doc(`users/${OTHER_UID}/privacy/aiConsent`)
+    .set({ granted: true, version: 1, updatedAt: new Date() });
   await store
     .doc(`users/${OTHER_UID}/decisions/baska-karar`)
     .set({ ownerUid: OTHER_UID, title: "Dokunulmamalı" });
@@ -172,6 +179,27 @@ describe("hesap silme kaskadı — gerçek Firestore + Auth emulator", () => {
     expect(
       await exists(`users/${TARGET_UID}/analysisRequests/${"c".repeat(24)}`),
     ).toBe(false);
+  });
+
+  it("AI izin kaydını da siler ve 'veri kaldı mı' kontrolü onu KAPSAR",
+    async () => {
+    expect(await exists(`users/${TARGET_UID}/privacy/aiConsent`)).toBe(true);
+    await deleteAccountCascade(TARGET_UID, firestoreAccountDeletionPorts);
+    expect(await exists(`users/${TARGET_UID}/privacy/aiConsent`)).toBe(false);
+
+    // Kaskad "bitti" demeden ÖNCE bu alt koleksiyonu da doğrulamalı:
+    // yalnız izin kaydı kalsa bile temizlik BİTMEMİŞ sayılmalı.
+    await db()
+      .doc(`users/${TARGET_UID}/privacy/aiConsent`)
+      .set({ granted: true, version: 1, updatedAt: new Date() });
+    expect(
+      await firestoreAccountDeletionPorts.userDataRemains(TARGET_UID),
+    ).toBe(true);
+  });
+
+  it("BAŞKA kullanıcının izin kaydına dokunmaz", async () => {
+    await deleteAccountCascade(TARGET_UID, firestoreAccountDeletionPorts);
+    expect(await exists(`users/${OTHER_UID}/privacy/aiConsent`)).toBe(true);
   });
 
   it("her iki rateLimits belgesini de siler", async () => {

@@ -9,6 +9,7 @@ import {
   type RulesTestContext,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
+import firebase from "firebase/compat/app";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
@@ -1067,5 +1068,106 @@ describe("hesap silme bariyeri (İş Paketi 3)", () => {
     );
     const anon = env.unauthenticatedContext().firestore();
     await assertFails(anon.doc(`accountDeletionBlocks/${BLOCKED}`).get());
+  });
+});
+
+
+describe("AI işleme izni (İş Paketi 5)", () => {
+  const serverTime = () => firebase.firestore.FieldValue.serverTimestamp();
+  const path = (uid: string) => `users/${uid}/privacy/aiConsent`;
+  const valid = () => ({ granted: true, version: 1, updatedAt: serverTime() });
+
+  it("sahibi izin verebilir (sunucu zaman damgasıyla)", async () => {
+    await assertSucceeds(db("ali").doc(path("ali")).set(valid()));
+  });
+
+  it("sahibi kendi iznini OKUYABİLİR", async () => {
+    await assertSucceeds(db("ali").doc(path("ali")).get());
+  });
+
+  it("sahibi izni GERİ ALABİLİR (granted:false)", async () => {
+    await assertSucceeds(db("ali").doc(path("ali")).set(valid()));
+    await assertSucceeds(
+      db("ali").doc(path("ali")).set({
+        granted: false,
+        version: 1,
+        updatedAt: serverTime(),
+      }),
+    );
+  });
+
+  it("BAŞKASININ izni okunamaz", async () => {
+    await assertFails(db("veli").doc(path("ali")).get());
+  });
+
+  it("BAŞKASININ izni yazılamaz", async () => {
+    await assertFails(db("veli").doc(path("ali")).set(valid()));
+  });
+
+  it("İSTEMCİ zaman damgası REDDEDİLİR (sunucu saati zorunlu)", async () => {
+    await assertFails(
+      db("ali").doc(path("ali")).set({
+        granted: true,
+        version: 1,
+        updatedAt: new Date(2000, 0, 1),
+      }),
+    );
+  });
+
+  it("BEKLENMEYEN alan REDDEDİLİR", async () => {
+    await assertFails(
+      db("ali").doc(path("ali")).set({
+        granted: true,
+        version: 1,
+        updatedAt: serverTime(),
+        escalate: true,
+      }),
+    );
+  });
+
+  it("EKSİK alan REDDEDİLİR", async () => {
+    await assertFails(
+      db("ali").doc(path("ali")).set({ granted: true, updatedAt: serverTime() }),
+    );
+  });
+
+  it("YANLIŞ TİP REDDEDİLİR", async () => {
+    await assertFails(
+      db("ali").doc(path("ali")).set({
+        granted: "evet",
+        version: 1,
+        updatedAt: serverTime(),
+      }),
+    );
+    await assertFails(
+      db("ali").doc(path("ali")).set({
+        granted: true,
+        version: "1",
+        updatedAt: serverTime(),
+      }),
+    );
+  });
+
+  it("izin kaydı SİLİNEMEZ (geri alma yazımdır, silme değil)", async () => {
+    await assertSucceeds(db("ali").doc(path("ali")).set(valid()));
+    await assertFails(db("ali").doc(path("ali")).delete());
+  });
+
+  it("privacy altındaki BAŞKA belge istemciye kapalı", async () => {
+    await assertFails(
+      db("ali").doc("users/ali/privacy/uydurma").set({ x: 1 }),
+    );
+  });
+
+  it("hesap silme bariyeri açıkken izin YAZILAMAZ", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc("accountDeletionBlocks/ali").set({
+        schemaVersion: 1,
+        state: "deleting",
+        startedAt: new Date(),
+        expiresAt: new Date(Date.now() + 3600_000),
+      });
+    });
+    await assertFails(db("ali").doc(path("ali")).set(valid()));
   });
 });

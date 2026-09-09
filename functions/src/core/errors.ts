@@ -26,6 +26,8 @@ export type AppErrorCode =
   | "superseded"
   /** Hesap silme bariyeri açık: bu UID için yeni veri oluşturulamaz. */
   | "account-deleting"
+  /** AI işleme izni yok, geri alınmış, eski sürüm ya da okunamadı. */
+  | "ai-consent-required"
   | "unimplemented"
   | "internal";
 
@@ -45,6 +47,8 @@ const HTTPS_CODE: Record<AppErrorCode, FunctionsErrorCode> = {
   superseded: "aborted",
   // Kalıcı ön koşul ihlali: hesap siliniyor, tekrar denemek durumu değiştirmez.
   "account-deleting": "failed-precondition",
+  // Kalıcı ön koşul: izin verilene kadar hiçbir tekrar sonucu değiştirmez.
+  "ai-consent-required": "failed-precondition",
   unimplemented: "unimplemented",
   internal: "internal",
 };
@@ -84,6 +88,8 @@ const RETRY_DIRECTIVE: Record<AppErrorCode, RetryDirective> = {
   superseded: "new",
   // Hesap siliniyor: hiçbir tekrar bunu değiştirmez.
   "account-deleting": "none",
+  // İzin verilmeden tekrar denemek aynı sonucu verir; kullanıcı eylemi gerekir.
+  "ai-consent-required": "none",
   // Genel iç hata: finalization bekliyor olabilir → aynı anahtar tamamlar.
   internal: "same",
 };

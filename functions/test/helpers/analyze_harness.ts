@@ -23,6 +23,7 @@ import {
   type ReserveOutcome,
   type StoredAnalysis,
 } from "../../src/ai/analyze_service";
+import { AI_CONSENT_VERSION } from "../../src/privacy/ai_consent.js";
 import type { UsageEstimate } from "../../src/ai/usage_estimate";
 import {
   ANALYSIS_RESERVATION_STALE_MS as STALE_MS,
@@ -83,6 +84,16 @@ const newCounter = (): Counter => ({ records: 0, total: 0, failNext: false });
 
 export class HarnessPorts implements AnalysisPorts {
   content: unknown | null = validContent;
+  /** Kaç kez karar içeriği okundu — izin kapısının SIRASINI kanıtlar. */
+  contentReads = 0;
+  /** Varsayılan: geçerli izin. Testler bunu bilinçli olarak bozar. */
+  aiConsent: unknown | null = {
+    granted: true,
+    version: AI_CONSENT_VERSION,
+    updatedAt: 1_700_000_000_000,
+  };
+  /** Doluysa izin okuması FIRLATIR (fail-closed testi). */
+  consentReadError: Error | null = null;
   plan: "free" | "premium" = "free";
   /** null = alan hiç yazılmamış (yeni kullanıcı) → sunucu lazy-init. */
   credits: number | null = null;
@@ -122,7 +133,13 @@ export class HarnessPorts implements AnalysisPorts {
     },
   ) {}
 
+  async readAiConsent(): Promise<unknown | null> {
+    if (this.consentReadError) throw this.consentReadError;
+    return this.aiConsent;
+  }
+
   async readDecisionContent() {
+    this.contentReads++;
     return this.content;
   }
 

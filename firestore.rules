@@ -131,6 +131,40 @@ service cloud.firestore {
 
       allow delete: if false; // silme yalnız deleteAccount fonksiyonu üzerinden
 
+      // ---- AI İŞLEME İZNİ (İş Paketi 5) ----
+      //
+      // Kullanıcı kendi iznini görebilir, verebilir ve geri alabilir; başka
+      // hiç kimse okuyamaz. Şema KATIDIR: beklenmeyen alan reddedilir —
+      // aksi hâlde istemci sunucunun anlamadığı bir alan yazıp izin
+      // sözleşmesini iki tarafta farklı anlaşılır hâle getirebilirdi.
+      //
+      // `updatedAt == request.time`: zaman damgası SUNUCU saatidir.
+      // İstemci geçmiş/gelecek bir tarih yazıp izin geçmişini
+      // çarpıtamaz (serverTimestamp() zorunlu).
+      match /privacy/aiConsent {
+        function consentShapeValid() {
+          let d = request.resource.data;
+          return d.keys().hasOnly(['granted', 'version', 'updatedAt'])
+            && d.keys().hasAll(['granted', 'version', 'updatedAt'])
+            && d.granted is bool
+            && d.version is int
+            && d.version > 0
+            && d.updatedAt == request.time;
+        }
+        allow read: if accountActive(uid);
+        allow create, update: if accountActive(uid) && consentShapeValid();
+        // Kayıt silinmez: geri alma `granted:false` YAZIMIDIR — böylece
+        // "hiç sorulmadı" ile "reddedildi" birbirine karışmaz.
+        allow delete: if false;
+      }
+
+      // İzin dışındaki privacy belgeleri istemciye KAPALI (ileride sunucu
+      // yazarsa istemci uydurma belge oluşturamasın).
+      match /privacy/{docId} {
+        allow read: if accountActive(uid) && docId == 'aiConsent';
+        allow write: if false;
+      }
+
       match /decisions/{decisionId} {
         function decisionValid() {
           let d = request.resource.data;

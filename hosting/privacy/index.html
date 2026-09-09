@@ -10,7 +10,7 @@
 <header>
 <h1>Gizlilik Politikası</h1>
 <p class="meta">Karar Koçum · Veri sorumlusu: Civan FIRAT ·
-Yürürlük tarihi: 26 Ağustos 2026</p>
+Politika sürümü 2 · Yürürlük tarihi: 9 Eylül 2026</p>
 </header>
 <main>
 
@@ -55,14 +55,52 @@ verisi toplanmaz.</p>
 <li>Uygulama yalnızca kararın kimliğini bir Cloud Functions uç noktasına
 gönderir; karar içeriğini doğrudan dışarıya göndermez.</li>
 <li>Cloud Function, kararı sizin adınıza <strong>Firestore</strong>'dan okur.</li>
-<li>Analizi üretmek için gereken karar içeriği (başlık, seçenekler, kriterler,
-puanlar) sunucu tarafında <strong>OpenAI</strong> API'sine gönderilir.</li>
+<li><strong>Yapay zekâ analizi yalnızca açık izninizle çalışır.</strong>
+İlk analiz talebinizde ne gönderileceğini anlatan bir ekran gösterilir;
+kabul etmeden hiçbir karar içeriği dışarıya iletilmez. &#8220;Şimdi
+değil&#8221; derseniz uygulamanın diğer tüm işlevleri çalışmaya devam
+eder.</li>
+<li>İzin verdiğinizde sunucu tarafında <strong>OpenAI</strong> API'sine
+gönderilen içerik şudur: kararın başlığı; seçeneklerin adları,
+açıklamaları, artıları ve eksileri; kriterlerin adları ve önem
+ağırlıkları.</li>
+<li><strong>Verdiğiniz puanlar gönderilmez.</strong> Puan matrisi yalnızca
+cihazınızdaki sıralama hesabında kullanılır ve OpenAI'ye iletilmez.</li>
 <li>OpenAI API anahtarı <strong>Google Secret Manager</strong>'da saklanır ve
 yalnızca ilgili sunucu hizmet hesabı tarafından okunabilir.</li>
 <li>Üretilen analiz Firestore'da kararınıza bağlı olarak saklanır.</li>
 </ul>
 <p>Yapay zekâ tarafından üretilen içerik hatalı, eksik veya yanıltıcı olabilir.
 Analizler bilgilendirme ve fikir üretme amaçlıdır.</p>
+
+<h3>OpenAI verilerinizi nasıl işler</h3>
+<p>OpenAI'nin yayımladığı güncel API politikasına göre:</p>
+<ul>
+<li>API üzerinden gönderilen içerik, açıkça onay verilmedikçe (opt-in)
+OpenAI modellerini <strong>eğitmek veya geliştirmek için
+kullanılmaz</strong>. Böyle bir onay vermiyoruz.</li>
+<li>OpenAI, kötüye kullanımı tespit etmek için varsayılan olarak kayıt
+tutar. Bu kayıtlar gönderilen istem ve yanıtları içerebilir ve
+<strong>30 güne kadar</strong> saklanabilir; yasa daha uzun saklamayı
+gerektirirse bu süre uzayabilir.</li>
+<li>OpenAI'nin içeriği bu kayıtlardan tamamen çıkaran ek programları
+(sıfır saklama / değiştirilmiş kötüye kullanım izleme) vardır ve ön onay
+gerektirir. Bu programların hesabımızda etkin olduğunu
+<strong>doğrulayamadığımız için etkin olduğunu iddia etmiyoruz</strong>;
+yukarıdaki varsayılan davranışı esas alın.</li>
+</ul>
+
+<h3>İzni geri almak</h3>
+<p>Verdiğiniz yapay zekâ iznini istediğiniz zaman uygulama içindeki
+<strong>Ayarlar &#8594; Gizlilik &#8594; AI analizi izni</strong>
+bölümünden <strong>geri alabilirsiniz</strong>. Geri alma, bundan
+sonraki aktarımları durdurur; daha önce üretilmiş analizleri kendiliğinden
+silmez. Verilerinizi silmek isterseniz
+<strong>Ayarlar &#8594; Hesabımı ve Verilerimi Sil</strong> akışını
+kullanabilirsiniz.</p>
+<p>İzin metnini esaslı biçimde değiştirirsek izin sürümünü yükseltiriz ve
+yeni metin için onayınızı yeniden isteriz; eski onayınız yeni kapsamı
+karşılamış sayılmaz.</p>
 
 <h2>4. Kullanılan hizmet sağlayıcılar</h2>
 <ul>

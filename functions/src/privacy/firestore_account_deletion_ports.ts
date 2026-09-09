@@ -17,6 +17,7 @@ import {
   completeDeletionBarrier,
   raiseDeletionBarrier,
 } from "./account_deletion_barrier.js";
+import { AI_CONSENT_COLLECTION } from "./ai_consent.js";
 import {
   DRAIN_MAX_PAGES_PER_ROUND,
   DRAIN_PAGE_SIZE,
@@ -31,6 +32,10 @@ const USER_SUBCOLLECTIONS = [
   "analysisReservations",
   "rewardTickets",
   "subscriptions",
+  // İş Paketi 5: AI izin kaydı da kullanıcı verisidir. `recursiveDelete`
+  // zaten siler; buradaki liste "hiç veri kalmadı" DOĞRULAMASIDIR —
+  // eksik kalırsa silme, izin kaydı dururken "bitti" derdi.
+  AI_CONSENT_COLLECTION,
 ] as const;
 
 export const firestoreAccountDeletionPorts: AccountDeletionPorts = {
