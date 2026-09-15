@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Sürüm** | v1.0 — 9 Eylül 2026 (İş Paketi 6A) |
+| **Sürüm** | v1.1 — 15 Eylül 2026 (İş Paketi 6B3) |
 | **Kapsam** | Yayın adayı üretimi, canlı işlemlerin güvenli sırası, rollback sınırları |
-| **Durum** | Bu belge bir **plandır**. Aşağıdaki hiçbir canlı adım henüz uygulanmadı. |
+| **Durum** | **Karma.** §4–§5 (backup/PITR/restore tatbikatı) **canlıda uygulandı ve doğrulandı** (6B1/6B2). Belgedeki **diğer** canlı adımlar hâlâ **plandır ve uygulanmadı**. |
 
 > **Okuma kuralı.** Bu belgede üç ayrı ifade kullanılır ve karıştırılmaz:
 > **[REPO]** repoda kanıtlanmış · **[CANLI]** canlı sistemde yapılacak ·
@@ -117,28 +117,158 @@ git diff --check
 
 ## 4. Backup / RPO / RTO — [KARAR] + [CANLI] + ÜCRET
 
-**Mevcut durum (2026-09-09 itibarıyla, salt okunur doğrulandı):**
-production Firestore'da **PITR kapalı**, **yedekleme programı yok**,
-**hiç yedek yok**. Delete protection açık.
+**Durum: canlıda yapılandırıldı ve doğrulandı (İş Paketi 6B1, 2026-09-14).**
+Aşağıdaki değerler production `(default)` veritabanında **gözlemlenmiştir**;
+ürün garantisi, taahhüt veya SLA **değildir**.
 
-Yayın öncesi karar verilmesi gerekenler:
+| Ayar | Değer | Durum |
+|---|---|---|
+| PITR | **Açık** — 7 gün pencere | [CANLI] ✅ |
+| Delete protection | **Açık** | [CANLI] ✅ |
+| Günlük yedek programı | retention **7 gün** | [CANLI] ✅ |
+| Haftalık yedek programı | **Pazar (UTC)** — retention **28 gün** | [CANLI] ✅ |
+| Konum | `eur3` (veritabanıyla aynı bölge) | [CANLI] ✅ |
 
-- **RPO** (kabul edilebilir veri kaybı penceresi) — değer **belirlenmedi**.
-- **RTO** (kabul edilebilir geri dönüş süresi) — değer **belirlenmedi**.
-- PITR açılacak mı? (ek depolama ücreti)
-- Managed backup programı ve retention? (ücret)
+### 4.1 RPO / RTO hedefleri — [KARAR] alındı
 
-Kaynaklar (yalnız ad; bu dilimde yetki verilmedi):
-`roles/datastore.importExportAdmin`, `roles/storage.admin`,
-`roles/firebase.admin`. Export bucket'ı Firestore ile **aynı bölgede**
+**Bunlar dahili çalışma hedefleridir. Kullanıcıya verilmiş bir garanti veya
+SLA DEĞİLDİR ve mağaza/pazarlama metninde öyle sunulamaz.**
+
+| Hedef | Değer | Dürüst sınır |
+|---|---|---|
+| **RTO** | **≤ 4 saat** | İlk tatbikatta *platform* restore süresi **16 dakika 56 saniye** ölçüldü. Bu **tek bir gözlemdir**; **insan karar, onay ve doğrulama süresi hariçtir** ve gelecekteki süreler için taahhüt değildir. Süre veri hacmiyle büyür. |
+| **RPO — PITR yolu** | 7 günlük pencere içinde **dakika hassasiyeti** | Yalnız pencere **içinde** geçerlidir. Pencere dışına düşen bir olayda tek yol yedeklerdir. |
+| **RPO — yedek yolu** | Son **başarılı** snapshot anı | Belirleyici olan programın varlığı değil, **snapshot'ın başarısıdır**. Başarısız bir programlı yedek RPO'yu **sessizce** büyütür — bu yüzden yedek başarı alarmı (6C) açık bir eksiktir. |
+
+### 4.2 Tatbikat sıklığı
+
+Restore tatbikatı **6 haftada bir** tekrarlanır (§5).
+
+- Son tatbikat: **2026-09-14** — sonuç **PASS**.
+- Sıradaki tatbikat için **takvim önerisi: 2026-10-26**.
+
+Bu bir **öneridir**. Hatırlatma, zamanlanmış görev veya otomasyon
+**kurulmamıştır**; takip insan sorumluluğundadır.
+
+### 4.3 Yetki sınırı
+
+Backup/restore yetkisi **yalnız operatör kimliğine** verilir ve
+**Functions runtime servis hesabına verilmez** — uygulama çalışma zamanının
+yedek silme veya restore başlatma yeteneği olmamalıdır.
+
+Ayrı bir yol olan export/import için bucket, Firestore ile **aynı bölgede**
 (`eur3`) olmalıdır.
 
 ## 5. Restore tatbikatı — [CANLI] + ÜCRET
 
-Restore **üretime prova edilemez**: `import` mevcut koleksiyonların üzerine
-yazar. Tatbikat **ayrı bir hedef veritabanında veya ayrı bir projede**
-yapılır. Tatbikat tamamlanmadan §4'teki RPO/RTO değerleri "doğrulanmış"
-sayılmaz.
+**Durum: ilk tatbikat 2026-09-14'te yapıldı ve PASS aldı.** Sanitize kanıt:
+[`operations/RESTORE-DRILL-2026-09-14.md`](operations/RESTORE-DRILL-2026-09-14.md).
+
+Restore **üretime prova edilemez**. İki ayrı yol vardır ve karıştırılmaz:
+
+- `gcloud firestore import` — **mevcut koleksiyonların üzerine yazar.**
+  Tatbikatta kullanılmaz.
+- **Managed backup restore** — **yeni bir hedef veritabanı oluşturur.**
+  Tatbikatta kullanılan yol budur.
+
+### 5.1 Hedef veritabanı ÖNCEDEN OLUŞTURULMAZ
+
+**Restore hedefi elle oluşturulmaz.** Restore operation'ının kendisi yeni
+veritabanını oluşturur. Hedefi önceden oluşturmak restore'u başarısız kılar.
+
+> **KRİTİK KESKİN KENAR.** `--destination-database` parametresi `(default)`
+> değerini **sözdizimsel olarak kabul eder**; CLI bunu bir yazım hatası
+> olarak **reddetmez**. Yanlış yazılmış tek bir destination **production
+> veritabanını hedefler.**
+>
+> Bu yüzden destination her çalıştırmada **iki kez** doğrulanır:
+> **(a)** komut çalıştırılmadan önce **gözle**, **(b)** ayrıca
+> **programatik olarak** — destination `(default)` ise komut çalıştırılmaz.
+
+Hedef ad deseni: `restore-drill-YYYYMMDD`.
+
+### 5.2 Başarı otoritesi
+
+| Kaynak | Otorite |
+|---|---|
+| Long-running operation: `done=true` **ve** hatasız **ve** `SUCCESSFUL` | **Tek başarı otoritesi budur.** |
+| `databases describe` → `sourceInfo.progress=COMPLETED` | **Tek başına yeterli DEĞİLDİR.** |
+
+**Gözlenen davranış:** veritabanı kaynağı `COMPLETED` gösterirken
+long-running operation birkaç dakika daha `PROCESSING` kalabilir. İki API
+yüzeyinin kısa süre ayrışması **normaldir**; karar **operation'a** göre verilir.
+
+### 5.3 Polling ve süre
+
+- Polling **foreground**, kontrollü ve **sınırlı (bounded)** aralıklarla
+  yapılır. Arka plan görevi bırakılmaz.
+- **Sabit bir 15 dakika sınırında operasyon başarısız SAYILMAZ.** İlk
+  tatbikatta operation 15. dakikada hâlâ `30/100` idi ve **16 dakika
+  56 saniyede** başarıyla tamamlandı.
+- Operation uzarsa: **iptal etme, ikinci restore başlatma, veritabanını
+  silme.** Operation kimliği kaydedilir ve izleme sonraki turda sürdürülür.
+- **Aynı destination için ikinci bir restore başlatılmaz.**
+
+### 5.4 Backup kapsamı — ne gelir, ne gelmez
+
+| Öğe | Backup ile gelir mi? | İlk tatbikatta gözlem |
+|---|---|---|
+| Composite index configuration | **Evet** | Kaynak 3 ↔ hedef 3; normalize edilmiş tanımlar aynı |
+| Security Rules | **Hayır** | Hedef veritabanı için rules release'i yok |
+| TTL policies | **Hayır** | Kaynak 0 ↔ hedef 0 aktif politika |
+
+> **Zayıf kanıt uyarısı.** Kaynakta **aktif TTL politikası yoksa**, hedefte
+> de TTL bulunmaması zaten beklenen sonuçtur ve **tek başına güçlü bir
+> restore kanıtı değildir.** TTL'in kapsam dışı olduğu, ancak kaynakta aktif
+> bir politika varken anlamlı biçimde gözlemlenebilir.
+
+Rules taşınmadığı için restore edilen veritabanı **kendi başına servis
+edilebilir durumda değildir**; rules ayrıca deploy edilmelidir.
+
+### 5.5 Temizleme — koşullu ve dar kapsamlı
+
+Temizleme **yalnız tüm zorunlu kontroller PASS ise** yapılır. Herhangi bir
+kontrol **FAIL, belirsiz veya doğrulanamaz** ise veritabanı **korunur** ve
+silme yapılmaz.
+
+**Gözlenen davranış:** restore edilen veritabanı **delete protection AÇIK**
+olarak oluşur; silinmeden önce kapatılması gerekir.
+
+1. Delete protection **yalnız drill veritabanı için** kapatılır; komuttaki
+   `--database` değerinin drill kimliği olduğu önce doğrulanır.
+2. **Kaynak `(default)` veritabanının delete protection'ına DOKUNULMAZ** ve
+   kapatma sonrası hâlâ **açık** olduğu ayrıca doğrulanır.
+3. Drill veritabanı silinir.
+
+### 5.6 Doğrulama yöntemi — neyin kanıt sayıldığı
+
+- **Production izolasyonu write-count metriğiyle kanıtlanmaz**; canlı trafik
+  bu metriği zaten değiştirir. Kanıt **operation metadata** ve **audit
+  log**'tur; audit kaydında **tam hedef kimliği** kontrol edilir.
+- **Monitoring storage metriği gecikir** (≈günlük örnekleme). Kısa ömürlü bir
+  drill veritabanının bu metrikte görünmemesi **restore başarısızlığı
+  değildir** ve zorunlu kapı sayılmaz.
+- **HTTP 403 veya hata yanıtı boş liste sayılmaz.** Her API çağrısında HTTP
+  durum kodu ve yapılandırılmış hata gövdesi **ayrıştırılır**. "Sonuç yok"
+  ile "erişemedim" **farklı** sonuçlardır; bu ayrım yapılmazsa eksik bir
+  kayıt yanlışlıkla "temiz" diye raporlanır.
+- Kota projesi atfı hatalıysa **global CLI yapılandırması değiştirilmez**;
+  istek başına kota atfı (`x-goog-user-project`) kullanılır.
+
+### 5.7 Kanıt saklama ve veri minimizasyonu
+
+Geçici veritabanı silinse bile **tatbikat kanıtı korunur**: operation sonucu,
+PASS/FAIL matrisi ve audit referansı `docs/operations/` altında **sanitize**
+biçimde saklanır.
+
+Bu repo **public** kabul edilir. Kanıt belgelerine **UID, tam backup/operation
+kimlikleri, quota project numarası, e-posta, ham audit log veya yerel dosya
+yolu yazılmaz**; bu değerler repo dışında tutulur.
+
+> **Kapsam dışı — 6C.** Yedek **başarı/başarısızlık alarmı** ve
+> **notification channel hâlâ kurulmamıştır.** Şu anda başarısız bir programlı
+> yedek **sessizce** kaybolur. Bu iş **6C kapsamındadır** ve bu tatbikatla
+> kapanmamıştır.
 
 ## 6. Monitoring hazırlığı — [CANLI]
 
@@ -286,7 +416,7 @@ yeterli bir talimat DEĞİLDİR.**
 | **App Check enforcement** | Console'dan kapatılır; etkisi hızlıdır. | Kod içi `enforceAppCheck` **bununla kapanmaz** — o bir deploy konusudur. |
 | **Veri şeması / yazılmış veri** | **Kod rollback'i yetmez.** Yanlış yazılmış veri kodla geri gelmez. | Migrasyon/onarım işi gerekir. |
 | **Mobil binary** | **Mağazalarda anlık DEĞİLDİR.** Play'de yayını durdurup önceki sürümü yeniden yayınlamak, App Store'da yeni bir sürüm göndermek gerekir; kullanıcıların güncellemesi zaman alır. | Bu yüzden istemci sözleşmesini kıran değişiklikler **önce** sunucuda geriye uyumlu hâle getirilir. |
-| **Backup'tan restore** | **Uygulama rollback'i DEĞİLDİR.** Veriyi bir ana döndürür; o andan sonraki tüm kullanıcı yazımlarını kaybettirir. | Yalnız veri kaybı/bozulması senaryosunda, §4–§5 kararları alınmışsa. |
+| **Backup'tan restore** | **Uygulama rollback'i DEĞİLDİR.** Veriyi bir ana döndürür; o andan sonraki tüm kullanıcı yazımlarını kaybettirir. | Yalnız veri kaybı/bozulması senaryosunda. Restore **yeni bir veritabanı** oluşturur ve **rules taşımaz** (§5.4); trafiğin yeni veritabanına alınması ayrı bir iştir. |
 
 ### 17.1 Canlı komut kullanımı
 
@@ -321,3 +451,15 @@ arşivlenir.
 - Fiziksel cihaz testi yapılmadı; App Attest/Play Integrity davranışı
   doğrulanmadı.
 - Production backend güncel değildir.
+- **Restore tatbikatı yalnız bir kez ve küçük veri hacminde yapıldı.**
+  Ölçülen 16 dakika 56 saniye tek bir gözlemdir; süre veri hacmiyle büyür ve
+  gelecekteki restore'lar için bir taahhüt değildir.
+- **Yedeklerin gerçekten okunabilir uygulama verisi taşıdığı belge düzeyinde
+  doğrulanmadı.** Tatbikat, veri minimizasyonu gereği **yapısal** düzeyde
+  (operation durumu, metadata, index/TTL/rules kapsamı, izolasyon)
+  doğrulanmıştır; kullanıcı belgesi **okunmamıştır**.
+- **Yedek başarı/başarısızlık alarmı ve notification channel yoktur** (6C).
+  Başarısız bir programlı yedek şu anda sessizce kaybolur.
+- **Auth kullanıcı verisi ve imzalama materyali (signing key, provisioning
+  profile) bu yedekleme kapsamında DEĞİLDİR.** Firestore restore'u bu iki
+  kaybı telafi etmez; ayrı bir felaket kurtarma işidir.
