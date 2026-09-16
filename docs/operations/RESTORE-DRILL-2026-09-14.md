@@ -94,9 +94,18 @@ Karar, **operation** durumuna göre verildi.
 **Zorunlu kontrollerin tamamı PASS.**
 
 **Zorunlu olmayan, üretilemeyen gözlem.** Kaynak/hedef **depolama boyutu
-karşılaştırması yapılamadı**: Cloud Monitoring depolama metriği yaklaşık
-**günlük** örnekleniyor ve drill veritabanının ömrü ~25 dakikaydı. Bu bir
-zorunlu kapı **değildir** ve **restore başarısızlığı olarak yorumlanmadı**.
+karşılaştırması yapılamadı**: Cloud Monitoring depolama metriği tatbikat
+süresince hedef veritabanı için veri noktası üretmedi ve drill veritabanının
+ömrü ~25 dakikaydı. Bu bir zorunlu kapı **değildir** ve **restore başarısızlığı
+olarak yorumlanmadı**.
+
+> **Düzeltme (2026-09-16, 6C1 ölçümü).** Bu bölümün ilk sürümü metriğin
+> "yaklaşık günlük" örneklendiğini söylüyordu; bu yanlıştı. Native descriptor
+> örnekleme periyodu **60 saniyedir**, ancak gerçek seri **aralıklı**
+> yayınlanır ve saatlerce boşluk olabilir (6C1: son 240 saatin 91'inde veri).
+> Kısa ömürlü bir drill veritabanının bu boşluğa denk gelip metrikte hiç
+> görünmemesi beklenen bir yanlış negatiftir. Tatbikat sonucu ve diğer
+> kanıtlar bu düzeltmeden etkilenmez.
 
 ## 6. Index / TTL / rules gözlemleri
 
@@ -185,8 +194,9 @@ mevcut yedeklerin **tamamı READY** ve hiçbiri silinmedi.
    sürdürülür ve aynı hedefe ikinci restore başlatılmaz.
 6. **Hata yanıtı boş sonuç değildir.** 403, "kayıt yok" diye okunursa eksik
    bir doğrulama "temiz" diye raporlanır.
-7. **Gecikmeli metrikler yanlış negatif üretir.** Günlük örneklenen bir
-   depolama metriği, dakikalar yaşayan bir kaynağı göstermez.
+7. **Aralıklı metrikler yanlış negatif üretir.** Dakikalık örneklenen ama
+   saatlerce boşlukla yayınlanan bir depolama metriği, dakikalar yaşayan bir
+   kaynağı hiç göstermeyebilir.
 8. **Beklenen sonuç her zaman güçlü kanıt değildir.** Kaynakta hiç aktif TTL
    yokken hedefte TTL çıkmaması, TTL'in kapsam dışı olduğunu tek başına
    kanıtlamaz.
