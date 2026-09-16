@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Sürüm** | v1.1 — 15 Eylül 2026 (İş Paketi 6B3) |
+| **Sürüm** | v1.2 — 16 Eylül 2026 (canlı gerçeklik senkronu: App Check, monitoring) |
 | **Kapsam** | Yayın adayı üretimi, canlı işlemlerin güvenli sırası, rollback sınırları |
-| **Durum** | **Karma.** §4–§5 (backup/PITR/restore tatbikatı) **canlıda uygulandı ve doğrulandı** (6B1/6B2). Belgedeki **diğer** canlı adımlar hâlâ **plandır ve uygulanmadı**. |
+| **Durum** | **Karma.** §4–§5 (backup/PITR/restore tatbikatı) **canlıda uygulandı ve doğrulandı** (6B1/6B2); §6 monitoring **kısmen canlıda** (6C2/6C3). Belgedeki **diğer** canlı adımlar hâlâ **plandır ve uygulanmadı**. |
 
 > **Okuma kuralı.** Bu belgede üç ayrı ifade kullanılır ve karıştırılmaz:
 > **[REPO]** repoda kanıtlanmış · **[CANLI]** canlı sistemde yapılacak ·
@@ -138,7 +138,7 @@ SLA DEĞİLDİR ve mağaza/pazarlama metninde öyle sunulamaz.**
 |---|---|---|
 | **RTO** | **≤ 4 saat** | İlk tatbikatta *platform* restore süresi **16 dakika 56 saniye** ölçüldü. Bu **tek bir gözlemdir**; **insan karar, onay ve doğrulama süresi hariçtir** ve gelecekteki süreler için taahhüt değildir. Süre veri hacmiyle büyür. |
 | **RPO — PITR yolu** | 7 günlük pencere içinde **dakika hassasiyeti** | Yalnız pencere **içinde** geçerlidir. Pencere dışına düşen bir olayda tek yol yedeklerdir. |
-| **RPO — yedek yolu** | Son **başarılı** snapshot anı | Belirleyici olan programın varlığı değil, **snapshot'ın başarısıdır**. Başarısız bir programlı yedek RPO'yu **sessizce** büyütür — bu yüzden yedek başarı alarmı (6C) açık bir eksiktir. |
+| **RPO — yedek yolu** | Son **başarılı** snapshot anı | Belirleyici olan programın varlığı değil, **snapshot'ın başarısıdır**. Başarısız bir programlı yedek RPO'yu **sessizce** büyütür — bu yüzden backup freshness checker (6C4) açık bir eksiktir. |
 
 ### 4.2 Tatbikat sıklığı
 
@@ -245,9 +245,11 @@ olarak oluşur; silinmeden önce kapatılması gerekir.
 - **Production izolasyonu write-count metriğiyle kanıtlanmaz**; canlı trafik
   bu metriği zaten değiştirir. Kanıt **operation metadata** ve **audit
   log**'tur; audit kaydında **tam hedef kimliği** kontrol edilir.
-- **Monitoring storage metriği gecikir** (≈günlük örnekleme). Kısa ömürlü bir
-  drill veritabanının bu metrikte görünmemesi **restore başarısızlığı
-  değildir** ve zorunlu kapı sayılmaz.
+- **Monitoring storage metriğinde görünmemek restore başarısızlığı değildir**
+  (yanlış negatif olabilir) ve zorunlu kapı sayılmaz. Descriptor örnekleme
+  periyodu 60 saniyedir, ancak gerçek seri **aralıklı** yayınlanır ve saatlerce
+  boşluk olabilir; yedek boyutu adımları snapshot'tan 11–13 saat sonra
+  görünebilir. Kısa ömürlü bir drill veritabanı bu boşluğa denk gelebilir.
 - **HTTP 403 veya hata yanıtı boş liste sayılmaz.** Her API çağrısında HTTP
   durum kodu ve yapılandırılmış hata gövdesi **ayrıştırılır**. "Sonuç yok"
   ile "erişemedim" **farklı** sonuçlardır; bu ayrım yapılmazsa eksik bir
@@ -265,17 +267,32 @@ Bu repo **public** kabul edilir. Kanıt belgelerine **UID, tam backup/operation
 kimlikleri, quota project numarası, e-posta, ham audit log veya yerel dosya
 yolu yazılmaz**; bu değerler repo dışında tutulur.
 
-> **Kapsam dışı — 6C.** Yedek **başarı/başarısızlık alarmı** ve
-> **notification channel hâlâ kurulmamıştır.** Şu anda başarısız bir programlı
-> yedek **sessizce** kaybolur. Bu iş **6C kapsamındadır** ve bu tatbikatla
-> kapanmamıştır.
+> **Kapsam dışı — 6C4.** Notification channel ve temel alarmlar kuruldu
+> (6C2/6C3; bkz. §6), ancak **backup freshness checker hâlâ yoktur.** Şu anda
+> başarısız bir programlı yedek **sessizce** kaybolabilir. Bu iş **6C4
+> kapsamındadır** ve bu tatbikatla kapanmamıştır.
 
 ## 6. Monitoring hazırlığı — [CANLI]
 
-`docs/MONITORING-PANOSU.md` §3'teki A1–A9. **Sıralama uyarısı:** filtreler
-canlı bir log satırıyla doğrulanmalıdır ve bu, güncel backend deploy
-edildikten **sonra** mümkündür (§10). Notification channel ve incident owner
-**[KARAR]** gerektirir.
+**Durum: kısmen canlıda (6C2/6C3).** Ayrıntı ve filtre sözleşmesi:
+`docs/MONITORING-PANOSU.md` §2–§4.
+
+| Bileşen | Durum | Tür |
+|---|---|---|
+| E-posta notification channel | Kuruldu; teslimat gerçek bir test alarmıyla doğrulandı | [CANLI] ✅ |
+| Log-based metric'ler | 9 adet, label'sız sayaç | [CANLI] ✅ |
+| Alert policy'ler | 9 adet: 8'i e-posta kanalına bağlı; App Check gözlem alarmı (AL-09) bildirimsiz | [CANLI] ✅ |
+| Projeye özel budget bildirimi | Kuruldu; harcamayı durdurmaz, OpenAI maliyetini kapsamaz | [CANLI] ✅ |
+| Backup freshness checker (AL-10 / AL-11) | **Yok** | [CANLI] — 6C4 |
+| App Check alarmının bildirime bağlanması | **Yok** | [CANLI] — 6E |
+| Eşik ayarı | **Yok** — gerçek trafik baseline'ı gerekir | [KARAR] |
+
+> **Release riski:** backup freshness checker kurulana kadar başarısız bir
+> zamanlanmış yedek bildirim üretmez.
+
+Canlı örneği olmayan olayların (CODE-CONTRACT-ONLY) alarmları güncel backend
+deploy'undan önce pasif olarak kuruldu; ilk gerçek olayda veya kontrollü bir
+doğrulamada VERIFIED seviyesine taşınmalıdır.
 
 ---
 
@@ -285,6 +302,7 @@ edildikten **sonra** mümkündür (§10). Notification channel ve incident owner
 |---|---|---|
 | SDK entegrasyonu (Flutter) | **Yapıldı** — `firebase_app_check`, Play Integrity / App Attest+DeviceCheck | [REPO] |
 | Callable'larda `enforceAppCheck: true` | **Kodda mevcut** — `analyzeDecision`, `deleteAccount`, `createRewardTicket` | [REPO] |
+| Production callable enforcement | **AKTİF** — `analyzeDecision` ve `deleteAccount` App Check'i zaten enforce ediyor; MISSING/INVALID token'lar HTTP 401 alıyor (6C1 canlı doğrulama) | [CANLI] ✅ |
 | Provider kaydı (App Attest / Play Integrity) | **Yapılmadı / doğrulanmadı** | [CANLI] |
 | Gerçek cihazda geçerli token kanıtı | **Yok** | [CANLI] |
 | Firebase servis enforcement (Firestore vb.) | **Kapalı** (0 enforcement kaydı) | [CANLI] |
@@ -295,18 +313,37 @@ edildikten **sonra** mümkündür (§10). Notification channel ve incident owner
   deploy edildiği anda etkilidir. Firebase Console'daki enforcement
   ayarından **bağımsızdır**.
 - Console'daki enforcement, Firestore gibi **diğer** servisleri kapsar.
+- Console'daki servis enforcement kaydının **0 olması, callable kod
+  seviyesindeki enforcement'ın kapalı olduğu anlamına gelmez**: production
+  callable'ları bugün App Check'i zaten enforce ediyor.
 
-### 7.1 KRİTİK SIRALAMA
+### 7.1 Gerçek durum ve kalan release kapısı
 
-> **"Önce güncel Functions'ı deploy et, sonra App Check'i devreye al"
-> sırası GÜVENLİ DEĞİLDİR.**
->
-> Güncel callable tanımları `enforceAppCheck: true` içerir.
-> Bu kod production'a gittiği anda Functions seviyesindeki zorlama
-> **deploy anında aktif olur** — Console'daki enforcement anahtarına
-> bakılmaksızın. Provider kaydı yapılmamış veya gerçek cihazdan geçerli
-> token alındığı doğrulanmamışsa, deploy **tüm istemci çağrılarını
-> kesebilir**.
+> **Düzeltme (6C1 kanıtı).** Bu bölümün önceki sürümü, güncel Functions
+> deploy'unun App Check enforcement'ını ilk kez açacağını ima ediyordu. Bu
+> yanlıştır: production'daki `analyzeDecision` ve `deleteAccount` callable'ları
+> **hâlihazırda** `enforceAppCheck: true` ile çalışıyor ve MISSING/INVALID
+> token'lı istekleri HTTP 401 ile reddediyor.
+
+Güncel backend deploy'u bu yüzden **enforcement'ı ilk kez açmaz**. Deploy yine
+de kontrollü yapılır, çünkü:
+
+- production'da olmayan callable'lar (ör. `createRewardTicket`) ilk kez ve
+  enforcement ile yayına girer;
+- AI izin kapısı sunucuda zorunlu hâle gelir; izin akışı olmayan istemci
+  sürümlerinin analiz istekleri reddedilir;
+- production'daki backend davranışı repodaki son sürüme geçer.
+
+**Kalan release kapısı (6E):**
+
+1. Provider kayıtlarının (App Attest / Play Integrity) doğrulanması.
+2. İmzalı build ile **gerçek cihazdan** geçerli token alınması.
+3. Play Integrity ve App Attest davranışının cihaz üzerinde gözlenmesi.
+4. Yeni sürüm sonrası App Check **reddetme oranının** izlenmesi
+   (`docs/MONITORING-PANOSU.md` §3.4, AL-09).
+
+Bu kapılar kapanmadan gerçek kullanıcılara açılan bir istemci sürümünün
+callable çağrıları enforcement nedeniyle reddedilebilir.
 
 ### 7.2 Karar ağacı
 
@@ -338,9 +375,9 @@ Provider kayıtları (App Attest + Play Integrity) tamam mı?
   tamamlandıktan **sonra** güncel Functions deploy'u.
 - **B.** Kontrollü bir geçiş sürümü tasarlamak.
 
-> **B seçeneği güvenlik sözleşmesini geçici olarak gevşetebilir.** Açık
-> kullanıcı kararı, ayrı kod incelemesi ve **ayrı bir PR** olmadan
-> uygulanamaz.
+> **B seçeneği, production'da zaten aktif olan App Check enforcement'ını
+> geçici olarak gevşetmek anlamına gelir.** Açık kullanıcı kararı, ayrı kod
+> incelemesi ve **ayrı bir PR** olmadan uygulanamaz.
 
 ---
 
@@ -398,8 +435,9 @@ bunlardan doldurulur. Content rating / age rating / review notes
 
 ## 16. Post-release gözlem
 
-En az bir tam gün: §3 alarmları, Crashlytics crash-free oranı, OpenAI
-maliyet sayaçları.
+En az bir tam gün: `docs/MONITORING-PANOSU.md` §2 alarmları, App Check
+reddetme oranı (AL-09), Crashlytics crash-free oranı ve OpenAI maliyet
+sayaçları (OpenAI maliyeti GCP budget'ına dahil değildir).
 
 ---
 
@@ -429,8 +467,10 @@ Bu belgeye kopyala-yapıştır üretim komutu **yalnız** şu kapılarla konur:
 
 ## 18. Incident ownership — [KARAR]
 
-Incident owner **belirlenmedi**. Belirlenene kadar §6'daki notification
-channel kurulamaz ve alarmların gideceği bir yer yoktur.
+Bildirim hedefi belirlendi: alarmlar proje sahibinin doğrulanmış e-posta
+kanalına gider (6C2; adres bu belgede yayınlanmaz). **Tek sorumlu ve tek
+kanal** vardır; ikinci kanal ve yedek sorumlu **public yayın öncesi** yeniden
+değerlendirilecektir.
 
 ## 19. Release kapanışı ve kanıt arşivi
 
@@ -458,8 +498,14 @@ arşivlenir.
   doğrulanmadı.** Tatbikat, veri minimizasyonu gereği **yapısal** düzeyde
   (operation durumu, metadata, index/TTL/rules kapsamı, izolasyon)
   doğrulanmıştır; kullanıcı belgesi **okunmamıştır**.
-- **Yedek başarı/başarısızlık alarmı ve notification channel yoktur** (6C).
-  Başarısız bir programlı yedek şu anda sessizce kaybolur.
+- **Backup freshness checker yoktur** (6C4). Notification channel ve temel
+  alarmlar kuruldu (6C2/6C3), ancak başarısız bir programlı yedek şu anda
+  sessizce kaybolabilir.
+- **CODE-CONTRACT-ONLY alarmlar** henüz canlı bir olayla doğrulanmadı; ilk
+  gerçek olayda veya kontrollü bir doğrulamada teyit edilmelidir.
+- Production callable'ları App Check'i zaten enforce ediyor; provider ve
+  gerçek cihaz doğrulaması (6E) tamamlanmadığı için gerçek cihaz istemcileri
+  reddedilebilir.
 - **Auth kullanıcı verisi ve imzalama materyali (signing key, provisioning
   profile) bu yedekleme kapsamında DEĞİLDİR.** Firestore restore'u bu iki
   kaybı telafi etmez; ayrı bir felaket kurtarma işidir.
