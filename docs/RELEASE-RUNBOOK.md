@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Sürüm** | v1.3 — 21 Eylül 2026 (6C4 backup freshness checker: kod hazır, canlı rollout bekliyor) |
+| **Sürüm** | v1.4 — 21 Eylül 2026 (6C4 backup freshness checker **canlıda**: AL-10 / AL-11) |
 | **Kapsam** | Yayın adayı üretimi, canlı işlemlerin güvenli sırası, rollback sınırları |
 | **Durum** | **Karma.** §4–§5 (backup/PITR/restore tatbikatı) **canlıda uygulandı ve doğrulandı** (6B1/6B2); §6 monitoring **kısmen canlıda** (6C2/6C3). Belgedeki **diğer** canlı adımlar hâlâ **plandır ve uygulanmadı**. |
 
@@ -138,7 +138,7 @@ SLA DEĞİLDİR ve mağaza/pazarlama metninde öyle sunulamaz.**
 |---|---|---|
 | **RTO** | **≤ 4 saat** | İlk tatbikatta *platform* restore süresi **16 dakika 56 saniye** ölçüldü. Bu **tek bir gözlemdir**; **insan karar, onay ve doğrulama süresi hariçtir** ve gelecekteki süreler için taahhüt değildir. Süre veri hacmiyle büyür. |
 | **RPO — PITR yolu** | 7 günlük pencere içinde **dakika hassasiyeti** | Yalnız pencere **içinde** geçerlidir. Pencere dışına düşen bir olayda tek yol yedeklerdir. |
-| **RPO — yedek yolu** | Son **başarılı** snapshot anı | Belirleyici olan programın varlığı değil, **snapshot'ın başarısıdır**. Başarısız bir programlı yedek RPO'yu **sessizce** büyütür — bu yüzden bir backup freshness checker gerekir; kodu repoda hazırdır (6C4), canlı rollout'u henüz yapılmamıştır. |
+| **RPO — yedek yolu** | Son **başarılı** snapshot anı | Belirleyici olan programın varlığı değil, **snapshot'ın başarısıdır**. Başarısız bir programlı yedek RPO'yu **sessizce** büyütürdü; bu boşluk artık saatlik backup freshness kontrolü ve AL-10 / AL-11 ile kapatılmıştır (6C4). Alarmın kendisi yedeği kurtarmaz, yalnız sessiz kalmasını engeller. |
 
 ### 4.2 Tatbikat sıklığı
 
@@ -267,10 +267,10 @@ Bu repo **public** kabul edilir. Kanıt belgelerine **UID, tam backup/operation
 kimlikleri, quota project numarası, e-posta, ham audit log veya yerel dosya
 yolu yazılmaz**; bu değerler repo dışında tutulur.
 
-> **Kapsam dışı — 6C4.** Notification channel ve temel alarmlar kuruldu
-> (6C2/6C3; bkz. §6), ancak **backup freshness checker hâlâ yoktur.** Şu anda
-> başarısız bir programlı yedek **sessizce** kaybolabilir. Bu iş **6C4
-> kapsamındadır** ve bu tatbikatla kapanmamıştır.
+> **Sonradan kapatıldı — 6C4.** Bu tatbikat sırasında başarısız bir programlı
+> yedeği yakalayan bir sinyal yoktu. O boşluk 6C4'te saatlik freshness
+> kontrolü ve AL-10 / AL-11 ile kapatılmıştır (bkz. §6). Tatbikatın kendi
+> sonucu bundan etkilenmez.
 
 ## 6. Monitoring hazırlığı — [CANLI]
 
@@ -280,45 +280,65 @@ yolu yazılmaz**; bu değerler repo dışında tutulur.
 | Bileşen | Durum | Tür |
 |---|---|---|
 | E-posta notification channel | Kuruldu; teslimat gerçek bir test alarmıyla doğrulandı | [CANLI] ✅ |
-| Log-based metric'ler | 9 adet, label'sız sayaç | [CANLI] ✅ |
-| Alert policy'ler | 9 adet: 8'i e-posta kanalına bağlı; App Check gözlem alarmı (AL-09) bildirimsiz | [CANLI] ✅ |
+| Log-based metric'ler | 11 adet, label'sız sayaç | [CANLI] ✅ |
+| Alert policy'ler | 11 adet: 10'u e-posta kanalına bağlı; App Check gözlem alarmı (AL-09) bildirimsiz | [CANLI] ✅ |
 | Projeye özel budget bildirimi | Kuruldu; harcamayı durdurmaz, OpenAI maliyetini kapsamaz | [CANLI] ✅ |
-| Backup freshness alarmı (AL-10 / AL-11) | **Canlı değil** — checker kodu repoda hazır; rollout bu PR'dan sonra | [REPO] ✅ / [CANLI] — 6C4 |
+| Backup freshness alarmı (AL-10 / AL-11) | Kuruldu; saatlik kontrol, 30 saat eşiği, heartbeat doğrulandı | [CANLI] ✅ |
 | App Check alarmının bildirime bağlanması | **Yok** | [CANLI] — 6E |
 | Eşik ayarı | **Yok** — gerçek trafik baseline'ı gerekir | [KARAR] |
 
-> **Release riski:** Backup freshness checker canlıya alınana kadar başarısız
-> bir zamanlanmış yedek bildirim üretmez. Kodun repoda bulunması bu riski
-> **kapatmaz**; riski kapatan şey canlı metric ve policy'lerdir.
+> **Kapanan release riski:** Başarısız bir zamanlanmış yedeğin sessizce
+> kaybolması artık açık bir release riski **değildir**; saatlik kontrol ve
+> AL-10 / AL-11 canlıdadır.
+>
+> **Kalan dürüst sınır:** AL-11 bir metrik yokluğu koşuludur ve **canlıda
+> tetiklendiği gözlenmemiştir** — bunun için checker'ın 3 saat hiç çalışmaması
+> gerekir. AL-10'un dayandığı üç problem olayı da canlıda hiç oluşmadı
+> (CODE-CONTRACT-ONLY).
 
-### 6.1 `checkBackupFreshness` — rollout sırası ve müdahale girdisi
+### 6.1 `checkBackupFreshness` — müdahale ve rollback
 
-Sözleşmenin tamamı `docs/MONITORING-PANOSU.md` §4.1'dedir. Operasyon açısından
-bilinmesi gerekenler:
+Sözleşmenin tamamı `docs/MONITORING-PANOSU.md` §4'tedir. Rollout kanıtı:
+`docs/operations/BACKUP-CHECKER-ROLLOUT-2026-09-21.md`.
 
-- Saatte bir (UTC) çalışır, yalnız `backups.list` çağırır, hiçbir belge okumaz.
-- Başlangıç tazelik eşiği **30 saat**; eşik ayarı gerçek gözlemle yapılacaktır.
-- Her çalıştırma bir **heartbeat** üretir; sorun varsa **ayrıca** bir problem
-  olayı yazar. AL-11 çalışmamayı, AL-10 sorun bulmayı yakalar.
-- 401/403/zaman aşımı/ayrıştırma hatası `backup_check_failed` üretir ve
-  **"yedek yok" veya "sağlıklı" sayılmaz**. Alarm geldiğinde ilk soru
-  "yedek başarısız mı?" değil, **"kontrol gerçekten çalıştı mı?"** olmalıdır.
-- **Adanmış** runtime service account kullanır; yalnız yedek metadata'sını
-  okuyan tek bir rol alır ve hiçbir secret bağlanmaz.
+Operasyon özeti: saatte bir (UTC) çalışır, yalnız yedek metadata'sını listeler,
+hiçbir belge okumaz, adanmış service account kullanır ve hiçbir secret'a
+erişmez. Tazelik eşiği **30 saattir**.
 
-Canlı rollout sırası (bu PR'dan **sonra**): Scheduler API → adanmış service
-account ve rolü → iki log-based metric → yalnız yeni fonksiyonun hedefli
-deploy'u → tek kontrollü çalıştırma → heartbeat kanıtı → AL-10 / AL-11.
+#### AL-10 geldiğinde — "yedek bayat" DEĞİL, önce "kontrol çalıştı mı?"
 
-Checker canlıya alındıktan sonra **kapatılması gerekirse**, önce AL-11 devre
-dışı bırakılmalıdır; aksi halde heartbeat'in kesilmesi kendi başına alarm
-üretir.
+1. **Önce hata mı?** Loglarda `backup_check_failed` var mı? `errorType` ve
+   `httpStatus` alanlarına bakın. **403, 401, zaman aşımı ve ayrıştırma hatası
+   "yedek yok" anlamına GELMEZ**; kontrolün kendisi çalışamamıştır. Bu durumda
+   sorun yedekte değil, checker'ın erişimindedir.
+2. **Gerçekten bayat mı?** `backup_freshness_stale` ise `ageHours`,
+   `readyDailyCount` ve `backupCount` alanlarını okuyun; ardından yedek
+   programlarını ve son snapshot'ı elle doğrulayın.
+3. **Anormal durum mu?** `backup_state_unexpected` ise takılmış durumdaki
+   yedeği inceleyin; bozuk zaman damgası da bu olayı üretir.
+4. **PITR geçici korumadır.** Yedek yolu bozuksa bile 7 günlük PITR penceresi
+   içinde kurtarma mümkündür. Pencere dışına çıkmadan sorun giderilmelidir;
+   PITR yedeğin **yerini tutmaz**.
 
-Canlı örneği olmayan olayların (CODE-CONTRACT-ONLY) alarmları güncel backend
-deploy'undan önce pasif olarak kuruldu; ilk gerçek olayda veya kontrollü bir
-doğrulamada VERIFIED seviyesine taşınmalıdır.
+#### AL-11 geldiğinde — tazelik ölçülemiyor
 
----
+Sıra: Scheduler job (var mı, ENABLED mı, son deneme) → fonksiyon revizyonu →
+runtime service account → Scheduler API ve yetki (403 dahil) → son heartbeat ve
+`checkResult`. AL-10'un sessiz olması bu sırada **güvence değildir**.
+
+#### Checker'ı kapatma / rollback sırası
+
+Checker'ın kaldırılması veya duraklatılması **kendi başına alarm üretir**. Sıra:
+
+1. **Önce AL-11'i devre dışı bırak** (yokluk koşulu, aksi halde 3 saat sonra
+   tetiklenir).
+2. Scheduler job'unu duraklat veya fonksiyonu kaldır.
+3. İstenirse AL-10'u devre dışı bırak.
+4. Log-based metric'ler en son kaldırılır; **metric silinirse geçmiş veri geri
+   gelmez** ve yeniden oluşturulduğunda **backfill edilmez**.
+
+Geri açarken sıra terstir: metric → fonksiyon → Scheduler → AL-10 → **heartbeat
+için gerçek bir veri noktası görüldükten sonra** AL-11.
 
 ## 7. App Check — durum ve bağımlılıklar
 
@@ -522,9 +542,12 @@ arşivlenir.
   doğrulanmadı.** Tatbikat, veri minimizasyonu gereği **yapısal** düzeyde
   (operation durumu, metadata, index/TTL/rules kapsamı, izolasyon)
   doğrulanmıştır; kullanıcı belgesi **okunmamıştır**.
-- **Backup freshness checker yoktur** (6C4). Notification channel ve temel
-  alarmlar kuruldu (6C2/6C3), ancak başarısız bir programlı yedek şu anda
-  sessizce kaybolabilir.
+- **AL-11'in canlıda tetiklendiği gözlenmedi** (6C4). Heartbeat üretimi
+  doğrulandı, ancak yokluk koşulunun gerçekten ateşlendiğini görmek için
+  checker'ın 3 saat hiç çalışmaması gerekir; böyle bir kesinti üretilmedi.
+- **AL-10'un dayandığı üç problem olayı canlıda hiç oluşmadı**
+  (CODE-CONTRACT-ONLY); filtre biçimi, aynı serviste doğrulanmış heartbeat
+  filtresiyle aynı kalıba dayanır.
 - **CODE-CONTRACT-ONLY alarmlar** henüz canlı bir olayla doğrulanmadı; ilk
   gerçek olayda veya kontrollü bir doğrulamada teyit edilmelidir.
 - Production callable'ları App Check'i zaten enforce ediyor; provider ve
