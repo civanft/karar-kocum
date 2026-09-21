@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Sürüm** | v1.2 — 16 Eylül 2026 (canlı gerçeklik senkronu: App Check, monitoring) |
+| **Sürüm** | v1.3 — 21 Eylül 2026 (6C4 backup freshness checker: kod hazır, canlı rollout bekliyor) |
 | **Kapsam** | Yayın adayı üretimi, canlı işlemlerin güvenli sırası, rollback sınırları |
 | **Durum** | **Karma.** §4–§5 (backup/PITR/restore tatbikatı) **canlıda uygulandı ve doğrulandı** (6B1/6B2); §6 monitoring **kısmen canlıda** (6C2/6C3). Belgedeki **diğer** canlı adımlar hâlâ **plandır ve uygulanmadı**. |
 
@@ -138,7 +138,7 @@ SLA DEĞİLDİR ve mağaza/pazarlama metninde öyle sunulamaz.**
 |---|---|---|
 | **RTO** | **≤ 4 saat** | İlk tatbikatta *platform* restore süresi **16 dakika 56 saniye** ölçüldü. Bu **tek bir gözlemdir**; **insan karar, onay ve doğrulama süresi hariçtir** ve gelecekteki süreler için taahhüt değildir. Süre veri hacmiyle büyür. |
 | **RPO — PITR yolu** | 7 günlük pencere içinde **dakika hassasiyeti** | Yalnız pencere **içinde** geçerlidir. Pencere dışına düşen bir olayda tek yol yedeklerdir. |
-| **RPO — yedek yolu** | Son **başarılı** snapshot anı | Belirleyici olan programın varlığı değil, **snapshot'ın başarısıdır**. Başarısız bir programlı yedek RPO'yu **sessizce** büyütür — bu yüzden backup freshness checker (6C4) açık bir eksiktir. |
+| **RPO — yedek yolu** | Son **başarılı** snapshot anı | Belirleyici olan programın varlığı değil, **snapshot'ın başarısıdır**. Başarısız bir programlı yedek RPO'yu **sessizce** büyütür — bu yüzden bir backup freshness checker gerekir; kodu repoda hazırdır (6C4), canlı rollout'u henüz yapılmamıştır. |
 
 ### 4.2 Tatbikat sıklığı
 
@@ -283,12 +283,36 @@ yolu yazılmaz**; bu değerler repo dışında tutulur.
 | Log-based metric'ler | 9 adet, label'sız sayaç | [CANLI] ✅ |
 | Alert policy'ler | 9 adet: 8'i e-posta kanalına bağlı; App Check gözlem alarmı (AL-09) bildirimsiz | [CANLI] ✅ |
 | Projeye özel budget bildirimi | Kuruldu; harcamayı durdurmaz, OpenAI maliyetini kapsamaz | [CANLI] ✅ |
-| Backup freshness checker (AL-10 / AL-11) | **Yok** | [CANLI] — 6C4 |
+| Backup freshness alarmı (AL-10 / AL-11) | **Canlı değil** — checker kodu repoda hazır; rollout bu PR'dan sonra | [REPO] ✅ / [CANLI] — 6C4 |
 | App Check alarmının bildirime bağlanması | **Yok** | [CANLI] — 6E |
 | Eşik ayarı | **Yok** — gerçek trafik baseline'ı gerekir | [KARAR] |
 
-> **Release riski:** backup freshness checker kurulana kadar başarısız bir
-> zamanlanmış yedek bildirim üretmez.
+> **Release riski:** Backup freshness checker canlıya alınana kadar başarısız
+> bir zamanlanmış yedek bildirim üretmez. Kodun repoda bulunması bu riski
+> **kapatmaz**; riski kapatan şey canlı metric ve policy'lerdir.
+
+### 6.1 `checkBackupFreshness` — rollout sırası ve müdahale girdisi
+
+Sözleşmenin tamamı `docs/MONITORING-PANOSU.md` §4.1'dedir. Operasyon açısından
+bilinmesi gerekenler:
+
+- Saatte bir (UTC) çalışır, yalnız `backups.list` çağırır, hiçbir belge okumaz.
+- Başlangıç tazelik eşiği **30 saat**; eşik ayarı gerçek gözlemle yapılacaktır.
+- Her çalıştırma bir **heartbeat** üretir; sorun varsa **ayrıca** bir problem
+  olayı yazar. AL-11 çalışmamayı, AL-10 sorun bulmayı yakalar.
+- 401/403/zaman aşımı/ayrıştırma hatası `backup_check_failed` üretir ve
+  **"yedek yok" veya "sağlıklı" sayılmaz**. Alarm geldiğinde ilk soru
+  "yedek başarısız mı?" değil, **"kontrol gerçekten çalıştı mı?"** olmalıdır.
+- **Adanmış** runtime service account kullanır; yalnız yedek metadata'sını
+  okuyan tek bir rol alır ve hiçbir secret bağlanmaz.
+
+Canlı rollout sırası (bu PR'dan **sonra**): Scheduler API → adanmış service
+account ve rolü → iki log-based metric → yalnız yeni fonksiyonun hedefli
+deploy'u → tek kontrollü çalıştırma → heartbeat kanıtı → AL-10 / AL-11.
+
+Checker canlıya alındıktan sonra **kapatılması gerekirse**, önce AL-11 devre
+dışı bırakılmalıdır; aksi halde heartbeat'in kesilmesi kendi başına alarm
+üretir.
 
 Canlı örneği olmayan olayların (CODE-CONTRACT-ONLY) alarmları güncel backend
 deploy'undan önce pasif olarak kuruldu; ilk gerçek olayda veya kontrollü bir

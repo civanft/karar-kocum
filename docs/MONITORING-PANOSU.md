@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Sürüm** | v3.0 — 16 Eylül 2026 (canlı gerçeklikle senkron) |
-| **Önceki sürümler** | v2.0 — 9 Eylül 2026 (İş Paketi 6A) · v1.0 — 8 Temmuz 2026 (**geçersizdi**) — bkz. §0 |
-| **Kanıt kaynağı** | 6C1 salt okunur keşif · 6C2 e-posta teslimat testi · 6C3 kalıcı kurulum |
+| **Sürüm** | v3.1 — 21 Eylül 2026 (6C4 checker sözleşmesi; **canlı rollout bekliyor**) |
+| **Önceki sürümler** | v3.0 — 16 Eylül 2026 · v2.0 — 9 Eylül 2026 (İş Paketi 6A) · v1.0 — 8 Temmuz 2026 (**geçersizdi**) — bkz. §0 |
+| **Kanıt kaynağı** | 6C1 salt okunur keşif · 6C2 e-posta teslimat testi · 6C3 kalıcı kurulum · 6C4 checker kodu |
 | **İlişkili** | `functions/src/core/logger.ts`, `docs/RELEASE-RUNBOOK.md` |
 
 > **Public repo kuralı.** Bu belge resource ID, e-posta adresi, bütçe tutarı
@@ -94,6 +94,10 @@ buradan yeniden türetin. Canlı kanıt sütunu 6C1 tarihli gözlemdir.
 | `reward_ticket_created` | info | `rewards/createRewardTicket.ts` | `ticketId` | Fonksiyon production'da yok |
 | `reward_callback` | info | `rewards/admobRewardCallback.ts` (doğrudan `logger`) | `outcome`, `transactionId`, `ticketId` | Fonksiyon production'da yok |
 | `reward_callback_invalid_signature` | warn | `rewards/admobRewardCallback.ts` (doğrudan `logger`) | — | Fonksiyon production'da yok |
+| `backup_check_heartbeat` | info | `backup/check_backup_freshness.ts` | `checkResult`, `ageHours`, `thresholdHours`, `backupCount`, `readyDailyCount`, `unexpectedCount`, `location`, `database`, `errorType` | Deploy bekliyor (6C4) |
+| `backup_freshness_stale` | warn | `backup/check_backup_freshness.ts` | `reason`, `checkResult`, `ageHours`, `thresholdHours`, `backupCount`, `readyDailyCount`, `location`, `database` | Deploy bekliyor (6C4) |
+| `backup_state_unexpected` | warn | `backup/check_backup_freshness.ts` | `state`, `ageHours`, `location`, `database` | Deploy bekliyor (6C4) |
+| `backup_check_failed` | error | `backup/check_backup_freshness.ts` | `errorType`, `httpStatus`, `location`, `database` | Deploy bekliyor (6C4) |
 
 - **Çift emisyon:** `analyzeDecision`'da her `AppError` iki WARN satırı üretir
   (`analysis_failed` + `request_failed`). Sayımlar yalnız birine dayanır.
@@ -291,9 +295,67 @@ kk_analysis_completed                      S_AN AND severity=INFO AND jsonPayloa
   - saklama dengesi kurulduğunda eğri düzleşir, kaçan bir yedek görünmez.
 - Metric-absence koşulunun azami süresi 23,5 saattir; günlük yedek saati her
   gün değiştiği için (gözlenen fark 26 saate kadar) doğrudan kullanılamaz.
-- **Backup freshness checker (AL-10 / AL-11) henüz YOK — Paket 6C4.** Şu anda
-  başarısız bir zamanlanmış yedek sessizce kaybolabilir; bu açık bir release
-  riskidir.
+- **Canlı backup freshness alarmı (AL-10 / AL-11) henüz YOK — Paket 6C4.** Şu
+  anda başarısız bir zamanlanmış yedek sessizce kaybolabilir; bu açık bir
+  release riskidir. Boşluğu kapatacak kod repoda hazırdır; canlı rollout bu
+  PR'dan sonra yapılır (§4.1).
+
+### 4.1 `checkBackupFreshness` sözleşmesi — kod hazır, canlı DEĞİL
+
+Native sinyal olmadığı için tazeliği **uygulama kodu ölçer**: saatlik bir Gen2
+scheduled function yalnız `backups.list` çağırır ve sonucu yapılandırılmış log
+olarak yazar. Bu bölüm **repo sözleşmesidir**; aşağıdaki hiçbir metric veya
+policy canlıda **mevcut değildir**.
+
+| Parametre | Değer |
+|---|---|
+| Export | `checkBackupFreshness` (`functions/src/backup/`) |
+| Kadans | Saatte bir, **UTC** (`0 * * * *`), tek instance |
+| Başlangıç eşiği | **30 saat** — gözlenen snapshot saati gün içinde kayar (6B'de en büyük aralık ~26 saat), 24 saat yanlış alarm üretirdi |
+| Kapsam | Yalnız `(default)` veritabanı ve yedeklerin bulunduğu çoklu bölge |
+| Aday seçimi | En yeni **READY** günlük yedek; günlük/haftalık ayrımı `expireTime − snapshotTime` süresinden yapılır (7 gün / 28 gün) |
+| Runtime kimliği | **Adanmış** service account; yalnız yedek metadata'sı okur |
+| Secret | **Yok** — OpenAI anahtarı dahil hiçbir secret bağlanmaz |
+| Veri erişimi | Hiçbir Firestore belgesi okunmaz |
+
+| Olay | Seviye | Anlamı |
+|---|---|---|
+| `backup_check_heartbeat` | info | Kontrol çalıştı. Sonuç `checkResult` alanındadır; sağlıklı da olabilir, problemli de. |
+| `backup_freshness_stale` | warn | Uygun READY günlük yedek yok **veya** en yenisi eşikten eski. |
+| `backup_state_unexpected` | warn | Normal dışı durumda takılmış ya da zaman damgası bozuk bir yedek gözlendi. |
+| `backup_check_failed` | error | API, yetki, zaman aşımı, ayrıştırma veya başka bir kontrol hatası. |
+
+**Heartbeat ile problem ayrımı.** Her çalıştırma **tam bir**
+`backup_check_heartbeat` üretir (`checkResult` = `fresh` / `stale` / `failed`).
+Sorun varsa **ayrıca** bir problem olayı yazılır. İki alarm iki farklı arızayı
+yakalar: checker'ın **hiç çalışmaması** (heartbeat yokluğu) ve checker'ın
+**sorun bulması**.
+
+**Hata asla "yedek yok" demek değildir.** 401, 403, zaman aşımı, ayrıştırma
+hatası ve ulaşılamayan konum `backup_check_failed` üretir; boş listeye veya
+"sağlıklı" sonucuna **dönüştürülmez**. Yanlış proje/konumda istek bile
+atılmaz. Bozuk zaman damgası taze sayılmaz.
+
+**Planlanan metric filtreleri (canlı DEĞİL).** `S_BK`, checker'ın Cloud Run
+servisinin kapsamıdır; gerçek servis etiketi deploy sonrası doğrulanacaktır.
+
+```text
+S_BK = resource.type="cloud_run_revision" AND
+       resource.labels.project_id="karar-kocum-production" AND
+       resource.labels.service_name="checkbackupfreshness"
+
+kk_backup_check_heartbeat    S_BK AND jsonPayload.message=~"^(Error: )?backup_check_heartbeat(\s|$)"
+kk_backup_freshness_problem  S_BK AND jsonPayload.message=~"^(Error: )?(backup_freshness_stale|backup_state_unexpected|backup_check_failed)(\s|$)"
+```
+
+Problem metriği üç olayı **tek sayaçta** toplar: üçü de aynı müdahaleyi
+gerektirir ve ayrı alarmlar aynı olayda üç bildirim üretirdi. Olay eşlemesinde
+`:` operatörü burada da kullanılmaz.
+
+**Planlanan alarmlar (canlı DEĞİL).** AL-10 problem metriğinin 60 dakikalık
+toplamı sıfırın üstüne çıkınca, AL-11 heartbeat metriği 3 saat boyunca hiç veri
+üretmeyince tetiklenir. İkisi de P1'dir ve doğrulanmış e-posta kanalına
+bağlanacaktır.
 
 ---
 
@@ -301,7 +363,7 @@ kk_analysis_completed                      S_AN AND severity=INFO AND jsonPayloa
 
 | Bileşen | Durum | Nerede yapılır |
 |---|---|---|
-| Backup freshness checker + AL-10 / AL-11 | **Yok** | Paket 6C4 |
+| Backup freshness alarmı (AL-10 / AL-11) | **Canlı değil** — checker kodu repoda hazır, rollout bekliyor (§4.1) | Paket 6C4 |
 | App Check alarmının bildirime bağlanması ve rollout eşiği | **Yok** (AL-09 bildirimsiz) | Paket 6E |
 | Eşik ayarı (gerçek trafik baseline'ı) | **Yok** | Lansman sonrası |
 | İkinci notification channel | **Yok** (tek kanal kabul edildi) | Public yayın öncesi karar |
