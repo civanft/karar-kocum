@@ -31,7 +31,7 @@ izin verilmeden karar içeriği AI sağlayıcısına gönderilmez.
 | Paket 5 | AI / gizlilik sözleşmesi | Tamamlandı |
 | Paket 6A | Release / operations baseline | Tamamlandı |
 | Paket 6B | Backup, PITR ve restore drill | Tamamlandı |
-| Paket 6C | Monitoring | Kısmen tamamlandı: e-posta kanalı doğrulandı, temel kalıcı alarmlar kuruldu; backup freshness checker henüz bekliyor |
+| Paket 6C | Monitoring | Tamamlandı: e-posta kanalı doğrulandı, kalıcı alarmlar ve saatlik backup freshness kontrolü canlıda |
 | Paket 6E | App Check provider ve gerçek cihaz doğrulaması | Bekliyor |
 | Paket 6F | İmzalı build ve fiziksel cihaz testi | Bekliyor |
 | Store submission | App Store / Google Play gönderimi | Yapılmadı |
@@ -111,25 +111,34 @@ Belgeler: [Veri akışı envanteri](docs/privacy/DATA-FLOW-INVENTORY.md) ·
 | Günlük zamanlanmış yedek | Açık — 7 gün saklama |
 | Haftalık zamanlanmış yedek | Açık — 28 gün saklama |
 | Restore tatbikatı | PASS — izole geçici veritabanına; production'a dokunulmadı |
-| Backup freshness checker | Henüz yok (Paket 6C4) |
+| Backup freshness kontrolü | Açık — saatlik (UTC), 30 saat tazelik eşiği |
+
+Yedek tazeliğini saatlik bir zamanlanmış kontrol ölçer: yalnız yedek
+metadata'sını okur, hiçbir uygulama verisine erişmez ve adanmış, en az
+yetkili bir kimlikle çalışır. Sorun bulduğunda ya da kontrolün kendisi
+çalışamadığında alarm üretir — **bir yetki hatası "yedek yok" sayılmaz**.
 
 Kanıt: [Restore tatbikatı kanıtı](docs/operations/RESTORE-DRILL-2026-09-14.md) ·
-Prosedür: [Release runbook §4–§5](docs/RELEASE-RUNBOOK.md)
+[Checker rollout kanıtı](docs/operations/BACKUP-CHECKER-ROLLOUT-2026-09-21.md) ·
+Prosedür: [Release runbook §4–§6](docs/RELEASE-RUNBOOK.md)
 
 ## Monitoring
 
 - **Bildirim kanalı:** Gerçek bir test e-postasıyla teslimatı doğrulanmış
   e-posta kanalı.
-- **Kalıcı sinyaller:** 9 log-based metric ve 9 alert policy (beklenmeyen
+- **Kalıcı sinyaller:** 11 log-based metric ve 11 alert policy (beklenmeyen
   hata, kredi tutarlılığı, rezervasyon, hesap silme, AI sağlayıcı, Cloud Run
-  5xx, App Check).
+  5xx, App Check, yedek tazeliği, yedek kontrolünün kendisi).
 - **App Check gözlem alarmı şimdilik bildirimsizdir;** Paket 6E rollout'unda
   bildirime bağlanacak.
 - **Analiz hacmi** metriği yalnız baseline topluyor; kanıtsız eşik
   uydurulmadığı için alarmı yok.
 - **Proje bütçesi bildirimi** vardır. Budget **harcamayı durdurmaz**, yalnız
   bildirim üretir; **OpenAI maliyeti GCP budget'ına dahil değildir.**
-- **Eksik:** backup freshness checker (Paket 6C4) ve lansman sonrası eşik ayarı.
+- **Yedek tazeliği** saatlik olarak ölçülür; ayrıca kontrolün kendisi
+  durursa ikinci bir alarm devreye girer.
+- **Eksik:** lansman sonrası eşik ayarı ve yedek kontrolü alarmının gerçek bir
+  kesintide tetiklendiğinin gözlenmesi.
 
 Ayrıntılar ve filtre sözleşmesi: [Monitoring](docs/MONITORING-PANOSU.md)
 
@@ -213,6 +222,7 @@ işleri çalıştırır:
 | [Google Play Data Safety](docs/store/GOOGLE-PLAY-DATA-SAFETY.md) | Play veri güvenliği beyanı hazırlığı |
 | [App Store Privacy](docs/store/APP-STORE-PRIVACY.md) | App Store gizlilik beyanı hazırlığı |
 | [Restore tatbikatı kanıtı](docs/operations/RESTORE-DRILL-2026-09-14.md) | 2026-09-14 tatbikatı (sanitize) |
+| [Checker rollout kanıtı](docs/operations/BACKUP-CHECKER-ROLLOUT-2026-09-21.md) | Yedek tazelik kontrolünün canlıya alınması (sanitize) |
 | [PRD](docs/PRD.md) | Ürün gereksinimleri |
 | [Katkı rehberi](CONTRIBUTING.md) | Branch, commit ve PR kuralları |
 
@@ -223,6 +233,7 @@ işleri çalıştırır:
 - Production backend, repodaki son sürümün gerisindedir.
 - App Check provider kayıtları ve gerçek cihaz token doğrulaması (Paket 6E)
   tamamlanmadı.
-- Backup freshness checker (Paket 6C4) henüz yok.
+- Yedek tazeliği alarmının gerçek bir kesintide tetiklendiği henüz gözlenmedi;
+  kontrolün çalıştığı doğrulandı, alarmın ateşlendiği doğrulanmadı.
 - `riverpod_lint` / `custom_lint` analyzer uyumsuzluğu nedeniyle geçici olarak
   devre dışı; katman kuralları `scripts/check_layers.sh` ile denetlenir.

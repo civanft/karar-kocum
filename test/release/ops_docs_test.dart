@@ -68,6 +68,7 @@ void main() {
   late String monitoringBody;
   late String runbook;
   late String evidence;
+  late String rollout;
   late String readme;
 
   setUpAll(() {
@@ -80,6 +81,8 @@ void main() {
     runbook = File('docs/RELEASE-RUNBOOK.md').readAsStringSync();
     evidence =
         File('docs/operations/RESTORE-DRILL-2026-09-14.md').readAsStringSync();
+    rollout = File('docs/operations/BACKUP-CHECKER-ROLLOUT-2026-09-21.md')
+        .readAsStringSync();
     readme = File('README.md').readAsStringSync();
   });
 
@@ -259,7 +262,7 @@ void main() {
     test('tüm canlı filtreler proje, resource type ve servis kapsamı içeriyor',
         () {
       final scopes = _section(monitoring, '### 3.1 Kapsam');
-      for (final macro in ['S_BOTH', 'S_AN', 'S_DEL']) {
+      for (final macro in ['S_BOTH', 'S_AN', 'S_DEL', 'S_BK']) {
         final def =
             scopes.split('\n').firstWhere((l) => l.startsWith('$macro '));
         expect(def, contains('resource.type="cloud_run_revision"'));
@@ -275,7 +278,7 @@ void main() {
       for (final line
           in filters.split('\n').where((l) => l.startsWith('kk_'))) {
         expect(
-          RegExp(r'\bS_(BOTH|AN|DEL)\b').hasMatch(line),
+          RegExp(r'\bS_(BOTH|AN|DEL|BK)\b').hasMatch(line),
           isTrue,
           reason: line,
         );
@@ -289,7 +292,7 @@ void main() {
         .map((m) => m.group(1)!)
         .toSet();
 
-    test('9 log-based metric: tablo ve filtre listesi tutarlı', () {
+    test('11 log-based metric: tablo ve filtre listesi tutarlı', () {
       final table = _section(monitoring, '### 2.2 Log-based metric');
       final filters =
           _section(monitoring, '### 3.7 Canlı log-based metric filtreleri');
@@ -297,7 +300,7 @@ void main() {
           .allMatches(table)
           .map((m) => m.group(1)!)
           .toSet();
-      expect(listed.length, 9);
+      expect(listed.length, 11);
       expect(
         metricsIn(
           filters.split('\n').where((l) => l.startsWith('kk_')).join('\n'),
@@ -311,7 +314,7 @@ void main() {
       );
     });
 
-    test('9 alert policy: 8 bildirimli, AL-09 bildirimsiz', () {
+    test('11 alert policy: 10 bildirimli, AL-09 bildirimsiz', () {
       final table = _section(monitoring, '### 2.3 Alert policy');
       final rows = RegExp(r'^\| (AL-\d\d) \|([^\n]*)$', multiLine: true)
           .allMatches(table)
@@ -326,10 +329,12 @@ void main() {
         'AL-07',
         'AL-08',
         'AL-09',
+        'AL-10',
+        'AL-11',
       ]);
       final notifying =
           rows.where((r) => r.group(2)!.trim().endsWith('| e-posta |')).length;
-      expect(notifying, 8);
+      expect(notifying, 10);
       final al09 = rows.firstWhere((r) => r.group(1) == 'AL-09').group(2)!;
       expect(al09, contains('YOK'));
       expect(al09, contains('kk_appcheck_reject'));
@@ -348,10 +353,13 @@ void main() {
     });
 
     test('README ve runbook aynı canlı sayıları söylüyor', () {
-      expect(_flat(readme), contains('9 log-based metric ve 9 alert policy'));
+      expect(
+        _flat(readme),
+        contains('11 log-based metric ve 11 alert policy'),
+      );
       expect(
         _flat(_section(runbook, '## 6. Monitoring hazırlığı')),
-        contains('9 adet'),
+        contains('11 adet'),
       );
     });
 
@@ -372,29 +380,22 @@ void main() {
       );
     });
 
-    test('backup freshness native sinyalmiş gibi sunulmuyor; checker AÇIK', () {
+    test('backup freshness hâlâ native sinyalmiş gibi sunulmuyor', () {
       final section = _flat(_section(monitoring, '## 4. Backup freshness'));
       expect(section, contains('native bir backup freshness metriği yoktur'));
-      expect(section, contains('henüz YOK'));
-      for (final doc in {
-        'monitoring': monitoringBody,
-        'runbook': runbook,
-        'readme': readme,
-      }.entries) {
-        expect(
-          RegExp(
-            r'checker[^.|\n]{0,80}(kuruldu|tamamlandı|aktif)',
-            caseSensitive: false,
-          ).hasMatch(doc.value),
-          isFalse,
-          reason: '${doc.key}: checker kurulmuş gibi sunuluyor',
-        );
-      }
+      expect(
+        section,
+        contains('uygulama kodu ölçer'),
+        reason: 'tazeliğin nereden geldiği açık yazılmalı',
+      );
     });
 
     test('kaynak kimliği, e-posta ve uzun sayısal kimlik yayınlanmıyor', () {
-      for (final doc
-          in {'monitoring': monitoring, 'runbook': runbook}.entries) {
+      for (final doc in {
+        'monitoring': monitoring,
+        'runbook': runbook,
+        'rollout': rollout,
+      }.entries) {
         for (final rule in <RegExp>[
           RegExp(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'),
           RegExp(r'(notificationChannels|alertPolicies|budgets)/[0-9a-f]'),
@@ -481,11 +482,15 @@ void main() {
       );
     });
 
-    test('backup freshness checker eksikliği release riski olarak yazılı', () {
-      final monitoringStage =
-          _flat(_section(runbook, '## 6. Monitoring hazırlığı'));
-      expect(monitoringStage, contains('Release riski'));
-      expect(monitoringStage, contains('Backup freshness checker'));
+    test('backup freshness artık release riski DEĞİL ama sınırı yazılı', () {
+      final stage = _flat(_section(runbook, '## 6. Monitoring hazırlığı'));
+      expect(stage, contains('Kapanan release riski'));
+      expect(stage, contains('Kalan dürüst sınır'));
+      expect(
+        stage,
+        contains('**canlıda tetiklendiği gözlenmemiştir**'),
+        reason: 'AL-11 tetiklenmesi doğrulanmış gibi sunulamaz',
+      );
     });
   });
 
@@ -607,9 +612,8 @@ void main() {
     });
   });
 
-  group('6C4 backup freshness checker: kod hazır, canlı DEĞİL', () {
-    String section() =>
-        _section(monitoring, '### 4.1 `checkBackupFreshness` sözleşmesi');
+  group('6C4 backup freshness checker: CANLI', () {
+    String section() => _section(monitoring, '### 4.2 `checkBackupFreshness`');
 
     test('olay sözleşmesi koddaki dört olayı da taşıyor', () {
       expect(
@@ -637,13 +641,16 @@ void main() {
       expect(flat, contains('UTC'));
       expect(flat, contains('**30 saat**'));
       expect(flat, contains('`(default)`'));
+      expect(_flat(runbook), contains('Tazelik eşiği **30 saattir**'));
     });
 
     test('heartbeat ile problem olayı AYRIŞTIRILMIŞ', () {
       final flat = _flat(section());
       expect(flat, contains('**tam bir**'));
-      expect(flat, contains('hiç çalışmaması'));
-      expect(flat, contains('sorun bulması'));
+      expect(flat, contains('AL-11'));
+      expect(flat, contains('AL-10'));
+      expect(flat, contains('hiç çalışmamasını'));
+      expect(flat, contains('sorun bulmasını'));
     });
 
     test('hata "yedek yok" veya "sağlıklı" sayılmıyor', () {
@@ -651,52 +658,93 @@ void main() {
       expect(flat, contains('backup_check_failed'));
       expect(flat, contains('**dönüştürülmez**'));
       expect(flat.contains('403'), isTrue);
-      expect(
-        _flat(_section(runbook, '### 6.1 `checkBackupFreshness`')),
-        contains('kontrol gerçekten çalıştı mı?'),
-      );
+      final stage = _flat(_section(runbook, '### 6.1 `checkBackupFreshness`'));
+      expect(stage, contains('kontrol çalıştı mı?'));
+      expect(stage, contains('anlamına GELMEZ'));
+      expect(_flat(rollout), contains('403 "yedek yok" anlamına gelmez'));
     });
 
     test('adanmış kimlik ve secret yasağı yazılı', () {
       final flat = _flat(section());
       expect(flat, contains('**Adanmış**'));
-      expect(flat, contains('hiçbir secret bağlanmaz'));
+      expect(flat, contains('hiçbir secret bağlı değil'));
       expect(flat, contains('Hiçbir Firestore belgesi okunmaz'));
+      expect(_flat(rollout), contains('En az yetki'));
     });
 
-    test('planlanan filtreler anchored regex kullanıyor, `:` kullanmıyor', () {
+    test('canlı filtreler anchored regex kullanıyor, `:` kullanmıyor', () {
+      final filters =
+          _section(monitoring, '### 3.7 Canlı log-based metric filtreleri');
       expect(
-        section(),
+        filters,
         contains(
           r'jsonPayload.message=~"^(Error: )?backup_check_heartbeat(\s|$)"',
         ),
       );
       expect(
-        section(),
+        filters,
         contains(
           r'jsonPayload.message=~"^(Error: )?(backup_freshness_stale|'
           r'backup_state_unexpected|backup_check_failed)(\s|$)"',
         ),
       );
       expect(
-        RegExp(r'jsonPayload\.message\s*:\s*"').hasMatch(section()),
+        RegExp(r'jsonPayload\.message\s*:\s*"').hasMatch(filters),
         isFalse,
       );
     });
 
-    test('checker metric/policy CANLI envantere eklenmemiş', () {
+    test('checker metric ve policy CANLI envanterde', () {
       final metrics = _section(monitoring, '### 2.2 Log-based metric');
       final policies = _section(monitoring, '### 2.3 Alert policy');
-      final live = _section(monitoring, '### 3.7 Canlı log-based metric');
-      for (final table in [metrics, policies, live]) {
+      expect(metrics, contains('`kk_backup_check_heartbeat`'));
+      expect(metrics, contains('`kk_backup_freshness_problem`'));
+      final al10 =
+          policies.split('\n').firstWhere((l) => l.startsWith('| AL-10 '));
+      final al11 =
+          policies.split('\n').firstWhere((l) => l.startsWith('| AL-11 '));
+      expect(al10, contains('`kk_backup_freshness_problem`'));
+      expect(al10, contains('60 dk'));
+      expect(al10.trim(), endsWith('| e-posta |'));
+      expect(al11, contains('`kk_backup_check_heartbeat`'));
+      expect(al11, contains('3 saat'));
+      expect(al11.trim(), endsWith('| e-posta |'));
+    });
+
+    test('AL-11 tetiklenmesi DOĞRULANMIŞ gibi sunulmuyor', () {
+      for (final doc in {
+        'monitoring': monitoring,
+        'runbook': runbook,
+        'rollout': rollout,
+        'readme': readme,
+      }.entries) {
         expect(
-          table.contains('kk_backup'),
+          RegExp(
+            r'AL-11[^.|\n]{0,80}(test edildi|tetiklendiği doğrulandı)',
+            caseSensitive: false,
+          ).hasMatch(doc.value),
           isFalse,
-          reason: table.split('\n').first,
+          reason: doc.key,
         );
       }
-      expect(policies.contains('AL-10'), isFalse);
-      expect(policies.contains('AL-11'), isFalse);
+      expect(_flat(monitoring), contains('canlıda gözlenmedi'));
+      expect(_flat(rollout), contains('canlıda gözlenmedi'));
+    });
+
+    test('problem olayları CODE-CONTRACT-ONLY olarak işaretli', () {
+      final table = _section(monitoring, '### 1.2 Üretilen olaylar');
+      for (final event in [
+        'backup_freshness_stale',
+        'backup_state_unexpected',
+        'backup_check_failed',
+      ]) {
+        final row = table.split('\n').firstWhere((l) => l.contains('`$event`'));
+        expect(row.trim(), endsWith('| CODE-CONTRACT-ONLY |'), reason: event);
+      }
+      final heartbeat = table
+          .split('\n')
+          .firstWhere((l) => l.contains('`backup_check_heartbeat`'));
+      expect(heartbeat.trim(), endsWith('| VERIFIED |'));
     });
 
     test('"Henüz UYGULANMAMIŞ" tablosu yapılmış iş İDDİA EDEMEZ', () {
@@ -708,27 +756,52 @@ void main() {
       for (final row in rows) {
         final status = row.split('|')[2].trim();
         expect(
-          RegExp(r'^\*\*(Yok|Canlı değil|Uygulanmadı|Önerilmez)')
-              .hasMatch(status),
+          RegExp(
+            r'^\*\*(Yok|Canlı değil|Uygulanmadı|Önerilmez)',
+          ).hasMatch(status),
           isTrue,
           reason: 'uygulanmamış bileşen "yapıldı" gibi: $row',
         );
       }
     });
 
-    test('canlı olmadığı runbook ve monitoring\'de açıkça yazılı', () {
-      expect(_flat(section()), contains('canlıda **mevcut değildir**'));
-      final stage = _flat(_section(runbook, '## 6. Monitoring hazırlığı'));
-      expect(stage, contains('Release riski'));
-      expect(stage, contains('Backup freshness checker'));
-      expect(stage, contains('**kapatmaz**'));
+    test('hedefli deploy mevcut callable\'ları dışarıda bıraktı', () {
+      final flat = _flat(rollout);
+      expect(flat, contains('mevcut callable adlarını **içermez**'));
+      expect(flat, contains('`updateTime` değerleri'));
+      expect(flat, contains('birebir aynı'));
+      final target =
+          File('functions/src/core/deployment.ts').readAsStringSync();
+      final match = RegExp(r'BACKUP_CHECKER_DEPLOY_TARGET =\s*\n?\s*"([^"]+)"')
+          .firstMatch(target);
+      expect(match, isNotNull);
+      final value = match!.group(1)!;
+      expect(value, 'functions:checkBackupFreshness');
+      for (final existing in ['analyzeDecision', 'deleteAccount']) {
+        expect(value.contains(existing), isFalse);
+      }
     });
 
-    test('rollout sırası ve AL-11 kapatma kuralı yazılı', () {
+    test('rollback sırası ve AL-11 kapatma kuralı yazılı', () {
       final stage = _flat(_section(runbook, '### 6.1 `checkBackupFreshness`'));
-      expect(stage, contains('Scheduler API'));
-      expect(stage, contains('hedefli'));
-      expect(stage, contains('önce AL-11 devre'));
+      expect(stage, contains('**Önce AL-11\'i devre dışı bırak**'));
+      expect(stage, contains('backfill edilmez'));
+      expect(
+        stage,
+        contains('Geri açarken sıra terstir'),
+        reason: 'yeniden açma sırası da yazılmalı',
+      );
+    });
+
+    test('kanıt belgesi sanitize ve PASS iddiası dürüst', () {
+      expect(_flat(rollout), contains('BAŞARILI'));
+      expect(_flat(rollout), contains('Bu belgedeki tüm saatler **UTC**'));
+      expect(rollout, isNot(contains('karar-backup-checker@')));
+      expect(
+        RegExp(r'\d+([.,]\d+)?\s*(TRY|TL|USD|₺)').hasMatch(rollout),
+        isFalse,
+        reason: 'bütçe tutarı yayınlanmaz',
+      );
     });
   });
 }

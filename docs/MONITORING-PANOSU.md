@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Sürüm** | v3.1 — 21 Eylül 2026 (6C4 checker sözleşmesi; **canlı rollout bekliyor**) |
-| **Önceki sürümler** | v3.0 — 16 Eylül 2026 · v2.0 — 9 Eylül 2026 (İş Paketi 6A) · v1.0 — 8 Temmuz 2026 (**geçersizdi**) — bkz. §0 |
-| **Kanıt kaynağı** | 6C1 salt okunur keşif · 6C2 e-posta teslimat testi · 6C3 kalıcı kurulum · 6C4 checker kodu |
+| **Sürüm** | v3.2 — 21 Eylül 2026 (6C4 backup freshness checker **canlıda**) |
+| **Önceki sürümler** | v3.1 · v3.0 — 16 Eylül 2026 · v2.0 — 9 Eylül 2026 (İş Paketi 6A) · v1.0 — 8 Temmuz 2026 (**geçersizdi**) — bkz. §0 |
+| **Kanıt kaynağı** | 6C1 salt okunur keşif · 6C2 e-posta teslimat testi · 6C3 kalıcı kurulum · 6C4 checker rollout'u |
 | **İlişkili** | `functions/src/core/logger.ts`, `docs/RELEASE-RUNBOOK.md` |
 
 > **Public repo kuralı.** Bu belge resource ID, e-posta adresi, bütçe tutarı
@@ -94,10 +94,10 @@ buradan yeniden türetin. Canlı kanıt sütunu 6C1 tarihli gözlemdir.
 | `reward_ticket_created` | info | `rewards/createRewardTicket.ts` | `ticketId` | Fonksiyon production'da yok |
 | `reward_callback` | info | `rewards/admobRewardCallback.ts` (doğrudan `logger`) | `outcome`, `transactionId`, `ticketId` | Fonksiyon production'da yok |
 | `reward_callback_invalid_signature` | warn | `rewards/admobRewardCallback.ts` (doğrudan `logger`) | — | Fonksiyon production'da yok |
-| `backup_check_heartbeat` | info | `backup/check_backup_freshness.ts` | `checkResult`, `ageHours`, `thresholdHours`, `backupCount`, `readyDailyCount`, `unexpectedCount`, `location`, `database`, `errorType` | Deploy bekliyor (6C4) |
-| `backup_freshness_stale` | warn | `backup/check_backup_freshness.ts` | `reason`, `checkResult`, `ageHours`, `thresholdHours`, `backupCount`, `readyDailyCount`, `location`, `database` | Deploy bekliyor (6C4) |
-| `backup_state_unexpected` | warn | `backup/check_backup_freshness.ts` | `state`, `ageHours`, `location`, `database` | Deploy bekliyor (6C4) |
-| `backup_check_failed` | error | `backup/check_backup_freshness.ts` | `errorType`, `httpStatus`, `location`, `database` | Deploy bekliyor (6C4) |
+| `backup_check_heartbeat` | info | `backup/check_backup_freshness.ts` | `checkResult`, `ageHours`, `thresholdHours`, `backupCount`, `readyDailyCount`, `unexpectedCount`, `location`, `database`, `errorType` | VERIFIED |
+| `backup_freshness_stale` | warn | `backup/check_backup_freshness.ts` | `reason`, `checkResult`, `ageHours`, `thresholdHours`, `backupCount`, `readyDailyCount`, `location`, `database` | CODE-CONTRACT-ONLY |
+| `backup_state_unexpected` | warn | `backup/check_backup_freshness.ts` | `state`, `ageHours`, `location`, `database` | CODE-CONTRACT-ONLY |
+| `backup_check_failed` | error | `backup/check_backup_freshness.ts` | `errorType`, `httpStatus`, `location`, `database` | CODE-CONTRACT-ONLY |
 
 - **Çift emisyon:** `analyzeDecision`'da her `AppError` iki WARN satırı üretir
   (`analysis_failed` + `request_failed`). Sayımlar yalnız birine dayanır.
@@ -145,7 +145,7 @@ yolu **gönderilmez**.
 - Tek kanal şimdilik kabul edildi; ikinci kanal public yayın öncesi yeniden
   değerlendirilecek. Adres bu belgede yayınlanmaz.
 
-### 2.2 Log-based metric'ler — 9 adet
+### 2.2 Log-based metric'ler — 11 adet
 
 | Log-based metric | Kaynak sinyal | Kapsam | Kanıt |
 |---|---|---|---|
@@ -158,13 +158,15 @@ yolu **gönderilmez**.
 | `kk_ai_provider_failure` | `analysis_failed` + `ai-uncertain` / `ai-failed` | analyzedecision | CODE-CONTRACT-ONLY |
 | `kk_appcheck_reject` | SDK App Check reddi (MISSING / INVALID) | analyzedecision + deleteaccount | VERIFIED |
 | `kk_analysis_completed` | `analysis_completed` | analyzedecision | VERIFIED |
+| `kk_backup_check_heartbeat` | `backup_check_heartbeat` | checkbackupfreshness | VERIFIED |
+| `kk_backup_freshness_problem` | `backup_freshness_stale` + `backup_state_unexpected` + `backup_check_failed` | checkbackupfreshness | CODE-CONTRACT-ONLY |
 
 Ortak özellikler: DELTA / INT64 sayaç; **label extractor yok**, payload
 değeri çıkarılmaz. Cloud Logging'in otomatik eklediği sistem `log` label'ı
 (log ID) dışında label yoktur. Metric'ler **geçmiş logları backfill etmez**;
 oluşturulmadan önceki olaylar sayılmaz.
 
-### 2.3 Alert policy'ler — 9 adet
+### 2.3 Alert policy'ler — 11 adet
 
 | ID | Öncelik | Log-based metric / metrik | Eşik | Pencere | Bildirim |
 |---|---|---|---|---|---|
@@ -177,8 +179,10 @@ oluşturulmadan önceki olaylar sayılmaz.
 | AL-07 | P3 | `kk_ai_provider_failure` | ≥5 | 15 dk | e-posta |
 | AL-08 | P2 | native `run.googleapis.com/request_count` (5xx) | ≥5 | 10 dk | e-posta |
 | AL-09 | P3 / OBSERVATION | `kk_appcheck_reject` | >0 | 5 dk | **YOK (bildirimsiz)** |
+| AL-10 | P1 | `kk_backup_freshness_problem` | >0 | 60 dk | e-posta |
+| AL-11 | P1 | `kk_backup_check_heartbeat` | **metrik yokluğu** 3 saat | 60 dk hizalama | e-posta |
 
-- **8 policy e-posta kanalına bağlı; AL-09 bilerek bildirimsizdir** (Paket 6E'ye kadar).
+- **10 policy e-posta kanalına bağlı; AL-09 bilerek bildirimsizdir** (Paket 6E'ye kadar).
 - `kk_analysis_completed` için **alert policy yoktur**; metric yalnız baseline toplar.
 - Eksik veri INACTIVE değerlendirilir. API, INACTIVE ile birlikte sıfır olmayan
   süre istediği için koşul süresi 60 sn'dir.
@@ -211,6 +215,7 @@ oluşturulmadan önceki olaylar sayılmaz.
 S_BOTH = resource.type="cloud_run_revision" AND resource.labels.project_id="karar-kocum-production" AND resource.labels.service_name=("analyzedecision" OR "deleteaccount")
 S_AN   = resource.type="cloud_run_revision" AND resource.labels.project_id="karar-kocum-production" AND resource.labels.service_name="analyzedecision"
 S_DEL  = resource.type="cloud_run_revision" AND resource.labels.project_id="karar-kocum-production" AND resource.labels.service_name="deleteaccount"
+S_BK   = resource.type="cloud_run_revision" AND resource.labels.project_id="karar-kocum-production" AND resource.labels.service_name="checkbackupfreshness"
 ```
 
 Her filtre proje, `cloud_run_revision` ve **exact servis kapsamı** içerir.
@@ -278,11 +283,15 @@ kk_account_deletion_barrier_not_finalized  S_DEL AND severity=WARNING AND jsonPa
 kk_ai_provider_failure                     S_AN AND jsonPayload.message="analysis_failed" AND jsonPayload.errorCode=("ai-uncertain" OR "ai-failed")
 kk_appcheck_reject                         S_BOTH AND labels."firebase-log-type"="callable-request-verification" AND jsonPayload.verifications.app=("MISSING" OR "INVALID")
 kk_analysis_completed                      S_AN AND severity=INFO AND jsonPayload.message="analysis_completed"
+kk_backup_check_heartbeat                  S_BK AND jsonPayload.message=~"^(Error: )?backup_check_heartbeat(\s|$)"
+kk_backup_freshness_problem                S_BK AND jsonPayload.message=~"^(Error: )?(backup_freshness_stale|backup_state_unexpected|backup_check_failed)(\s|$)"
 ```
 
 ---
 
-## 4. Backup freshness — native sinyal YOK
+## 4. Backup freshness — native sinyal YOK, kontrol UYGULAMA KODUNDA
+
+### 4.1 Native sinyaller neden yetmedi
 
 - Zamanlanmış yedeklerin başarısı için Cloud Logging'de **log kaydı yoktur**
   (6C1: beş zamanlanmış yedek çalışmasında sıfır kayıt) ve Firestore'un
@@ -294,28 +303,23 @@ kk_analysis_completed                      S_AN AND severity=INFO AND jsonPayloa
   - yedek boyutu adımları snapshot'tan **11–13 saat sonra** görünebilir;
   - saklama dengesi kurulduğunda eğri düzleşir, kaçan bir yedek görünmez.
 - Metric-absence koşulunun azami süresi 23,5 saattir; günlük yedek saati her
-  gün değiştiği için (gözlenen fark 26 saate kadar) doğrudan kullanılamaz.
-- **Canlı backup freshness alarmı (AL-10 / AL-11) henüz YOK — Paket 6C4.** Şu
-  anda başarısız bir zamanlanmış yedek sessizce kaybolabilir; bu açık bir
-  release riskidir. Boşluğu kapatacak kod repoda hazırdır; canlı rollout bu
-  PR'dan sonra yapılır (§4.1).
+  gün değiştiği için (gözlenen fark 26 saate kadar) **yedek metriği üzerinde**
+  doğrudan kullanılamaz.
 
-### 4.1 `checkBackupFreshness` sözleşmesi — kod hazır, canlı DEĞİL
+Bu yüzden tazeliği native bir sinyal değil, **uygulama kodu ölçer**.
 
-Native sinyal olmadığı için tazeliği **uygulama kodu ölçer**: saatlik bir Gen2
-scheduled function yalnız `backups.list` çağırır ve sonucu yapılandırılmış log
-olarak yazar. Bu bölüm **repo sözleşmesidir**; aşağıdaki hiçbir metric veya
-policy canlıda **mevcut değildir**.
+### 4.2 `checkBackupFreshness` — CANLI
 
 | Parametre | Değer |
 |---|---|
 | Export | `checkBackupFreshness` (`functions/src/backup/`) |
-| Kadans | Saatte bir, **UTC** (`0 * * * *`), tek instance |
-| Başlangıç eşiği | **30 saat** — gözlenen snapshot saati gün içinde kayar (6B'de en büyük aralık ~26 saat), 24 saat yanlış alarm üretirdi |
+| Servis | `checkbackupfreshness` (Cloud Run, production Functions bölgesi) |
+| Kadans | Saatte bir, **UTC** (`0 * * * *`), tek instance, Scheduler retry yok |
+| Eşik | **30 saat** — snapshot saati gün içinde kayar (6B: en büyük aralık ~26 saat), 24 saat yanlış alarm üretirdi |
 | Kapsam | Yalnız `(default)` veritabanı ve yedeklerin bulunduğu çoklu bölge |
-| Aday seçimi | En yeni **READY** günlük yedek; günlük/haftalık ayrımı `expireTime − snapshotTime` süresinden yapılır (7 gün / 28 gün) |
-| Runtime kimliği | **Adanmış** service account; yalnız yedek metadata'sı okur |
-| Secret | **Yok** — OpenAI anahtarı dahil hiçbir secret bağlanmaz |
+| Aday seçimi | En yeni **READY** günlük yedek; günlük/haftalık ayrımı `expireTime − snapshotTime` süresinden (7 gün / 28 gün) |
+| Runtime kimliği | **Adanmış** service account; tek proje rolü yalnız yedek metadata'sı okur |
+| Secret | **Yok** — OpenAI anahtarı dahil hiçbir secret bağlı değil |
 | Veri erişimi | Hiçbir Firestore belgesi okunmaz |
 
 | Olay | Seviye | Anlamı |
@@ -328,34 +332,38 @@ policy canlıda **mevcut değildir**.
 **Heartbeat ile problem ayrımı.** Her çalıştırma **tam bir**
 `backup_check_heartbeat` üretir (`checkResult` = `fresh` / `stale` / `failed`).
 Sorun varsa **ayrıca** bir problem olayı yazılır. İki alarm iki farklı arızayı
-yakalar: checker'ın **hiç çalışmaması** (heartbeat yokluğu) ve checker'ın
-**sorun bulması**.
+yakalar: AL-11 checker'ın **hiç çalışmamasını**, AL-10 checker'ın **sorun
+bulmasını**.
 
 **Hata asla "yedek yok" demek değildir.** 401, 403, zaman aşımı, ayrıştırma
 hatası ve ulaşılamayan konum `backup_check_failed` üretir; boş listeye veya
 "sağlıklı" sonucuna **dönüştürülmez**. Yanlış proje/konumda istek bile
 atılmaz. Bozuk zaman damgası taze sayılmaz.
 
-**Planlanan metric filtreleri (canlı DEĞİL).** `S_BK`, checker'ın Cloud Run
-servisinin kapsamıdır; gerçek servis etiketi deploy sonrası doğrulanacaktır.
+### 4.3 İlk çalıştırma kanıtı (6C4)
 
-```text
-S_BK = resource.type="cloud_run_revision" AND
-       resource.labels.project_id="karar-kocum-production" AND
-       resource.labels.service_name="checkbackupfreshness"
+- Metric'ler deploy'dan **önce** oluşturuldu; beklenen servis adı repo export
+  sözleşmesinden türetildi ve deploy sonrası gerçek Cloud Run servis
+  etiketiyle **yeniden doğrulandı** — ikisi aynı.
+- Tek kontrollü manuel çalıştırma **tam bir** heartbeat üretti:
+  `checkResult=fresh`, eşik 30 saat, en yeni günlük yedeğin yaşı yaklaşık
+  12,4 saat, kapsamda 9 yedek, 7'si READY günlük. Problem olayı **yok**.
+- Bir sonraki **zamanlanmış** çalıştırma (saat başı, UTC) manuel müdahale
+  olmadan ikinci heartbeat'i üretti.
+- Adanmış service account'un tek dar rolü yedek metadata'sını okumaya
+  **yetti**; 403 alınmadı ve yetki genişletilmedi.
+- Heartbeat metriğinde gerçek veri noktası görüldükten **sonra** AL-11
+  oluşturuldu. Problem metriğinde sıfır nokta olması normaldir; sentetik
+  problem olayı **üretilmedi**.
 
-kk_backup_check_heartbeat    S_BK AND jsonPayload.message=~"^(Error: )?backup_check_heartbeat(\s|$)"
-kk_backup_freshness_problem  S_BK AND jsonPayload.message=~"^(Error: )?(backup_freshness_stale|backup_state_unexpected|backup_check_failed)(\s|$)"
-```
+### 4.4 Dürüst sınır — AL-11 tetiklenmesi henüz gözlenmedi
 
-Problem metriği üç olayı **tek sayaçta** toplar: üçü de aynı müdahaleyi
-gerektirir ve ayrı alarmlar aynı olayda üç bildirim üretirdi. Olay eşlemesinde
-`:` operatörü burada da kullanılmaz.
-
-**Planlanan alarmlar (canlı DEĞİL).** AL-10 problem metriğinin 60 dakikalık
-toplamı sıfırın üstüne çıkınca, AL-11 heartbeat metriği 3 saat boyunca hiç veri
-üretmeyince tetiklenir. İkisi de P1'dir ve doğrulanmış e-posta kanalına
-bağlanacaktır.
+AL-11 bir **metrik yokluğu** koşuludur. Heartbeat'in üretildiği doğrulandı,
+ancak **koşulun gerçekten tetiklendiği canlıda gözlenmedi**: bunu görmek için
+checker'ın 3 saat boyunca hiç çalışmaması gerekir ve bu turda böyle bir kesinti
+üretilmedi. Log tabanlı metriklerde yokluk semantiği, serinin veri yazmayı
+gerçekten durdurmasına bağlıdır. Bu, gerçek bir kesintide veya ayrı bir
+doğrulama turunda (6C5) teyit edilmelidir.
 
 ---
 
@@ -363,8 +371,8 @@ bağlanacaktır.
 
 | Bileşen | Durum | Nerede yapılır |
 |---|---|---|
-| Backup freshness alarmı (AL-10 / AL-11) | **Canlı değil** — checker kodu repoda hazır, rollout bekliyor (§4.1) | Paket 6C4 |
 | App Check alarmının bildirime bağlanması ve rollout eşiği | **Yok** (AL-09 bildirimsiz) | Paket 6E |
+| AL-11 yokluk koşulunun canlı tetiklenme kanıtı | **Yok** — gerçek kesinti gözlenmedi (§4.4) | Paket 6C5 |
 | Eşik ayarı (gerçek trafik baseline'ı) | **Yok** | Lansman sonrası |
 | İkinci notification channel | **Yok** (tek kanal kabul edildi) | Public yayın öncesi karar |
 | Incident owner yedeği | **Yok** (tek sorumlu: proje sahibi) | Public yayın öncesi karar |

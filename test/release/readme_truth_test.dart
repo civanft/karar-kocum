@@ -115,32 +115,52 @@ void main() {
       expect(statusRows()['Paket 6B'], 'Tamamlandı');
     });
 
-    test('6C kısmen tamamlandı; backup freshness checker AÇIK', () {
+    test('6C tamamlandı; backup freshness kontrolü canlı', () {
       final row = statusRows()['Paket 6C'] ?? '';
-      expect(row, startsWith('Kısmen'));
+      expect(row, startsWith('Tamamlandı'));
       expect(
-        RegExp(
-          r'backup freshness checker[^.|]{0,40}bekliyor',
-          caseSensitive: false,
-        ).hasMatch(row),
+        RegExp(r'backup freshness[^.|]{0,60}canlı', caseSensitive: false)
+            .hasMatch(row),
         isTrue,
-        reason: 'checker açık iş olarak görünmeli',
+        reason: 'checker canlı iş olarak görünmeli',
       );
       expect(
-        RegExp(r'\|\s*Backup freshness checker\s*\|\s*Henüz yok')
+        RegExp(r'\|\s*Backup freshness kontrolü\s*\|\s*Açık[^|]*30 saat')
             .hasMatch(readme),
         isTrue,
-        reason: 'backup tablosunda checker "Henüz yok" olmalı',
+        reason: 'backup tablosunda kadans ve eşik yazmalı',
       );
     });
 
-    test('backup freshness checker tamamlanmış gibi gösterilmiyor', () {
+    test('kontrolün kapsamı ve fail-closed davranışı yazılı', () {
+      final flat = _flat(readme);
+      expect(flat, contains('saatlik'));
+      expect(
+        flat,
+        contains('yetki hatası "yedek yok" sayılmaz'),
+        reason: '403 fail-closed davranışı README\'de görünmeli',
+      );
+      expect(
+        flat,
+        contains('hiçbir uygulama verisine erişmez'),
+        reason: 'checker veri erişimi sınırı yazılmalı',
+      );
+      expect(flat, contains('en az yetkili'));
+    });
+
+    test('alarmın TETİKLENDİĞİ iddia edilmiyor', () {
       expect(
         RegExp(
-          r'checker[^.|\n]{0,80}(kuruldu|tamamlandı|aktif)',
+          r'(alarm|AL-1[01])[^.|\n]{0,60}(test edildi|tetiklendiği doğrulandı)',
           caseSensitive: false,
         ).hasMatch(readme),
         isFalse,
+        reason: 'gözlenmemiş bir tetiklenme iddia edilemez',
+      );
+      expect(
+        _flat(readme),
+        contains('alarmın ateşlendiği doğrulanmadı'),
+        reason: 'dürüst sınır bilinen sınırlarda yazılmalı',
       );
     });
 
@@ -229,6 +249,7 @@ void main() {
         'docs/store/GOOGLE-PLAY-DATA-SAFETY.md',
         'docs/store/APP-STORE-PRIVACY.md',
         'docs/operations/RESTORE-DRILL-2026-09-14.md',
+        'docs/operations/BACKUP-CHECKER-ROLLOUT-2026-09-21.md',
       ]) {
         expect(links, contains(required), reason: 'eksik bağlantı: $required');
       }
