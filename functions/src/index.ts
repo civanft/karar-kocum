@@ -21,3 +21,6 @@ export { admobRewardCallback } from "./rewards/admobRewardCallback.js";
 
 // KVKK / Store P0: uygulama içinden hesap + veri silme (PR-R1).
 export { deleteAccount } from "./privacy/deleteAccount.js";
+
+// 6C4: saatlik yedek tazelik kontrolü (yalnız yedek metadata'sı okur).
+export { checkBackupFreshness } from "./backup/check_backup_freshness.js";

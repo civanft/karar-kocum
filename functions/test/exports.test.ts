@@ -14,13 +14,15 @@ describe("deploy yüzeyi (PR #6E-3A)", () => {
     "createRewardTicket",
     "admobRewardCallback",
     "deleteAccount",
+    // 6C4: zamanlanmış yedek tazelik kontrolü.
+    "checkBackupFreshness",
   ];
 
   it.each(DEPLOYED)("%s export edilmiş ve çağrılabilir", (name) => {
     expect(typeof (api as Record<string, unknown>)[name]).toBe("function");
   });
 
-  it("yalnız 4 fonksiyon deploy edilir (stub'lar hariç)", () => {
+  it("yalnız 5 fonksiyon deploy edilir (stub'lar hariç)", () => {
     const exported = Object.keys(api).filter(
       (k) => typeof (api as Record<string, unknown>)[k] === "function",
     );
