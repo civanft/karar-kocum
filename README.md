@@ -36,8 +36,12 @@ izin verilmeden karar içeriği AI sağlayıcısına gönderilmez.
 | Paket 6F | İmzalı build ve fiziksel cihaz testi | Bekliyor |
 | Store submission | App Store / Google Play gönderimi | Yapılmadı |
 
-Production backend, repodaki son sürümün gerisindedir; güncel backend'in
-deploy'u kontrollü bir release adımıdır ([runbook §7 ve §10](docs/RELEASE-RUNBOOK.md)).
+Production backend **güncel koddan çalışıyor**: analiz ve hesap silme
+fonksiyonları 21 Eylül 2026'da hedefli olarak deploy edildi. **AI işleme izni
+artık sunucu tarafında zorunludur** — izin verilmemişse karar içeriği
+okunmadan reddedilir. Ödüllü reklam fonksiyonları hâlâ production'da
+**yayında değildir**.
+Kanıt: [Backend deploy kanıtı](docs/operations/PRODUCTION-BACKEND-DEPLOY-2026-09-21.md)
 
 ## Güvenlik ve güvenilirlik
 
@@ -223,6 +227,7 @@ işleri çalıştırır:
 | [App Store Privacy](docs/store/APP-STORE-PRIVACY.md) | App Store gizlilik beyanı hazırlığı |
 | [Restore tatbikatı kanıtı](docs/operations/RESTORE-DRILL-2026-09-14.md) | 2026-09-14 tatbikatı (sanitize) |
 | [Checker rollout kanıtı](docs/operations/BACKUP-CHECKER-ROLLOUT-2026-09-21.md) | Yedek tazelik kontrolünün canlıya alınması (sanitize) |
+| [Backend deploy kanıtı](docs/operations/PRODUCTION-BACKEND-DEPLOY-2026-09-21.md) | Analiz ve hesap silme fonksiyonlarının hedefli deploy'u (sanitize) |
 | [PRD](docs/PRD.md) | Ürün gereksinimleri |
 | [Katkı rehberi](CONTRIBUTING.md) | Branch, commit ve PR kuralları |
 
@@ -230,7 +235,7 @@ işleri çalıştırır:
 
 - Uygulama mağazalarda yayınlanmadı; imzalı build ve fiziksel cihaz testleri
   (Paket 6F) bekliyor.
-- Production backend, repodaki son sürümün gerisindedir.
+- Ödüllü reklam fonksiyonları production'da yayında değildir.
 - App Check provider kayıtları ve gerçek cihaz token doğrulaması (Paket 6E)
   tamamlanmadı.
 - Yedek tazeliği alarmının gerçek bir kesintide tetiklendiği henüz gözlenmedi;

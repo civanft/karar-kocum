@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Sürüm** | v1.4 — 21 Eylül 2026 (6C4 backup freshness checker **canlıda**: AL-10 / AL-11) |
+| **Sürüm** | v1.5 — 21 Eylül 2026 (6B0 backend deploy: AI izin kapısı canlıda) |
 | **Kapsam** | Yayın adayı üretimi, canlı işlemlerin güvenli sırası, rollback sınırları |
 | **Durum** | **Karma.** §4–§5 (backup/PITR/restore tatbikatı) **canlıda uygulandı ve doğrulandı** (6B1/6B2); §6 monitoring **kısmen canlıda** (6C2/6C3). Belgedeki **diğer** canlı adımlar hâlâ **plandır ve uygulanmadı**. |
 
@@ -534,7 +534,8 @@ arşivlenir.
   henüz doğrulanmadı (6A yalnız `--no-codesign` derlemesinde doğruladı).
 - Fiziksel cihaz testi yapılmadı; App Attest/Play Integrity davranışı
   doğrulanmadı.
-- Production backend güncel değildir.
+- Ödüllü reklam fonksiyonları production'da yayında değildir; onların
+  alarmları canlı bir olayla hiç doğrulanamaz.
 - **Restore tatbikatı yalnız bir kez ve küçük veri hacminde yapıldı.**
   Ölçülen 16 dakika 56 saniye tek bir gözlemdir; süre veri hacmiyle büyür ve
   gelecekteki restore'lar için bir taahhüt değildir.

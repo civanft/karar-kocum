@@ -3,7 +3,7 @@
  * Akış AnalyzeService'te; yanıt {analysisId, analysis} — istemci anında
  * render eder, kalıcılık aiAnalyses/latest + K-2 canlı akışıyla.
  */
-import { onCall } from "firebase-functions/v2/https";
+import { onCall, type CallableOptions } from "firebase-functions/v2/https";
 
 import {
   analyzeRuntimeServiceAccount,
@@ -22,18 +22,29 @@ import { AnalyzeService } from "./analyze_service.js";
 import { FirestoreAnalysisPorts } from "./firestore_ports.js";
 import { createOpenAIClient, OpenAIGateway } from "./openai_gateway.js";
 
+/**
+ * Callable seçenekleri — DIŞA VERİLİR ki App Check sözleşmesi testle
+ * sabitlenebilsin.
+ *
+ * `enforceAppCheck` ve `consumeAppCheckToken` bu SDK sürümünde
+ * `__endpoint` metadata'sına YANSIMAZ (`callableTrigger` boş gelir), bu
+ * yüzden tek denetlenebilir yüzey seçenek nesnesinin kendisidir.
+ * `deleteAccountOptions` ile aynı kalıp.
+ */
+export const analyzeDecisionOptions: CallableOptions = {
+  region: functionRegion,
+  serviceAccount: analyzeRuntimeServiceAccount,
+  enforceAppCheck: true,
+  consumeAppCheckToken: true,
+  secrets: [openaiApiKey],
+  memory: "512MiB",
+  timeoutSeconds: 60,
+  concurrency: 20,
+  maxInstances: 10, // global maliyet freni (6B)
+};
+
 export const analyzeDecision = onCall(
-  {
-    region: functionRegion,
-    serviceAccount: analyzeRuntimeServiceAccount,
-    enforceAppCheck: true,
-    consumeAppCheckToken: true,
-    secrets: [openaiApiKey],
-    memory: "512MiB",
-    timeoutSeconds: 60,
-    concurrency: 20,
-    maxInstances: 10, // global maliyet freni (6B)
-  },
+  analyzeDecisionOptions,
   async (request) => {
     let ctx: RequestContext | undefined;
     try {
