@@ -129,8 +129,52 @@ void main() {
       expect(missing, greaterThan(applied));
     });
 
-    test('production backend güncel olmadığı UYARISI var', () {
-      expect(_flat(monitoring), contains('Production backend güncel değil'));
+    test('production backend deploy durumu GERÇEĞE uygun', () {
+      final flat = _flat(monitoring);
+      expect(flat, contains('Production backend güncel (6B0'));
+      expect(
+        flat.contains('Production backend güncel değil'),
+        isFalse,
+        reason: 'deploy sonrası bayat uyarı kalmamalı',
+      );
+      // Deploy durumunu ANLATAN paragrafın kendisi, deploy EDİLMEYEN
+      // yüzeyi de söylemek zorundadır. Kısıtlamayı belgenin başka bir
+      // yerindeki bir cümleyle karşılamak yeterli değildir: okuyucu
+      // "backend güncel" cümlesini tek başına okur.
+      for (final doc in {
+        'monitoring': monitoring,
+        'runbook': runbook,
+        'readme': readme,
+      }.entries) {
+        final paragraph = doc.value.split(RegExp(r'\n\s*\n')).firstWhere(
+              (b) =>
+                  b.contains('Production backend') ||
+                  b.contains('production backend') ||
+                  b.contains('Ödüllü reklam fonksiyonları'),
+              orElse: () => '',
+            );
+        expect(
+          RegExp(r'[Öö]düllü reklam fonksiyonları[^.]{0,80}yayında değil')
+              .hasMatch(_flat(paragraph)),
+          isTrue,
+          reason: '${doc.key}: deploy durumu paragrafı eksik yüzeyi saklıyor',
+        );
+      }
+      // Hiçbir belge tüm yüzeyin canlı olduğunu iddia edemez.
+      for (final doc in {
+        'monitoring': monitoring,
+        'runbook': runbook,
+        'readme': readme,
+      }.entries) {
+        expect(
+          RegExp(
+            r'(Tüm|Bütün|Her) (fonksiyon|callable)[^.]{0,40}(yayında|deploy)',
+            caseSensitive: false,
+          ).hasMatch(_flat(doc.value)),
+          isFalse,
+          reason: '${doc.key}: tüm yüzey canlıymış gibi',
+        );
+      }
     });
 
     test('olay tablosu KODDAKİ olay adlarının TAMAMINI taşıyor', () {
@@ -802,6 +846,77 @@ void main() {
         isFalse,
         reason: 'bütçe tutarı yayınlanmaz',
       );
+    });
+  });
+
+  group('6B0 production backend deploy kanıtı', () {
+    late String deploy;
+
+    setUpAll(() {
+      deploy = File('docs/operations/PRODUCTION-BACKEND-DEPLOY-2026-09-21.md')
+          .readAsStringSync();
+    });
+
+    test('yalnız iki callable deploy edildiği yazılı', () {
+      final flat = _flat(deploy);
+      expect(flat, contains('`analyzeDecision`'));
+      expect(flat, contains('`deleteAccount`'));
+      expect(flat, contains('**değişmedi**'));
+      expect(flat, contains('checkBackupFreshness'));
+    });
+
+    test('izin kapısının artifact kanıtı ve SIRASI yazılı', () {
+      final flat = _flat(deploy);
+      expect(flat, contains('`assertAiConsent(...)`'));
+      expect(flat, contains('karar içeriği ilk kez okunur'));
+      expect(
+        flat,
+        contains('İzin yoksa bunların **hiçbiri** çalışmaz'),
+        reason: 'sıfır yan etki iddiası açık yazılmalı',
+      );
+    });
+
+    test('config eşitliği ve App Check korunumu yazılı', () {
+      final flat = _flat(deploy);
+      expect(flat, contains('yalnız `revision` ve'));
+      expect(flat, contains('secret bağları'));
+      expect(flat, contains('enforceAppCheck'));
+    });
+
+    test('smoke SINIRLARI dürüstçe yazılı', () {
+      final flat = _flat(deploy);
+      expect(flat, contains('Uçtan uca pozitif akış test EDİLEMEDİ'));
+      expect(flat, contains('gerçek bir cihazdan alınmış geçerli App Check'));
+      expect(
+        flat,
+        contains('canlıda gerçekten tetiklendiği gözlenmedi'),
+        reason: 'izin kapısının canlı kanıtı iddia edilemez',
+      );
+    });
+
+    test('revizyon başlangıcı ERROR kayıtları açıklanmış', () {
+      final flat = _flat(deploy);
+      expect(flat, contains('probe'));
+      expect(flat, contains('AL-01 filtresiyle'));
+      expect(flat, contains('Hiçbir alarm'));
+    });
+
+    test('rollback yolu yazılı ama çalıştırılmadığı belirtilmiş', () {
+      final flat = _flat(deploy);
+      expect(flat, contains('Önceki revizyonlar ayakta'));
+      expect(flat, contains('gerekmedi ve çalıştırılmadı'));
+    });
+
+    test('kanıt belgesi sanitize', () {
+      for (final rule in <RegExp>[
+        RegExp(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'),
+        RegExp(r'(notificationChannels|alertPolicies|budgets)/[0-9a-f]'),
+        RegExp(r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-'),
+        RegExp(r'\b\d{9,}\b'),
+      ]) {
+        final hit = rule.firstMatch(deploy);
+        expect(hit, isNull, reason: 'sızıntı: "${hit?.group(0)}"');
+      }
     });
   });
 }

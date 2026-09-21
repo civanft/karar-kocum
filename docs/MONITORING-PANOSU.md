@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Sürüm** | v3.2 — 21 Eylül 2026 (6C4 backup freshness checker **canlıda**) |
-| **Önceki sürümler** | v3.1 · v3.0 — 16 Eylül 2026 · v2.0 — 9 Eylül 2026 (İş Paketi 6A) · v1.0 — 8 Temmuz 2026 (**geçersizdi**) — bkz. §0 |
+| **Sürüm** | v3.3 — 21 Eylül 2026 (6B0 backend deploy: olay tablosu artık canlı kodu anlatır) |
+| **Önceki sürümler** | v3.2 · v3.1 · v3.0 — 16 Eylül 2026 · v2.0 — 9 Eylül 2026 (İş Paketi 6A) · v1.0 — 8 Temmuz 2026 (**geçersizdi**) — bkz. §0 |
 | **Kanıt kaynağı** | 6C1 salt okunur keşif · 6C2 e-posta teslimat testi · 6C3 kalıcı kurulum · 6C4 checker rollout'u |
 | **İlişkili** | `functions/src/core/logger.ts`, `docs/RELEASE-RUNBOOK.md` |
 
@@ -66,9 +66,10 @@ anlatıyordu. Düzeltmeler:
 - Log adı seviyeye göre değişir (INFO/DEBUG → `run.googleapis.com/stdout`,
   WARNING/ERROR → `run.googleapis.com/stderr`); filtreler log adına bağlanmaz.
 
-**Production backend güncel değil:** production'daki kod repodaki son sürümün
-gerisindedir. Örneğin production'da `request_failed` hâlâ eski `errorMessage`
-alanını taşır; bu alan hiçbir filtre veya label'da kullanılmaz.
+**Production backend güncel (6B0, 21 Eylül 2026):** deploy edilen üç
+fonksiyonun tamamı repodaki koddan çalışır; bu tablodaki alan listeleri artık
+canlı davranışı anlatır. **Sınır:** ödüllü reklam fonksiyonları production'da
+**yayında değildir**, bu yüzden onların olayları canlıda hiç oluşmaz.
 
 ### 1.2 Üretilen olaylar (koddan türetildi)
 
