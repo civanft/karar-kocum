@@ -606,4 +606,129 @@ void main() {
       expect(runbook, contains('--no-codesign'));
     });
   });
+
+  group('6C4 backup freshness checker: kod hazır, canlı DEĞİL', () {
+    String section() =>
+        _section(monitoring, '### 4.1 `checkBackupFreshness` sözleşmesi');
+
+    test('olay sözleşmesi koddaki dört olayı da taşıyor', () {
+      expect(
+        _codeEvents(),
+        containsAll([
+          'backup_check_heartbeat',
+          'backup_freshness_stale',
+          'backup_state_unexpected',
+          'backup_check_failed',
+        ]),
+      );
+      for (final event in [
+        'backup_check_heartbeat',
+        'backup_freshness_stale',
+        'backup_state_unexpected',
+        'backup_check_failed',
+      ]) {
+        expect(section(), contains('`$event`'), reason: event);
+      }
+    });
+
+    test('kadans, eşik ve kapsam yazılı', () {
+      final flat = _flat(section());
+      expect(flat, contains('Saatte bir'));
+      expect(flat, contains('UTC'));
+      expect(flat, contains('**30 saat**'));
+      expect(flat, contains('`(default)`'));
+    });
+
+    test('heartbeat ile problem olayı AYRIŞTIRILMIŞ', () {
+      final flat = _flat(section());
+      expect(flat, contains('**tam bir**'));
+      expect(flat, contains('hiç çalışmaması'));
+      expect(flat, contains('sorun bulması'));
+    });
+
+    test('hata "yedek yok" veya "sağlıklı" sayılmıyor', () {
+      final flat = _flat(section());
+      expect(flat, contains('backup_check_failed'));
+      expect(flat, contains('**dönüştürülmez**'));
+      expect(flat.contains('403'), isTrue);
+      expect(
+        _flat(_section(runbook, '### 6.1 `checkBackupFreshness`')),
+        contains('kontrol gerçekten çalıştı mı?'),
+      );
+    });
+
+    test('adanmış kimlik ve secret yasağı yazılı', () {
+      final flat = _flat(section());
+      expect(flat, contains('**Adanmış**'));
+      expect(flat, contains('hiçbir secret bağlanmaz'));
+      expect(flat, contains('Hiçbir Firestore belgesi okunmaz'));
+    });
+
+    test('planlanan filtreler anchored regex kullanıyor, `:` kullanmıyor', () {
+      expect(
+        section(),
+        contains(
+          r'jsonPayload.message=~"^(Error: )?backup_check_heartbeat(\s|$)"',
+        ),
+      );
+      expect(
+        section(),
+        contains(
+          r'jsonPayload.message=~"^(Error: )?(backup_freshness_stale|'
+          r'backup_state_unexpected|backup_check_failed)(\s|$)"',
+        ),
+      );
+      expect(
+        RegExp(r'jsonPayload\.message\s*:\s*"').hasMatch(section()),
+        isFalse,
+      );
+    });
+
+    test('checker metric/policy CANLI envantere eklenmemiş', () {
+      final metrics = _section(monitoring, '### 2.2 Log-based metric');
+      final policies = _section(monitoring, '### 2.3 Alert policy');
+      final live = _section(monitoring, '### 3.7 Canlı log-based metric');
+      for (final table in [metrics, policies, live]) {
+        expect(
+          table.contains('kk_backup'),
+          isFalse,
+          reason: table.split('\n').first,
+        );
+      }
+      expect(policies.contains('AL-10'), isFalse);
+      expect(policies.contains('AL-11'), isFalse);
+    });
+
+    test('"Henüz UYGULANMAMIŞ" tablosu yapılmış iş İDDİA EDEMEZ', () {
+      final rows = _section(monitoring, '## 5. Henüz UYGULANMAMIŞ')
+          .split('\n')
+          .where((l) => l.startsWith('| ') && !l.startsWith('| Bileşen'))
+          .where((l) => !l.startsWith('|---'));
+      expect(rows, isNotEmpty);
+      for (final row in rows) {
+        final status = row.split('|')[2].trim();
+        expect(
+          RegExp(r'^\*\*(Yok|Canlı değil|Uygulanmadı|Önerilmez)')
+              .hasMatch(status),
+          isTrue,
+          reason: 'uygulanmamış bileşen "yapıldı" gibi: $row',
+        );
+      }
+    });
+
+    test('canlı olmadığı runbook ve monitoring\'de açıkça yazılı', () {
+      expect(_flat(section()), contains('canlıda **mevcut değildir**'));
+      final stage = _flat(_section(runbook, '## 6. Monitoring hazırlığı'));
+      expect(stage, contains('Release riski'));
+      expect(stage, contains('Backup freshness checker'));
+      expect(stage, contains('**kapatmaz**'));
+    });
+
+    test('rollout sırası ve AL-11 kapatma kuralı yazılı', () {
+      final stage = _flat(_section(runbook, '### 6.1 `checkBackupFreshness`'));
+      expect(stage, contains('Scheduler API'));
+      expect(stage, contains('hedefli'));
+      expect(stage, contains('önce AL-11 devre'));
+    });
+  });
 }

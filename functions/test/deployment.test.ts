@@ -5,7 +5,7 @@
  * scope'ta `process.env` OKUNMAZ (emulator/analiz aşamasında env yoktur ve
  * `FUNCTION_REGION` reserved bir addır). Bu test iki sözleşmeyi sabitler:
  *   1. saf `regionForProject` eşlemesi,
- *   2. dört export'un da AYNI merkezi bölge ifadesini kullanması.
+ *   2. beş export'un da AYNI merkezi bölge ifadesini kullanması.
  */
 import { describe, expect, it } from "vitest";
 
@@ -48,6 +48,7 @@ describe("deploy metadata", () => {
     "createRewardTicket",
     "admobRewardCallback",
     "deleteAccount",
+    "checkBackupFreshness",
   ] as const;
 
   /** v2, bölge sabitse dizi, ifade ise ifadenin kendisini saklar. */
@@ -70,7 +71,7 @@ describe("deploy metadata", () => {
     expect(typeof regionOf("analyzeDecision")).not.toBe("string");
   });
 
-  it("dört fonksiyon da AYNI ifadeyi paylaşır (kopyalanmış sabit yok)", () => {
+  it("beş fonksiyon da AYNI ifadeyi paylaşır (kopyalanmış sabit yok)", () => {
     const unique = new Set(DEPLOYED.map((name) => regionOf(name)));
     expect(unique.size).toBe(1);
     expect([...unique][0]).toBe(functionRegion);

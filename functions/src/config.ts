@@ -102,3 +102,16 @@ export const REWARD_TICKET_LIMITS = {
   perMinute: envInt("REWARD_PER_MINUTE", 5),
   perHour: envInt("REWARD_PER_HOUR", 20),
 } as const;
+
+// ---- Backup freshness checker (6C4) ----
+/** Günlük yedeğin BAYAT sayıldığı yaş. Başlangıç değeri; eşik ayarı açıktır.
+ *  Gözlenen snapshot saati gün içinde kayar (6B: en büyük aralık ~26 saat),
+ *  bu yüzden 24 saat yanlış alarm üretirdi. */
+export const BACKUP_FRESHNESS_THRESHOLD_HOURS = envInt(
+  "BACKUP_FRESHNESS_THRESHOLD_HOURS",
+  30,
+);
+/** `CREATING` durumunun normal sayıldığı süre; sonrası anormaldir. */
+export const BACKUP_STATE_GRACE_HOURS = envInt("BACKUP_STATE_GRACE_HOURS", 2);
+/** `backups.list` için sert zaman aşımı (ms); fonksiyon timeout'undan kısa. */
+export const BACKUP_LIST_TIMEOUT_MS = envInt("BACKUP_LIST_TIMEOUT_MS", 15_000);

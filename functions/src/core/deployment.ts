@@ -26,6 +26,26 @@ export const PROD_ANALYZE_RUNTIME_SERVICE_ACCOUNT =
   "karar-analyze-runtime@karar-kocum-production.iam.gserviceaccount.com";
 export const PROD_DELETE_RUNTIME_SERVICE_ACCOUNT =
   "karar-delete-runtime@karar-kocum-production.iam.gserviceaccount.com";
+/** 6C4 checker'ın ADANMIŞ kimliği — yalnız yedek metadata'sı okur. */
+export const PROD_BACKUP_CHECKER_RUNTIME_SERVICE_ACCOUNT =
+  "karar-backup-checker@karar-kocum-production.iam.gserviceaccount.com";
+
+/**
+ * Production yedeklerinin bulunduğu konum ve kontrol edilen veritabanı.
+ * Yedekler veritabanıyla AYNI konumda tutulur; ikisi ayrılırsa restore
+ * yolu da kopardı (bkz. RELEASE-RUNBOOK §4).
+ */
+export const PROD_BACKUP_LOCATION = "eur3";
+export const BACKUP_DATABASE_ID = "(default)";
+
+/**
+ * 6C4 HEDEFLİ DEPLOY hedefi — tek fonksiyon.
+ *
+ * Checker'ın deploy'u, production'da çalışan analiz ve hesap silme
+ * yüzeyini yeniden deploy ETMEMELİDİR: bu turun kapsamı yalnız yeni
+ * fonksiyondur ve mevcut callable'ların revizyonu değişmemelidir.
+ */
+export const BACKUP_CHECKER_DEPLOY_TARGET = "functions:checkBackupFreshness";
 
 /**
  * Saf eşleme (test seam'i). Tanınmayan proje güvenli tarafa — dev
@@ -37,7 +57,7 @@ export function regionForProject(projectId: string): string {
 }
 
 /**
- * Deploy-zamanı bölge ifadesi — dört export'un TAMAMI bunu kullanır.
+ * Deploy-zamanı bölge ifadesi — BEŞ export'un TAMAMI bunu kullanır.
  * Sabitin fonksiyon dosyalarına kopyalanması, tek bir dosyanın geride
  * kalmasıyla yüzeyin bölünmesine yol açar.
  */
@@ -60,5 +80,12 @@ export const deleteRuntimeServiceAccount = projectID
   .equals(PROD_PROJECT_ID)
   .thenElse(
     PROD_DELETE_RUNTIME_SERVICE_ACCOUNT,
+    DEV_DEFAULT_RUNTIME_SERVICE_ACCOUNT,
+  );
+
+export const backupCheckerRuntimeServiceAccount = projectID
+  .equals(PROD_PROJECT_ID)
+  .thenElse(
+    PROD_BACKUP_CHECKER_RUNTIME_SERVICE_ACCOUNT,
     DEV_DEFAULT_RUNTIME_SERVICE_ACCOUNT,
   );
