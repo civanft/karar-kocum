@@ -5,22 +5,35 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:karar_veriyorum/core/config/firebase_bootstrap.dart';
 import 'package:karar_veriyorum/core/startup/startup_gate.dart';
 
-/// İŞ PAKETİ 4 / DİLİM E — startup zaman aşımı ve retry sözleşmesi.
+/// İŞ PAKETİ 4 / DİLİM E — startup retry sözleşmesi (6E0'da sadeleştirildi).
 ///
 /// Eski davranış: retry'ın kendi Future'ı asla dönmezse spinner SONSUZA
 /// kadar açık kalıyordu ve kullanıcı uygulamada mahsur kalıyordu. Geç
 /// tamamlanan bir başlatmanın state'i bozup bozmadığı da test edilmiyordu.
+///
+/// 6E0: zaman aşımı ARTIK GATE'İN İŞİ DEĞİLDİR. Sınırı `FirebaseBootstrap`
+/// koyar; gate yalnız sonucu bekler. İki katman üst üste bindiğinde içteki
+/// DEĞER döndürdüğü için dıştaki hiç tetiklenmiyor ve release dışı davranış
+/// sessizce değişiyordu. Bu yüzden testler, production'daki gibi SINIRLANMIŞ
+/// bir retry enjekte eder.
 void main() {
+  /// Production'da `retry`, `FirebaseBootstrap.ensureInitialized()`'dır ve
+  /// kendi içinde sınırlıdır. Test sahtesi aynı sözleşmeyi taklit eder.
+  Future<FirebaseStatus> Function() bounded(
+    Future<FirebaseStatus> Function() inner, {
+    Duration timeout = const Duration(milliseconds: 50),
+    FirebaseStatus onTimeout = FirebaseStatus.unavailable,
+  }) =>
+      () => inner().timeout(timeout, onTimeout: () => onTimeout);
+
   Widget gate({
     required FirebaseStatus initial,
     required Future<FirebaseStatus> Function() retry,
-    Duration timeout = const Duration(milliseconds: 50),
     VoidCallback? onAppBuilt,
   }) =>
       StartupGate(
         initialStatus: initial,
         retry: retry,
-        retryTimeout: timeout,
         appBuilder: (_) {
           onAppBuilt?.call();
           return const MaterialApp(home: Scaffold(body: Text('GERÇEK APP')));
@@ -32,7 +45,8 @@ void main() {
     await t.pumpWidget(
       gate(
         initial: FirebaseStatus.unavailable,
-        retry: () => Completer<FirebaseStatus>().future, // asla dönmez
+        // Sınırlanmış retry: altta asla dönmeyen bir işlem var.
+        retry: bounded(() => Completer<FirebaseStatus>().future),
       ),
     );
     await t.tap(find.text('Tekrar dene'));
@@ -52,11 +66,13 @@ void main() {
     await t.pumpWidget(
       gate(
         initial: FirebaseStatus.unavailable,
-        retry: () {
-          calls++;
-          return completer.future;
-        },
-        timeout: const Duration(seconds: 5),
+        retry: bounded(
+          () {
+            calls++;
+            return completer.future;
+          },
+          timeout: const Duration(seconds: 5),
+        ),
       ),
     );
     await t.tap(find.text('Tekrar dene'));
@@ -78,7 +94,7 @@ void main() {
     await t.pumpWidget(
       gate(
         initial: FirebaseStatus.unavailable,
-        retry: () => completer.future,
+        retry: bounded(() => completer.future),
         onAppBuilt: () => built++,
       ),
     );

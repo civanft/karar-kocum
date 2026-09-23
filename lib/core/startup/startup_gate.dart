@@ -17,23 +17,17 @@ class StartupGate extends StatefulWidget {
     required this.initialStatus,
     required this.retry,
     required this.appBuilder,
-    this.retryTimeout = defaultRetryTimeout,
   });
-
-  /// Başlatmanın sonuçlanması için beklenen ÜST SINIR (İş Paketi 4 / Dilim E).
-  ///
-  /// Firebase başlatma Future'ı iptal edilemez ve ağ koşullarında hiç
-  /// dönmeyebilir; eskiden bu spinner'ı SONSUZA kadar açık bırakıyor ve
-  /// kullanıcıyı uygulamada mahsur bırakıyordu. 15 saniye, yavaş bir mobil
-  /// bağlantıda başlatmanın tamamlanmasına yetecek kadar uzun, kullanıcıyı
-  /// kaybetmeyecek kadar kısadır. Testler kısa değerle override eder.
-  static const defaultRetryTimeout = Duration(seconds: 15);
-
-  final Duration retryTimeout;
 
   final FirebaseStatus initialStatus;
 
-  /// Yeniden başlatma denemesi. İdempotent olmalıdır.
+  /// Yeniden başlatma denemesi.
+  ///
+  /// SÖZLEŞME: idempotent **ve SINIRLI** olmalıdır. Zaman aşımı artık
+  /// gate'in işi DEĞİLDİR — sınırı `FirebaseBootstrap` koyar
+  /// (`waitForFirebaseStartup`). Gate ikinci bir `.timeout()` katmanı
+  /// uygulasaydı iki sınır üst üste biner, içteki DEĞER döndürdüğü için
+  /// dıştaki hiç tetiklenmez ve release dışında yanlış duruma düşerdi.
   final Future<FirebaseStatus> Function() retry;
 
   /// Yalnız bağlantı sağlandığında çağrılır.
@@ -66,12 +60,9 @@ class _StartupGateState extends State<StartupGate> {
     setState(() => _retrying = true);
     FirebaseStatus next;
     try {
-      // Alttaki Future iptal EDİLEMEZ; bu yüzden yeni bir paralel başlatma
-      // BAŞLATILMAZ, yalnız beklemekten vazgeçilir. Geç tamamlanan sonuç
-      // `attempt` kontrolüyle yok sayılır.
-      next = await widget.retry().timeout(widget.retryTimeout);
-    } on TimeoutException {
-      next = FirebaseStatus.unavailable;
+      // Sınırı `retry` kendisi koyar (bkz. [StartupGate.retry] sözleşmesi).
+      // Geç tamamlanan bir sonuç `attempt` kontrolüyle yok sayılır.
+      next = await widget.retry();
     } catch (_) {
       // Retry'ın kendisi patlarsa da ekran kilitlenmez; ham hata GÖSTERİLMEZ.
       next = FirebaseStatus.unavailable;
@@ -125,10 +116,17 @@ class _UnavailableScreen extends StatelessWidget {
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(height: 16),
-                Text(
-                  'Karar Koçum\'a bağlanılamadı',
-                  style: theme.textTheme.titleLarge,
-                  textAlign: TextAlign.center,
+                // Bu ekran, açılışta sessizce belirir: ekran okuyucunun
+                // durumu duyurabilmesi için başlık hem BAŞLIK hem CANLI
+                // BÖLGE olarak işaretlenir.
+                Semantics(
+                  header: true,
+                  liveRegion: true,
+                  child: Text(
+                    'Karar Koçum\'a bağlanılamadı',
+                    style: theme.textTheme.titleLarge,
+                    textAlign: TextAlign.center,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -142,10 +140,18 @@ class _UnavailableScreen extends StatelessWidget {
                   // null → hem görsel hem davranışsal olarak kapalı.
                   onPressed: busy ? null : () => unawaited(onRetry()),
                   child: busy
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                      // Meşgulken düğmenin metni yoktur; etiket olmazsa
+                      // ekran okuyucu hiçbir şey okumaz ve kullanıcı ekranın
+                      // donduğunu sanar.
+                      ? Semantics(
+                          label: 'Yeniden deneniyor',
+                          liveRegion: true,
+                          excludeSemantics: true,
+                          child: const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
                         )
                       : const Text('Tekrar dene'),
                 ),
