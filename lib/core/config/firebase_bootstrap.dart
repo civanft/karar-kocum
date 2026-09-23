@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -38,25 +40,100 @@ enum FirebaseStatus {
 FirebaseStatus firebaseFailureStatus({required bool isReleaseMode}) =>
     isReleaseMode ? FirebaseStatus.unavailable : FirebaseStatus.localMode;
 
+/// TEK ZAMAN AŞIMI SÖZLEŞMESİ — uygulamadaki başlatma beklemelerinin
+/// TAMAMINI bu fonksiyon sınırlar.
+///
+/// Eskiden `StartupGate` de kendi `.timeout()` katmanını uyguluyordu. İki
+/// katman üst üste bindiğinde içteki katman bir DEĞER döndürdüğü için
+/// dıştaki `TimeoutException` hiç oluşmuyor, üstelik gate release dışında da
+/// `unavailable` üretiyordu. Şimdi sınırı yalnız burası koyar; gate sonucu
+/// bekler.
+///
+/// Alttaki SDK işlemi İPTAL EDİLEMEZ: zaman aşımı yalnız BEKLEMEKTEN
+/// vazgeçer. [onTimedOut], vazgeçilen denemenin paylaşılan durumunu
+/// temizlemek için çağrılır.
+Future<FirebaseStatus> waitForFirebaseStartup(
+  Future<FirebaseStatus> initialization, {
+  required bool isReleaseMode,
+  Duration timeout = FirebaseBootstrap.defaultStartupTimeout,
+  void Function()? onTimedOut,
+}) =>
+    initialization.timeout(
+      timeout,
+      onTimeout: () {
+        onTimedOut?.call();
+        return firebaseFailureStatus(isReleaseMode: isReleaseMode);
+      },
+    );
+
 /// Uygulama açılışında Firebase'i dener; başarısızlık ÇÖKME DEĞİLDİR.
 /// Splash bütçesi (mimari §13): burada yalnız init + anonim oturum var,
 /// Remote Config/Analytics sonraki sprintlerde eklenirken de bekletilmez.
 abstract final class FirebaseBootstrap {
+  /// Başlatmanın sonuçlanması için beklenen ÜST SINIR.
+  ///
+  /// Yavaş bir mobil bağlantıda başlatmanın tamamlanmasına yetecek kadar
+  /// uzun, kullanıcıyı splash'te kaybetmeyecek kadar kısadır.
+  static const defaultStartupTimeout = Duration(seconds: 15);
+
   /// Aynı anda iki başlatma çalışmasını önler: retry butonuna arka arkaya
   /// basılması ya da paralel bir çağrı duplicate-app üretmemeli.
   static Future<FirebaseStatus>? _inFlight;
 
-  /// Retry için idempotent giriş noktası.
+  /// Devam eden denemenin KUŞAK numarası.
+  ///
+  /// Zaman aşımına uğramış bir deneme paylaşımdan düşürülür ama İPTAL
+  /// EDİLEMEZ; saatler sonra tamamlanabilir. Kuşak numarası olmadan o geç
+  /// tamamlanma, kendisinden sonra başlamış SAĞLIKLI denemenin kaydını
+  /// silerdi. Her temizlik yalnız KENDİ kuşağına dokunur.
+  static int _generation = 0;
+
+  /// App Check sağlayıcı fabrikası KURULDU mu.
+  ///
+  /// Dikkat: bu bayrak yalnız KURULUMU izler, gerçek attestation başarısını
+  /// DEĞİL (bkz. [_installAppCheckProvider]).
+  static bool _appCheckProviderInstalled = false;
+
+  /// Retry için idempotent giriş noktası; sonuç her zaman SINIRLIDIR.
   ///
   /// Firebase app zaten kuruluysa yeniden kurulmaz (`Firebase.apps`);
-  /// yalnız eksik olan anonim oturum tamamlanır. Devam eden bir başlatma
-  /// varsa aynı Future paylaşılır.
-  static Future<FirebaseStatus> ensureInitialized() {
-    final running = _inFlight;
-    if (running != null) return running;
-    final started = tryInitialize().whenComplete(() => _inFlight = null);
-    _inFlight = started;
-    return started;
+  /// yalnız eksik olan adımlar tamamlanır. Devam eden bir başlatma varsa
+  /// aynı Future paylaşılır — eş zamanlı çağrılar ikinci bir SDK çalışması
+  /// başlatmaz.
+  static Future<FirebaseStatus> ensureInitialized({Duration? timeout}) {
+    final generation = _generation;
+    final running = _inFlight ??= tryInitialize().whenComplete(() {
+      // Yalnız kendi kuşağını temizler: zaman aşımından sonra başlamış yeni
+      // bir denemenin kaydı korunur.
+      if (_generation == generation) _inFlight = null;
+    });
+
+    return waitForFirebaseStartup(
+      running,
+      isReleaseMode: kReleaseMode,
+      timeout: timeout ?? defaultStartupTimeout,
+      onTimedOut: () => _abandon(generation),
+    );
+  }
+
+  /// Zaman aşımına uğrayan denemeyi paylaşımdan düşürür.
+  ///
+  /// Bu olmadan asılı kalan tek bir Future, uygulama yeniden başlayana kadar
+  /// HER retry'ı zehirlerdi: her deneme aynı ölü Future'ı beklemek için
+  /// süreyi baştan harcardı.
+  static void _abandon(int generation) {
+    if (_generation != generation) return;
+    _generation++;
+    _inFlight = null;
+  }
+
+  /// Testler için statik durumu sıfırlar — testler arası sızıntıyı ve sıra
+  /// bağımlılığını önler. Üretim kodundan ÇAĞRILMAZ.
+  @visibleForTesting
+  static void resetForTest() {
+    _generation++;
+    _inFlight = null;
+    _appCheckProviderInstalled = false;
   }
 
   static Future<FirebaseStatus> tryInitialize() async {
@@ -82,7 +159,13 @@ abstract final class FirebaseBootstrap {
       // İdempotent: zaten kuruluysa duplicate-app hatası üretmeden geç.
       if (Firebase.apps.isEmpty) {
         await Firebase.initializeApp(options: options);
-        await _activateAppCheck();
+      }
+      // App oluşturma başarılı olup sağlayıcı kurulumu başarısız olabilir.
+      // Bu yüzden kurulum, app'in varlığından BAĞIMSIZ olarak izlenir:
+      // aksi halde bir retry eksik kalan kurulumu asla tamamlamazdı.
+      if (!_appCheckProviderInstalled) {
+        await _installAppCheckProvider();
+        _appCheckProviderInstalled = true;
       }
       await _ensureSignedIn();
       return FirebaseStatus.ready;
@@ -99,23 +182,24 @@ abstract final class FirebaseBootstrap {
     }
   }
 
-  /// App Check aktivasyonu — analyzeDecision consumeAppCheckToken ister.
+  /// App Check SAĞLAYICI FABRİKASINI kurar — attestation YAPMAZ.
+  ///
+  /// SINIR: `activate()` hem Android hem iOS tarafında yalnız yerel bir
+  /// yapılandırma çağrısıdır (provider factory kurulumu) ve ağ işlemi
+  /// içermez. Bu çağrının başarıyla dönmesi, cihazın gerçekten geçerli bir
+  /// App Check token'ı ALABİLECEĞİ anlamına GELMEZ. Gerçek attestation ilk
+  /// token isteğinde, yani App Check zorunlu bir callable çağrılırken
+  /// doğrulanır; sağlayıcı kaydı eksikse orada 401 alınır.
+  ///
   /// Sağlayıcılar: iOS App Attest (DeviceCheck yedekli) / Android Play
   /// Integrity; debug build'de debug provider (Console'da debug token
   /// kaydı gerekir).
-  /// Aktivasyon başarısızlığı çökme değildir — istek reddi olarak yansır.
-  static Future<void> _activateAppCheck() async {
-    try {
-      await FirebaseAppCheck.instance.activate(
-        androidProvider:
-            kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
-        appleProvider: appleAppCheckProviderFor(isDebug: kDebugMode),
-      );
-    } catch (error) {
-      if (!kReleaseMode) {
-        debugPrint('FirebaseBootstrap: App Check aktive edilemedi. $error');
-      }
-    }
+  /// Kurulum başarısızlığı üstteki başlangıç kapısına taşınır.
+  static Future<void> _installAppCheckProvider() async {
+    await FirebaseAppCheck.instance.activate(
+      androidProvider: androidAppCheckProviderFor(isDebug: kDebugMode),
+      appleProvider: appleAppCheckProviderFor(isDebug: kDebugMode),
+    );
   }
 
   /// US-E1: giriş yapmadan ilk karar — açılışta sessiz anonim oturum.
@@ -132,14 +216,23 @@ abstract final class FirebaseBootstrap {
 ///
 ///  - Debug build : Firebase debug provider (token Console'a elle kaydedilir)
 ///  - iOS 14+     : App Attest
-///  - iOS 13      : DeviceCheck (App Attest yok)
+///  - Daha eski   : DeviceCheck (App Attest yok)
 ///
-/// NEDEN SAF `appAttest` DEĞİL: App Attest yalnız iOS 14+'da vardır, bu
-/// projenin minimum sürümü ise 13.0. Saf `appAttest` seçilirse iOS 13
-/// cihazlarda sağlayıcı kurulamaz ve App Check zorunlu callable'lar
-/// (analyzeDecision, deleteAccount, createRewardTicket) 403 döner.
-/// `appAttestWithDeviceCheckFallback` platform sürümüne göre doğru olanı
-/// seçer; kod tarafında sürüm kontrolü gerekmez.
+/// NEDEN SAF `appAttest` DEĞİL: App Attest yalnız iOS 14+'da vardır.
+/// Projenin minimum sürümü **iOS 14.0**'tır (`ios/Podfile` ve Xcode
+/// `IPHONEOS_DEPLOYMENT_TARGET`), yani App Attest bugünkü tabanın tamamında
+/// kullanılabilir. Yedekli seçici yine de tercih edilir: minimum sürüm
+/// ileride düşürülürse ya da platform App Attest'i reddederse kod tarafında
+/// sürüm kontrolü gerekmeden doğru sağlayıcı seçilir.
 AppleProvider appleAppCheckProviderFor({required bool isDebug}) => isDebug
     ? AppleProvider.debug
     : AppleProvider.appAttestWithDeviceCheckFallback;
+
+/// Android tarafı App Check sağlayıcısını seçer (saf fonksiyon).
+///
+/// Apple tarafındaki seçiciyle simetriktir ve aynı nedenle vardır: sağlayıcı
+/// seçimi `kDebugMode`'a bağlı olduğu için, RELEASE dalı testte doğrudan
+/// çalıştırılamaz. Saf seçici, debug sağlayıcısının release'e sızmadığını
+/// test edilebilir kılar.
+AndroidProvider androidAppCheckProviderFor({required bool isDebug}) =>
+    isDebug ? AndroidProvider.debug : AndroidProvider.playIntegrity;
