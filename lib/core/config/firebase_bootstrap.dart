@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -38,6 +40,18 @@ enum FirebaseStatus {
 FirebaseStatus firebaseFailureStatus({required bool isReleaseMode}) =>
     isReleaseMode ? FirebaseStatus.unavailable : FirebaseStatus.localMode;
 
+/// Bound the first startup as well as retries. The underlying SDK operation
+/// remains shared: timing out must not start a second anonymous sign-in.
+Future<FirebaseStatus> waitForFirebaseStartup(
+  Future<FirebaseStatus> initialization, {
+  required bool isReleaseMode,
+  Duration timeout = const Duration(seconds: 15),
+}) =>
+    initialization.timeout(
+      timeout,
+      onTimeout: () => firebaseFailureStatus(isReleaseMode: isReleaseMode),
+    );
+
 /// Uygulama açılışında Firebase'i dener; başarısızlık ÇÖKME DEĞİLDİR.
 /// Splash bütçesi (mimari §13): burada yalnız init + anonim oturum var,
 /// Remote Config/Analytics sonraki sprintlerde eklenirken de bekletilmez.
@@ -45,6 +59,7 @@ abstract final class FirebaseBootstrap {
   /// Aynı anda iki başlatma çalışmasını önler: retry butonuna arka arkaya
   /// basılması ya da paralel bir çağrı duplicate-app üretmemeli.
   static Future<FirebaseStatus>? _inFlight;
+  static bool _appCheckActivated = false;
 
   /// Retry için idempotent giriş noktası.
   ///
@@ -52,11 +67,9 @@ abstract final class FirebaseBootstrap {
   /// yalnız eksik olan anonim oturum tamamlanır. Devam eden bir başlatma
   /// varsa aynı Future paylaşılır.
   static Future<FirebaseStatus> ensureInitialized() {
-    final running = _inFlight;
-    if (running != null) return running;
-    final started = tryInitialize().whenComplete(() => _inFlight = null);
-    _inFlight = started;
-    return started;
+    final running =
+        _inFlight ??= tryInitialize().whenComplete(() => _inFlight = null);
+    return waitForFirebaseStartup(running, isReleaseMode: kReleaseMode);
   }
 
   static Future<FirebaseStatus> tryInitialize() async {
@@ -82,7 +95,12 @@ abstract final class FirebaseBootstrap {
       // İdempotent: zaten kuruluysa duplicate-app hatası üretmeden geç.
       if (Firebase.apps.isEmpty) {
         await Firebase.initializeApp(options: options);
+      }
+      // App creation can succeed before attestation fails. A retry must
+      // finish activation even when the Firebase app already exists.
+      if (!_appCheckActivated) {
         await _activateAppCheck();
+        _appCheckActivated = true;
       }
       await _ensureSignedIn();
       return FirebaseStatus.ready;
@@ -103,19 +121,13 @@ abstract final class FirebaseBootstrap {
   /// Sağlayıcılar: iOS App Attest (DeviceCheck yedekli) / Android Play
   /// Integrity; debug build'de debug provider (Console'da debug token
   /// kaydı gerekir).
-  /// Aktivasyon başarısızlığı çökme değildir — istek reddi olarak yansır.
+  /// Başarısızlık üstteki başlangıç kapısına taşınır; release hazır sayılmaz.
   static Future<void> _activateAppCheck() async {
-    try {
-      await FirebaseAppCheck.instance.activate(
-        androidProvider:
-            kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
-        appleProvider: appleAppCheckProviderFor(isDebug: kDebugMode),
-      );
-    } catch (error) {
-      if (!kReleaseMode) {
-        debugPrint('FirebaseBootstrap: App Check aktive edilemedi. $error');
-      }
-    }
+    await FirebaseAppCheck.instance.activate(
+      androidProvider:
+          kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
+      appleProvider: appleAppCheckProviderFor(isDebug: kDebugMode),
+    );
   }
 
   /// US-E1: giriş yapmadan ilk karar — açılışta sessiz anonim oturum.
