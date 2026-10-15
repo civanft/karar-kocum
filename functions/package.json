@@ -22,7 +22,7 @@
     "firebase-functions": "^7.3.2",
     "google-auth-library": "^9.15.1",
     "openai": "^6.49.0",
-    "zod": "^3.23.8"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
