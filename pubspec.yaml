@@ -36,7 +36,7 @@ dependencies:
 
   # Yerel depolama / yardımcılar
   shared_preferences: ^2.2.3
-  intl: ^0.20.2
+  intl: ^0.20.3
 
   # Yasal sayfaları harici tarayıcıda açar (PR-LEGAL-1)
   url_launcher: ^6.3.0
