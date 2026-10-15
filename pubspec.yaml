@@ -31,7 +31,7 @@ dependencies:
   firebase_app_check: ^0.3.0
 
   # Yerel bildirim (Sprint C.1 — takip sözü; Firebase/FCM KULLANILMAZ)
-  flutter_local_notifications: ^17.2.3
+  flutter_local_notifications: ^18.0.1
   timezone: ^0.9.4
 
   # Yerel depolama / yardımcılar
